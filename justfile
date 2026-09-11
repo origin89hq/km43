@@ -31,6 +31,11 @@ test:
 build:
     cargo build --locked --workspace
 
+# Rustdoc under deny-warnings: an intra-doc link to a constant that was renamed
+# or made private is a broken reference nothing else in the gate reads.
+doc:
+    RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --no-deps
+
 # The specification gate: vectors, registry, bindings, traceability, and the
 # cross-compile of the crate for the target. Read-only.
 spec:
@@ -45,4 +50,4 @@ registry:
 vectors:
     cargo xtask vectors
 
-check: fmt-check lint typecheck test build spec
+check: fmt-check lint typecheck test build doc spec

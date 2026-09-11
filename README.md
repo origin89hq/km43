@@ -28,9 +28,10 @@ unit freezes key derivation, protocol versioning and serial numbers.
 ## Commands
 
 `just --list` shows every recipe. `just check` runs what CI runs: formatting,
-Clippy, the tests, the TypeScript checks and `cargo xtask check`, the
-specification gate that cross-compiles the crate for the target and refuses a
-registry, a vector or a binding that disagrees with the spec. `just registry`
+Clippy, the tests, rustdoc under deny-warnings, the TypeScript checks and
+`cargo xtask check`, the specification gate that cross-compiles the crate for
+the target and refuses a registry, a vector or a binding that disagrees with
+the spec. `just registry`
 and `just vectors` regenerate the committed artefacts after a change to
 `protocol.toml` or to a generator; the gate refuses a checkout where they are
 stale.

@@ -235,7 +235,7 @@ impl Bindings {
     /// The join is by name — `enum_space` "generator state" against
     /// `[[enums.generator_state]]` — and it is done here, once, instead of in
     /// every reader. A space with no member table gets **no row**, which is what
-    /// lets [`EnumSpace::members`] answer `None` and a caller tell *this set
+    /// lets the generated `EnumSpace::members` answer `None` and a caller tell *this set
     /// names nothing yet* from *that value is not in it*. The two need telling
     /// apart: the first is a commissioning error and the second is a device
     /// running firmware newer than this build.
