@@ -2528,4 +2528,153 @@ mod tests {
             Some(LinkError::UnknownSource(2))
         );
     }
+    /// Every strict prefix of a link frame is refused, at the envelope or in
+    /// the body. The decoders take an envelope, so the cut is applied to the
+    /// frame and whichever layer meets it first has to say no.
+    fn refused_at_every_cut(
+        bytes: &[u8],
+        decode: impl Fn(crate::envelope::LinkEnvelope<'_>) -> Result<(), LinkError>,
+    ) {
+        for cut in 0..bytes.len() {
+            let prefix = bytes.get(..cut).expect("a prefix");
+            let read = crate::envelope::LinkEnvelope::decode(prefix)
+                .map_err(|_| ())
+                .and_then(|envelope| decode(envelope).map_err(|_| ()));
+            assert!(read.is_err(), "a prefix of {cut} bytes decoded");
+        }
+        let whole = crate::envelope::LinkEnvelope::decode(bytes).expect("the whole frame");
+        assert!(
+            decode(whole).is_ok(),
+            "the whole frame must decode, or the loop proves nothing"
+        );
+    }
+
+    /// The seven link requests, none of which had a truncation test. The cable
+    /// inside the enclosure drops bytes like any other, and a comms processor
+    /// that resynchronises hands the controller arbitrary prefixes.
+    #[test]
+    fn every_link_request_cut_short_at_any_byte_is_refused() {
+        let mut bytes = [0u8; 256];
+        let len = a_link_up()
+            .write(link_header(LinkMessageType::LinkUp), &mut bytes)
+            .expect("encodes");
+        refused_at_every_cut(bytes.get(..len).expect("the frame"), |e| {
+            LinkUp::decode(e).map(|_| ())
+        });
+
+        let len = Heartbeat {
+            uptime_s: 86_400,
+            conns: 3,
+        }
+        .write(link_header(LinkMessageType::Heartbeat), &mut bytes)
+        .expect("encodes");
+        refused_at_every_cut(bytes.get(..len).expect("the frame"), |e| {
+            Heartbeat::decode(e).map(|_| ())
+        });
+
+        let len = ClientUp {
+            conn: 4,
+            transport: LinkTransport::WifiLocal,
+            peer: "192.168.1.44",
+        }
+        .write(link_header(LinkMessageType::ClientConnected), &mut bytes)
+        .expect("encodes");
+        refused_at_every_cut(bytes.get(..len).expect("the frame"), |e| {
+            ClientUp::decode(e).map(|_| ())
+        });
+
+        let len = ClientDown {
+            conn: 9,
+            reason: DisconnectReason::ClosedByClient,
+        }
+        .write(link_header(LinkMessageType::ClientDisconnected), &mut bytes)
+        .expect("encodes");
+        refused_at_every_cut(bytes.get(..len).expect("the frame"), |e| {
+            ClientDown::decode(e).map(|_| ())
+        });
+
+        let len = CloseConnections {
+            conn: 0,
+            reason: CloseReason::Shedding,
+        }
+        .write(link_header(LinkMessageType::CloseConnection), &mut bytes)
+        .expect("encodes");
+        refused_at_every_cut(bytes.get(..len).expect("the frame"), |e| {
+            CloseConnections::decode(e).map(|_| ())
+        });
+
+        let len = a_set()
+            .write(link_header(LinkMessageType::NetConfig), &mut bytes)
+            .expect("encodes");
+        refused_at_every_cut(bytes.get(..len).expect("the frame"), |e| {
+            NetChange::decode(e).map(|_| ())
+        });
+
+        let len = ClockOffer {
+            unix_ms: 1_786_802_653_000,
+            source: 1,
+            accuracy_ms: 40,
+            server: "0.pool.ntp.org",
+        }
+        .write(link_header(LinkMessageType::TimeOffer), &mut bytes)
+        .expect("encodes");
+        refused_at_every_cut(bytes.get(..len).expect("the frame"), |e| {
+            ClockOffer::decode(e).map(|_| ())
+        });
+    }
+
+    /// The five acks, cut the same way.
+    #[test]
+    fn every_link_ack_cut_short_at_any_byte_is_refused() {
+        let mut bytes = [0u8; 256];
+        let len = CloseReport {
+            outcome: CloseConnection::Closed,
+            closed: 2,
+        }
+        .write(link_header(LinkMessageType::CloseConnectionAck), &mut bytes)
+        .expect("encodes");
+        refused_at_every_cut(bytes.get(..len).expect("the frame"), |e| {
+            CloseReport::decode(e).map(|_| ())
+        });
+
+        let len = TimeVerdict {
+            outcome: TimeOffer::RefusedRateLimited,
+        }
+        .write(link_header(LinkMessageType::TimeOfferAck), &mut bytes)
+        .expect("encodes");
+        refused_at_every_cut(bytes.get(..len).expect("the frame"), |e| {
+            TimeVerdict::decode(e).map(|_| ())
+        });
+
+        let len = ClientUpAck {
+            outcome: ClientConnected::RefusedTableFull,
+        }
+        .write(link_header(LinkMessageType::ClientConnectedAck), &mut bytes)
+        .expect("encodes");
+        refused_at_every_cut(bytes.get(..len).expect("the frame"), |e| {
+            ClientUpAck::decode(e).map(|_| ())
+        });
+
+        let len = ClientDownAck {
+            outcome: ClientDisconnected::UnknownHandle,
+        }
+        .write(
+            link_header(LinkMessageType::ClientDisconnectedAck),
+            &mut bytes,
+        )
+        .expect("encodes");
+        refused_at_every_cut(bytes.get(..len).expect("the frame"), |e| {
+            ClientDownAck::decode(e).map(|_| ())
+        });
+
+        let len = NetVerdict {
+            outcome: NetConfig::Stored,
+            version: 7,
+        }
+        .write(link_header(LinkMessageType::NetConfigAck), &mut bytes)
+        .expect("encodes");
+        refused_at_every_cut(bytes.get(..len).expect("the frame"), |e| {
+            NetVerdict::decode(e).map(|_| ())
+        });
+    }
 }
