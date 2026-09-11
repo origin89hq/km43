@@ -1,0 +1,13 @@
+{
+  "file": "social-preview.jpg",
+  "width": 1280,
+  "height": 640,
+  "bytes": 187612,
+  "sha256": "ec972b57721fbfeebe0c095f79c74bab390f1fb0db738ec44f9363aaec097bb9",
+  "source": {
+    "repository": "origin89hq/brand",
+    "commit": "217894cc0f26dc51fec22ea74a9619972e406152",
+    "path": "situations/scenes/km43-canoe/km43-social.jpg"
+  },
+  "license": "https://github.com/origin89hq/brand/blob/217894cc0f26dc51fec22ea74a9619972e406152/LICENSE.md"
+}
