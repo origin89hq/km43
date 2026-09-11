@@ -29,7 +29,9 @@ use sha2::{Digest as _, Sha256};
 
 use crate::cbor::{CborError, CborReader, CborWriter};
 use crate::concerns::ElementAt;
-use crate::generated::{Bucket, Direction, Shape, SignalDomain, Transport, Vtype};
+use crate::generated::{
+    Bucket, Direction, Inventory, InventoryKind, Shape, SignalDomain, Transport, Vtype,
+};
 use crate::limits::{
     MAX_COMPONENT_CMDS, MAX_INVENTORY_PAGE_BYTES, MAX_INVENTORY_PAGE_ROWS, MAX_ROW_BYTES,
     MAX_SERIES_LEN,
@@ -243,31 +245,36 @@ pub enum RowKind {
 }
 
 impl RowKind {
+    /// The registry's allocation, through the generated enum, so a renumbered
+    /// kind stops this compiling rather than becoming a second table.
+    const fn registered(self) -> InventoryKind {
+        match self {
+            Self::Bus => InventoryKind::Buses,
+            Self::Device => InventoryKind::Devices,
+            Self::Component => InventoryKind::Components,
+            Self::Signal => InventoryKind::Signals,
+            Self::Param => InventoryKind::Parameters,
+        }
+    }
+
     /// The `what` a `ReadInventory` names this kind by.
     #[must_use]
     pub const fn number(self) -> u8 {
-        match self {
-            Self::Bus => 1,
-            Self::Device => 2,
-            Self::Component => 3,
-            Self::Signal => 4,
-            Self::Param => 5,
-        }
+        self.registered() as u8
     }
 
     /// `what` back to a kind. Anything else is outcome 3 `unknown_kind` rather
     /// than an error, because the request parsed — it simply named a table that
     /// does not exist.
     #[must_use]
-    pub const fn from_number(what: u8) -> Option<Self> {
-        match what {
-            1 => Some(Self::Bus),
-            2 => Some(Self::Device),
-            3 => Some(Self::Component),
-            4 => Some(Self::Signal),
-            5 => Some(Self::Param),
-            _ => None,
-        }
+    pub fn from_number(what: u8) -> Option<Self> {
+        Some(match InventoryKind::try_from(what).ok()? {
+            InventoryKind::Buses => Self::Bus,
+            InventoryKind::Devices => Self::Device,
+            InventoryKind::Components => Self::Component,
+            InventoryKind::Signals => Self::Signal,
+            InventoryKind::Parameters => Self::Param,
+        })
     }
 
     const fn fields(self) -> &'static [Field] {
@@ -513,6 +520,14 @@ impl<'a> Row<'a> {
                 got: values.len(),
             });
         }
+        // `cmp` and `sig` are numbered from 1: 0 is the paging sentinel on the
+        // request side and reserved on the row (P-174). A row carrying it names
+        // nothing and, handed back as `next`, reads as *the kind is complete*.
+        if matches!(kind, RowKind::Component | RowKind::Signal)
+            && matches!(values.first(), Some(Value::U16(0)))
+        {
+            return Err(InventoryError::ReservedZero { kind, key: 1 });
+        }
         for (field, value) in fields.iter().zip(values) {
             if matches!(value, Value::Absent) {
                 if field.optional {
@@ -569,11 +584,9 @@ impl<'a> Row<'a> {
     /// name, because [`ElementAt`] stops there; `ebase` near the top of `u16`
     /// runs out of labels before it runs out of elements.
     ///
-    /// **The other ranges the field lists state are still unchecked** — `sig`
-    /// from 1, `cmp` 0 reserved on a `ComponentRow`, and the six keys that are
-    /// closed sets wearing a bare `u8` (`shape`, `vtype`, `domain`, `dir`,
-    /// `hist`, `transport`). Those six want generated enums rather than a range
-    /// check, which is a different piece of work from this one.
+    /// `sig` from 1 and `cmp` 0 reserved are checked in [`Self::new`], and the
+    /// six closed-set keys (`shape`, `vtype`, `domain`, `dir`, `hist`,
+    /// `transport`) against their generated enums.
     fn every_element_can_be_named(&self) -> Result<(), InventoryError> {
         let Some(labels) = self.labels() else {
             return Ok(());
@@ -1184,23 +1197,28 @@ pub enum InventoryOutcome {
 }
 
 impl InventoryOutcome {
-    const fn number(self) -> u8 {
+    /// The registry's allocation, through the generated enum, so a renumbered
+    /// outcome stops this compiling rather than becoming a second table.
+    const fn registered(self) -> Inventory {
         match self {
-            Self::Ok => 1,
-            Self::Superseded => 2,
-            Self::UnknownKind => 3,
-            Self::OutOfRange => 4,
+            Self::Ok => Inventory::Ok,
+            Self::Superseded => Inventory::Superseded,
+            Self::UnknownKind => Inventory::UnknownKind,
+            Self::OutOfRange => Inventory::OutOfRange,
         }
     }
 
-    const fn of(number: u8) -> Option<Self> {
-        match number {
-            1 => Some(Self::Ok),
-            2 => Some(Self::Superseded),
-            3 => Some(Self::UnknownKind),
-            4 => Some(Self::OutOfRange),
-            _ => None,
-        }
+    const fn number(self) -> u8 {
+        self.registered() as u8
+    }
+
+    fn of(number: u8) -> Option<Self> {
+        Some(match Inventory::try_from(number).ok()? {
+            Inventory::Ok => Self::Ok,
+            Inventory::Superseded => Self::Superseded,
+            Inventory::UnknownKind => Self::UnknownKind,
+            Inventory::OutOfRange => Self::OutOfRange,
+        })
     }
 }
 
@@ -1502,6 +1520,9 @@ pub enum InventoryError {
     /// wins to the decoder, so two clients would render one authenticated row
     /// differently.
     DuplicateRowKey { kind: RowKind, key: u8 },
+    /// A `cmp` or a `sig` of 0, which is reserved (P-174): it names nothing,
+    /// and handed back as a cursor it says the kind is complete.
+    ReservedZero { kind: RowKind, key: u8 },
     /// A `Concern` naming a position past the end of the series it names.
     PositionPastSeries { at: u8, elements: u8 },
     /// A number under a key whose space does not allocate it. Not skip-unknown:
@@ -1579,6 +1600,9 @@ impl fmt::Display for InventoryError {
             Self::TooManyCmds(n) => write!(w, "{n} commands is past what one row may accept"),
             Self::DuplicateRowKey { kind, key } => {
                 write!(w, "a {kind} row carries key {key} twice")
+            }
+            Self::ReservedZero { kind, key } => {
+                write!(w, "a {kind} row's key {key} is 0, which is reserved")
             }
             Self::PositionPastSeries { at, elements } => {
                 write!(w, "element {at} of a series with {elements} of them")
@@ -2433,6 +2457,71 @@ mod tests {
             19,
             "the label is nineteen ASCII bytes"
         );
+    }
+    /// The field lists said `cmp` 0 is reserved and `sig` counts from 1, and
+    /// nothing checked either. A component row at 0 names nothing; a signal
+    /// row at 0, bounced off a full page, comes back as `next = 0`, which is
+    /// *this kind is complete*.
+    #[test]
+    fn a_component_or_signal_row_at_zero_is_refused() {
+        for kind in [RowKind::Component, RowKind::Signal] {
+            let mut values = widest(kind);
+            values[0] = Value::U16(0);
+            let n = kind.fields().len();
+            assert_eq!(
+                Row::new(kind, values.get(..n).expect("fits")).unwrap_err(),
+                InventoryError::ReservedZero { kind, key: 1 }
+            );
+        }
+    }
+
+    /// Every strict prefix is refused, and only the whole body reads.
+    fn refused_at_every_cut<T: core::fmt::Debug>(
+        bytes: &[u8],
+        decode: impl Fn(&[u8]) -> Result<T, InventoryError>,
+    ) {
+        for cut in 0..bytes.len() {
+            assert!(
+                decode(bytes.get(..cut).expect("a prefix")).is_err(),
+                "a prefix of {cut} bytes decoded"
+            );
+        }
+        assert!(
+            decode(bytes).is_ok(),
+            "the whole body must decode, or the loop proves nothing"
+        );
+    }
+
+    /// Neither the request nor the response header had a truncation test. A
+    /// resynchronising receiver hands both arbitrary prefixes.
+    #[test]
+    fn an_inventory_request_or_header_cut_short_at_any_byte_is_refused() {
+        let mut out = [0u8; 128];
+        let len = ReadInventory {
+            rev: 1,
+            what: RowKind::Param.number(),
+            from: 0,
+            dev: Some(3),
+        }
+        .encode(&mut out)
+        .expect("encodes");
+        refused_at_every_cut(out.get(..len).expect("the body"), ReadInventory::decode);
+
+        let values = bus_row();
+        let row = Row::new(RowKind::Bus, &values).expect("legal");
+        let mut page = Page::new(RowKind::Bus);
+        assert!(page.push(&row, 1).expect("encodes"));
+        let len = InventoryBody {
+            rev: 41,
+            what: RowKind::Bus.number(),
+            outcome: InventoryOutcome::Ok,
+            total: 1,
+            page: Some(&page),
+            digest: Some([1, 2, 3, 4, 5, 6, 7, 8]),
+        }
+        .encode(&mut out)
+        .expect("encodes");
+        refused_at_every_cut(out.get(..len).expect("the body"), InventoryHeader::decode);
     }
 }
 

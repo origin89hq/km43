@@ -393,6 +393,17 @@ impl PairRequest<'_> {
         dst: &mut [u8],
     ) -> Result<usize, PairError> {
         expected(header, MessageType::Pair)?;
+        // Refused where the label is typed, not only where it is read. `text()`
+        // bounds by `MAX_STRING` and a row holds `MAX_LABEL`, so a 40-byte
+        // label was writable, provable and refused by every conforming
+        // controller — as a bad frame, which a phone cannot tell from a bad
+        // proof.
+        if self.label.len() > MAX_LABEL {
+            return Err(PairError::WrongWidth {
+                key: PairRequestKey::Label.into(),
+                len: self.label.len(),
+            });
+        }
         let proof = key.proof(&PairProof {
             device_id: &attempt.device_id,
             challenge: &attempt.challenge,
@@ -2000,9 +2011,10 @@ mod tests {
         );
     }
 
-    /// A label wider than `MAX_STRING` is refused at the writer rather than sent
-    /// and refused there, because a truncated label is a different label and
-    /// P-078 matches rows on the exact bytes.
+    /// A label wider than any cap is refused at the writer rather than sent and
+    /// refused there, because a truncated label is a different label and P-078
+    /// matches rows on the exact bytes. It meets the row's cap first, so the
+    /// refusal names the field rather than the CBOR string limit under it.
     #[test]
     fn a_label_wider_than_the_cap_is_refused_before_it_is_proved() {
         const WIDE: &str =
@@ -2021,7 +2033,10 @@ mod tests {
                 &mut bytes
             )
             .err(),
-            Some(PairError::Cbor(CborError::StringTooLong))
+            Some(PairError::WrongWidth {
+                key: PairBodyKey::Request(PairRequestKey::Label),
+                len: WIDE.len(),
+            })
         );
     }
 
@@ -2036,29 +2051,57 @@ mod tests {
     fn a_label_a_row_cannot_hold_is_refused_before_it_becomes_an_outcome() {
         const OVER: &str = "0123456789012345678901234567890123456789";
         assert!(OVER.len() > MAX_LABEL, "the fixture must exceed a row");
-        assert!(OVER.len() <= MAX_STRING, "and must still be writable");
+        assert!(
+            OVER.len() <= MAX_STRING,
+            "and must still be writable as text"
+        );
+        let refused = Some(PairError::WrongWidth {
+            key: PairBodyKey::Request(PairRequestKey::Label),
+            len: OVER.len(),
+        });
 
+        // Where it is typed: the writer refuses it before a proof is computed.
         let mut bytes = [0u8; SCRATCH];
-        let len = PairRequest {
+        assert_eq!(
+            PairRequest {
+                client_kind: ClientKind::App,
+                label: OVER,
+            }
+            .write(
+                &device().pair_key(),
+                &attempt(),
+                header(MessageType::Pair),
+                &mut bytes,
+            )
+            .err(),
+            refused
+        );
+
+        // And where it is read, because the other end of the link is not this
+        // crate. Built by hand the way the writer would have before it refused.
+        let attempt = attempt();
+        let proof = device().pair_key().proof(&PairProof {
+            device_id: &attempt.device_id,
+            challenge: &attempt.challenge,
+            client_nonce: &attempt.client_nonce,
             client_kind: ClientKind::App,
             label: OVER,
-        }
-        .write(
-            &device().pair_key(),
-            &attempt(),
-            header(MessageType::Pair),
-            &mut bytes,
-        )
-        .expect("the write path still builds it, which is how it got here");
+        });
+        let mut cbor = header(MessageType::Pair)
+            .write(PairRequestKey::COUNT, &mut bytes)
+            .expect("a header");
+        cbor.key(PairRequestKey::ClientKind.number()).expect("key");
+        cbor.u64(u64::from(ClientKind::App as u8)).expect("kind");
+        cbor.key(PairRequestKey::Label.number()).expect("key");
+        cbor.text(OVER).expect("a label under MAX_STRING");
+        cbor.key(PairRequestKey::Proof.number()).expect("key");
+        cbor.bytes(proof.as_bytes()).expect("proof");
+        cbor.key(PairRequestKey::ClientNonce.number()).expect("key");
+        cbor.bytes(&attempt.client_nonce).expect("nonce");
+        let len = cbor.finish().expect("a closed body");
 
         let envelope = Envelope::decode(bytes.get(..len).expect("the frame")).expect("an envelope");
-        assert_eq!(
-            PairClaim::decode(envelope).err(),
-            Some(PairError::WrongWidth {
-                key: PairBodyKey::Request(PairRequestKey::Label),
-                len: OVER.len(),
-            })
-        );
+        assert_eq!(PairClaim::decode(envelope).err(), refused);
     }
 
     /// An empty label is a label: it is legal on the wire, and the proof over it
@@ -2229,11 +2272,17 @@ mod tests {
     ///
     /// The number is what a caller sizes a frame buffer at, and one byte short
     /// is a refusal that only ever fires on the longest label somebody types —
-    /// at a panel, four hours from a road.
+    /// at a panel, four hours from a road. The longest label is `MAX_LABEL`,
+    /// the row's, and the constant is sized for `MAX_STRING`; the slack is
+    /// what keeps the constant true if the row ever grows.
     #[test]
     fn the_widest_pairing_frame_fits_the_buffer_the_constant_promises() {
-        const WIDEST: &str = "0123456789012345678901234567890123456789012345678901234567890123";
-        assert_eq!(WIDEST.len(), MAX_STRING, "the fixture is the cap exactly");
+        const WIDEST: &str = "01234567890123456789012345678901";
+        assert_eq!(
+            WIDEST.len(),
+            MAX_LABEL,
+            "the fixture is the row's cap exactly"
+        );
         let mut exact = [0u8; MAX_PAIR_BODY + ENVELOPE];
         let len = PairRequest {
             client_kind: ClientKind::App,

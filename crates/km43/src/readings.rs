@@ -150,7 +150,7 @@ impl SignalQuality {
 /// A scalar reading: one signal, and a value only if there is one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Sample {
-    pub sig: u16,
+    pub sig: Id,
     /// Present exactly when `q` says so, which is what `new` will not let a
     /// caller get wrong.
     value: Option<i32>,
@@ -167,7 +167,7 @@ impl Sample {
     /// and an age on a reading that is current. Each has shipped somewhere as a
     /// zero that read as a measurement.
     pub fn new(
-        sig: u16,
+        sig: Id,
         q: SignalQuality,
         value: Option<i32>,
         age: Option<u32>,
@@ -203,7 +203,7 @@ impl Sample {
         let pairs = 2 + usize::from(self.value.is_some()) + usize::from(self.age.is_some());
         cbor.map(pairs)?;
         cbor.key(1)?;
-        cbor.u64(u64::from(self.sig))?;
+        cbor.u64(u64::from(self.sig.get()))?;
         if let Some(value) = self.value {
             cbor.key(2)?;
             cbor.i32(value)?;
@@ -234,7 +234,7 @@ impl Sample {
         let (mut sig, mut value, mut q, mut age) = (None, None, None, None);
         for _ in 0..pairs {
             match body.key()? {
-                1 => sig = Some(body.u16()?),
+                1 => sig = Some(Id::new(body.u16()?)?),
                 2 => value = Some(body.i32()?),
                 3 => q = Some(body.u8()?),
                 4 => age = Some(body.u32()?),
@@ -260,7 +260,7 @@ impl Sample {
 /// to a plausible voltage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Series<'a> {
-    pub sig: u16,
+    pub sig: Id,
     q: &'a [SignalQuality],
     values: &'a [i32],
     age: Option<u32>,
@@ -274,7 +274,7 @@ impl<'a> Series<'a> {
     /// by one and every element after the gap reads the next one's number —
     /// sixteen cells, all plausible, all shifted.
     pub fn new(
-        sig: u16,
+        sig: Id,
         q: &'a [SignalQuality],
         values: &'a [i32],
         age: Option<u32>,
@@ -352,7 +352,7 @@ impl<'a> Series<'a> {
             (None, None, None, None, None, false);
         for _ in 0..pairs {
             match body.key()? {
-                1 => sig = Some(body.u16()?),
+                1 => sig = Some(Id::new(body.u16()?)?.get()),
                 2 => {
                     let bytes = body.bytes()?;
                     let mut with_value = 0usize;
@@ -408,7 +408,7 @@ impl<'a> Series<'a> {
         let pairs = 3 + usize::from(self.age.is_some());
         cbor.map(pairs)?;
         cbor.key(1)?;
-        cbor.u64(u64::from(self.sig))?;
+        cbor.u64(u64::from(self.sig.get()))?;
         cbor.key(2)?;
         cbor.bytes(bytes)?;
         cbor.key(3)?;
@@ -589,23 +589,28 @@ pub enum ReadingsOutcome {
 }
 
 impl ReadingsOutcome {
-    const fn number(self) -> u8 {
+    /// The registry's allocation, through the generated enum, so a renumbered
+    /// outcome stops this compiling rather than becoming a second table.
+    const fn registered(self) -> crate::generated::Readings {
         match self {
-            Self::Ok => 1,
-            Self::Superseded => 2,
-            Self::UnknownSelector => 3,
-            Self::OutOfRange => 4,
+            Self::Ok => crate::generated::Readings::Ok,
+            Self::Superseded => crate::generated::Readings::Superseded,
+            Self::UnknownSelector => crate::generated::Readings::UnknownSelector,
+            Self::OutOfRange => crate::generated::Readings::OutOfRange,
         }
     }
 
-    const fn of(number: u8) -> Option<Self> {
-        match number {
-            1 => Some(Self::Ok),
-            2 => Some(Self::Superseded),
-            3 => Some(Self::UnknownSelector),
-            4 => Some(Self::OutOfRange),
-            _ => None,
-        }
+    const fn number(self) -> u8 {
+        self.registered() as u8
+    }
+
+    fn of(number: u8) -> Option<Self> {
+        Some(match crate::generated::Readings::try_from(number).ok()? {
+            crate::generated::Readings::Ok => Self::Ok,
+            crate::generated::Readings::Superseded => Self::Superseded,
+            crate::generated::Readings::UnknownSelector => Self::UnknownSelector,
+            crate::generated::Readings::OutOfRange => Self::OutOfRange,
+        })
     }
 }
 
@@ -668,7 +673,7 @@ impl ReadingsPage {
     /// widest-case arithmetic allows.
     pub fn push_sample(&mut self, sample: &Sample) -> Result<bool, ReadingsError> {
         if self.samples >= MAX_SAMPLES {
-            self.next = sample.sig;
+            self.next = sample.sig.get();
             return Ok(false);
         }
         let mut one = [0u8; SAMPLE_MAX_BYTES];
@@ -676,7 +681,7 @@ impl ReadingsPage {
         sample.encode(&mut cbor)?;
         let len = cbor.finish()?;
         if !self.keep(&one, len, false)? {
-            self.next = sample.sig;
+            self.next = sample.sig.get();
             return Ok(false);
         }
         self.samples = self.samples.saturating_add(1);
@@ -686,7 +691,7 @@ impl ReadingsPage {
     /// The same for a series, against its own row arm and the shared byte one.
     pub fn push_series(&mut self, series: &Series<'_>) -> Result<bool, ReadingsError> {
         if self.series >= MAX_SERIES {
-            self.next = series.sig;
+            self.next = series.sig.get();
             return Ok(false);
         }
         let mut one = [0u8; SERIES_MAX_BYTES];
@@ -695,7 +700,7 @@ impl ReadingsPage {
         series.encode(&mut cbor, &mut q)?;
         let len = cbor.finish()?;
         if !self.keep(&one, len, true)? {
-            self.next = series.sig;
+            self.next = series.sig.get();
             return Ok(false);
         }
         self.series = self.series.saturating_add(1);
@@ -1091,6 +1096,10 @@ mod tests {
     use super::*;
     use crate::generated::{ENUM_SPACE_MEMBERS, EnumSpace};
 
+    fn id(value: u16) -> Id {
+        Id::new(value).expect("a non-zero id")
+    }
+
     /// **A set that names nothing is not the same as a value that is not in
     /// it**, and a caller that cannot tell them apart sends somebody to the
     /// wrong place.
@@ -1183,7 +1192,7 @@ mod tests {
             let q = SignalQuality::absent(validity).expect("carries nothing");
             assert!(!q.carries_value());
             assert_eq!(
-                Sample::new(1, q, Some(65535), None).unwrap_err(),
+                Sample::new(id(1), q, Some(65535), None).unwrap_err(),
                 QualityError::NoValueToCarry(validity),
                 "validity {} was handed 0xFFFF and took it",
                 validity as u8
@@ -1197,7 +1206,7 @@ mod tests {
     fn p_196_a_validity_that_needs_a_number_cannot_go_without_one() {
         let q = SignalQuality::carrying(Validity::Ok, Provenance::Measured).expect("legal");
         assert_eq!(
-            Sample::new(1, q, None, None).unwrap_err(),
+            Sample::new(id(1), q, None, None).unwrap_err(),
             QualityError::ValueOmitted(Validity::Ok)
         );
     }
@@ -1219,10 +1228,10 @@ mod tests {
     fn p_196_a_stale_reading_without_an_age_is_refused() {
         let q = SignalQuality::carrying(Validity::Stale, Provenance::Measured).expect("legal");
         assert_eq!(
-            Sample::new(1, q, Some(3900), None).unwrap_err(),
+            Sample::new(id(1), q, Some(3900), None).unwrap_err(),
             QualityError::StaleWithoutAge
         );
-        assert!(Sample::new(1, q, Some(3900), Some(7200)).is_ok());
+        assert!(Sample::new(id(1), q, Some(3900), Some(7200)).is_ok());
     }
 
     /// An age on a reading that is current is a duration describing nothing, and
@@ -1231,7 +1240,7 @@ mod tests {
     fn p_196_an_age_on_a_current_reading_is_refused() {
         let q = SignalQuality::carrying(Validity::Ok, Provenance::Measured).expect("legal");
         assert_eq!(
-            Sample::new(1, q, Some(24800), Some(8)).unwrap_err(),
+            Sample::new(id(1), q, Some(24800), Some(8)).unwrap_err(),
             QualityError::AgeWithoutStaleness(Validity::Ok)
         );
     }
@@ -1281,7 +1290,7 @@ mod tests {
     #[test]
     fn p_196_an_absent_reading_encodes_no_integer_that_could_be_read_as_one() {
         let q = SignalQuality::absent(Validity::Unsupported).expect("carries nothing");
-        let sample = Sample::new(0x0101, q, None, None).expect("legal");
+        let sample = Sample::new(id(0x0101), q, None, None).expect("legal");
 
         let mut dst = [0u8; 32];
         let mut cbor = CborWriter::new(&mut dst);
@@ -1301,11 +1310,100 @@ mod tests {
             "key 2 is not in a body that has no number"
         );
     }
+    /// A signal id of 0 is the paging sentinel and never a signal (P-208), and
+    /// `Sample.sig` was a bare `u16`. A bounced sig-0 row set `next` to 0, which
+    /// the wire reads as *the selection is complete*.
+    #[test]
+    fn a_sample_naming_signal_zero_is_refused_where_it_is_read() {
+        let mut dst = [0u8; 16];
+        let mut cbor = CborWriter::new(&mut dst);
+        cbor.map(2).expect("a map");
+        cbor.key(1).expect("key");
+        cbor.u64(0).expect("sig 0");
+        cbor.key(3).expect("key");
+        let nothing = SignalQuality::absent(Validity::Absent).expect("nothing to carry");
+        cbor.u64(u64::from(nothing.byte())).expect("q");
+        let len = cbor.finish().expect("a body");
+        assert_eq!(
+            Sample::decode(&mut CborReader::new(dst.get(..len).expect("the body"))),
+            Err(ReadingsError::ZeroId)
+        );
+        assert_eq!(
+            Id::new(0).err(),
+            Some(IdError::Zero),
+            "and it cannot be built either"
+        );
+    }
+
+    /// Every strict prefix is refused, and only the whole body reads.
+    fn refused_at_every_cut<T: core::fmt::Debug>(
+        bytes: &[u8],
+        decode: impl Fn(&[u8]) -> Result<T, ReadingsError>,
+    ) {
+        for cut in 0..bytes.len() {
+            assert!(
+                decode(bytes.get(..cut).expect("a prefix")).is_err(),
+                "a prefix of {cut} bytes decoded"
+            );
+        }
+        assert!(
+            decode(bytes).is_ok(),
+            "the whole body must decode, or the loop proves nothing"
+        );
+    }
+
+    /// The four readings decoders had no truncation test between them. A
+    /// resynchronising receiver hands every one of these arbitrary prefixes.
+    #[test]
+    fn every_readings_body_cut_short_at_any_byte_is_refused() {
+        let mut out = [0u8; MAX_READINGS_BYTES + 64];
+
+        let len = ReadSignals::everything(41, 7)
+            .encode(&mut out)
+            .expect("encodes");
+        refused_at_every_cut(out.get(..len).expect("the body"), ReadSignals::decode);
+
+        let page = ReadingsPage::new();
+        let len = ReadingsBody {
+            seq: 9,
+            rev: 41,
+            at: None,
+            outcome: ReadingsOutcome::Ok,
+            total: 0,
+            page: Some(&page),
+        }
+        .encode(&mut out)
+        .expect("encodes");
+        refused_at_every_cut(out.get(..len).expect("the body"), ReadingsHeader::decode);
+
+        let measured =
+            SignalQuality::carrying(Validity::Ok, Provenance::Measured).expect("a reading");
+        let nothing = SignalQuality::absent(Validity::Absent).expect("nothing to carry");
+        let q = [measured, nothing];
+        let series = Series::new(id(0x0101), &q, &[24800], None).expect("legal");
+        let mut scratch = [0u8; 64];
+        let mut cbor = CborWriter::new(&mut out);
+        series.encode(&mut cbor, &mut scratch).expect("encodes");
+        let len = cbor.finish().expect("a body");
+        refused_at_every_cut(out.get(..len).expect("the body"), Series::check);
+
+        let sample = Sample::new(id(3), measured, Some(30), None).expect("legal");
+        let mut cbor = CborWriter::new(&mut out);
+        sample.encode(&mut cbor).expect("encodes");
+        let len = cbor.finish().expect("a body");
+        refused_at_every_cut(out.get(..len).expect("the body"), |bytes| {
+            Sample::decode(&mut CborReader::new(bytes))
+        });
+    }
 }
 
 #[cfg(test)]
 mod series_tests {
     use super::*;
+
+    fn id(value: u16) -> Id {
+        Id::new(value).expect("a non-zero id")
+    }
 
     fn ok() -> SignalQuality {
         SignalQuality::carrying(Validity::Ok, Provenance::Measured).expect("legal")
@@ -1323,7 +1421,7 @@ mod series_tests {
         let mut q = [ok(); 16];
         q[2] = broken();
         let values: [i32; 15] = [3900; 15];
-        let series = Series::new(7, &q, &values, None).expect("legal");
+        let series = Series::new(id(7), &q, &values, None).expect("legal");
 
         assert_eq!(series.len(), 16);
         assert_eq!(series.value_at(2), None, "the open wire");
@@ -1339,7 +1437,7 @@ mod series_tests {
     fn p_197_a_value_belongs_to_the_element_whose_byte_earned_it() {
         let q = [broken(), ok(), broken(), ok()];
         let values = [111, 222];
-        let series = Series::new(7, &q, &values, None).expect("legal");
+        let series = Series::new(id(7), &q, &values, None).expect("legal");
         assert_eq!(series.value_at(0), None);
         assert_eq!(series.value_at(1), Some(111));
         assert_eq!(series.value_at(2), None);
@@ -1353,14 +1451,14 @@ mod series_tests {
     fn p_197_a_value_count_that_disagrees_with_the_bytes_is_refused() {
         let q = [ok(), broken(), ok()];
         assert_eq!(
-            Series::new(7, &q, &[1, 2, 3], None).unwrap_err(),
+            Series::new(id(7), &q, &[1, 2, 3], None).unwrap_err(),
             QualityError::ValueCount { want: 2, got: 3 }
         );
         assert_eq!(
-            Series::new(7, &q, &[1], None).unwrap_err(),
+            Series::new(id(7), &q, &[1], None).unwrap_err(),
             QualityError::ValueCount { want: 2, got: 1 }
         );
-        assert!(Series::new(7, &q, &[1, 2], None).is_ok());
+        assert!(Series::new(id(7), &q, &[1, 2], None).is_ok());
     }
 
     /// A series is two or more elements and never longer than the cap a decoder
@@ -1369,13 +1467,13 @@ mod series_tests {
     fn p_197_a_series_outside_its_bounds_is_refused() {
         let one = [ok()];
         assert_eq!(
-            Series::new(7, &one, &[1], None).unwrap_err(),
+            Series::new(id(7), &one, &[1], None).unwrap_err(),
             QualityError::SeriesLength(1)
         );
         let too_many = [ok(); crate::limits::MAX_SERIES_LEN + 1];
         let values = [1i32; crate::limits::MAX_SERIES_LEN + 1];
         assert_eq!(
-            Series::new(7, &too_many, &values, None).unwrap_err(),
+            Series::new(id(7), &too_many, &values, None).unwrap_err(),
             QualityError::SeriesLength(crate::limits::MAX_SERIES_LEN + 1)
         );
     }
@@ -1386,7 +1484,7 @@ mod series_tests {
     #[test]
     fn p_197_the_encoded_series_has_one_q_byte_per_element_and_no_placeholder() {
         let q = [ok(), broken(), ok()];
-        let series = Series::new(0x0101, &q, &[24800, 24900], None).expect("legal");
+        let series = Series::new(id(0x0101), &q, &[24800, 24900], None).expect("legal");
 
         let mut scratch = [0u8; 16];
         let mut dst = [0u8; 64];
@@ -1427,7 +1525,7 @@ mod series_tests {
     #[test]
     fn p_197_an_unnameable_validity_costs_the_row_because_the_rest_cannot_be_located() {
         let q = [ok(), broken(), ok()];
-        let series = Series::new(0x0101, &q, &[24800, 24900], None).expect("legal");
+        let series = Series::new(id(0x0101), &q, &[24800, 24900], None).expect("legal");
 
         let mut scratch = [0u8; 16];
         let mut dst = [0u8; 64];
@@ -1473,18 +1571,18 @@ mod series_tests {
     fn p_197_an_age_rides_a_series_exactly_when_an_element_is_stale() {
         let fresh = [ok(), ok()];
         assert_eq!(
-            Series::new(7, &fresh, &[1, 2], Some(8)).unwrap_err(),
+            Series::new(id(7), &fresh, &[1, 2], Some(8)).unwrap_err(),
             QualityError::AgeWithoutStaleness(Validity::Ok)
         );
 
         let stale = SignalQuality::carrying(Validity::Stale, Provenance::Measured).expect("legal");
         let mixed = [ok(), stale];
         assert_eq!(
-            Series::new(7, &mixed, &[1, 2], None).unwrap_err(),
+            Series::new(id(7), &mixed, &[1, 2], None).unwrap_err(),
             QualityError::StaleWithoutAge
         );
         assert!(
-            Series::new(7, &mixed, &[1, 2], Some(7200)).is_ok(),
+            Series::new(id(7), &mixed, &[1, 2], Some(7200)).is_ok(),
             "the oldest stale element's age, and the fresh one keeps its own value"
         );
     }
@@ -1606,9 +1704,13 @@ mod selection {
 #[cfg(test)]
 mod page {
     use super::{
-        ReadingsBody, ReadingsError, ReadingsHeader, ReadingsOutcome, ReadingsPage, Sample, Series,
-        SignalQuality,
+        Id, ReadingsBody, ReadingsError, ReadingsHeader, ReadingsOutcome, ReadingsPage, Sample,
+        Series, SignalQuality,
     };
+
+    fn id(value: u16) -> Id {
+        Id::new(value).expect("a non-zero id")
+    }
     use crate::cbor::{CborError, CborReader, CborWriter};
     use crate::generated::{Provenance, Validity};
     use crate::limits::{MAX_READINGS_BYTES, MAX_SAMPLES, MAX_SERIES, MAX_SERIES_LEN};
@@ -1622,7 +1724,7 @@ mod page {
     }
 
     fn sample(sig: u16, value: i32) -> Sample {
-        Sample::new(sig, ok(), Some(value), None).expect("a plain reading")
+        Sample::new(id(sig), ok(), Some(value), None).expect("a plain reading")
     }
 
     fn page_of(samples: &[Sample]) -> ReadingsPage {
@@ -1646,7 +1748,7 @@ mod page {
     fn p_198_interleaved_kinds_come_out_as_two_arrays_still_in_order() {
         let q = [ok(); 2];
         let values = [11, 12];
-        let series = Series::new(4, &q, &values, None).expect("a two-element series");
+        let series = Series::new(id(4), &q, &values, None).expect("a two-element series");
 
         let mut page = ReadingsPage::new();
         assert!(page.push_sample(&sample(3, 30)).expect("sig 3"));
@@ -1752,7 +1854,7 @@ mod page {
         let mut page = ReadingsPage::new();
         let mut sig = 1u16;
         let stopped = loop {
-            let one = Series::new(sig, &q, &values, None).expect("a series");
+            let one = Series::new(id(sig), &q, &values, None).expect("a series");
             if !page.push_series(&one).expect("a series encodes") {
                 break sig;
             }
@@ -1784,7 +1886,7 @@ mod page {
         let mut page = ReadingsPage::new();
         let mut sig = 1u16;
         for _ in 0..MAX_SERIES {
-            let wide = Series::new(sig, &q, &values, None).expect("a full-width series");
+            let wide = Series::new(id(sig), &q, &values, None).expect("a full-width series");
             assert!(page.push_series(&wide).expect("a series encodes"));
             sig = sig.checked_add(1).expect("seven fits");
         }
@@ -1853,7 +1955,8 @@ mod page {
     /// and looked for in the bytes.
     #[test]
     fn p_196_a_broken_sensor_puts_no_number_on_the_wire() {
-        let absent = Sample::new(3, broken(), None, None).expect("a reading with nothing in it");
+        let absent =
+            Sample::new(id(3), broken(), None, None).expect("a reading with nothing in it");
         let page = page_of(&[absent]);
 
         let mut buf = [0u8; 256];
@@ -1888,7 +1991,7 @@ mod page {
     #[test]
     fn a_reading_survives_being_read_back() {
         let q = SignalQuality::carrying(Validity::Ok, Provenance::Measured).expect("ok carries");
-        let sample = Sample::new(0x0101, q, Some(12_650), None).expect("legal");
+        let sample = Sample::new(id(0x0101), q, Some(12_650), None).expect("legal");
 
         let mut buf = [0u8; 64];
         let mut cbor = CborWriter::new(&mut buf);
@@ -1897,7 +2000,7 @@ mod page {
 
         let mut reader = CborReader::new(buf.get(..len).expect("the bytes"));
         let back = Sample::decode(&mut reader).expect("it decodes");
-        assert_eq!(back.sig, 0x0101);
+        assert_eq!(back.sig.get(), 0x0101);
         assert_eq!(back.value(), Some(12_650));
         assert_eq!(back.q, q);
     }
@@ -1907,7 +2010,7 @@ mod page {
     #[test]
     fn an_absence_reads_back_as_an_absence() {
         let q = SignalQuality::absent(Validity::Absent).expect("absent carries nothing");
-        let sample = Sample::new(0x0302, q, None, None).expect("legal");
+        let sample = Sample::new(id(0x0302), q, None, None).expect("legal");
 
         let mut buf = [0u8; 64];
         let mut cbor = CborWriter::new(&mut buf);
@@ -1978,9 +2081,9 @@ mod page {
         let ok = SignalQuality::carrying(Validity::Ok, Provenance::Measured).expect("ok");
         let gone = SignalQuality::absent(Validity::Absent).expect("absent");
         let mut page = ReadingsPage::new();
-        page.push_sample(&Sample::new(1, ok, Some(12_650), None).expect("one"))
+        page.push_sample(&Sample::new(id(1), ok, Some(12_650), None).expect("one"))
             .expect("it fits");
-        page.push_sample(&Sample::new(2, gone, None, None).expect("two"))
+        page.push_sample(&Sample::new(id(2), gone, None, None).expect("two"))
             .expect("it fits");
 
         let body = ReadingsBody {
@@ -2002,7 +2105,7 @@ mod page {
         let mut at = 0usize;
         let walked = ReadingsHeader::for_each_sample(payload, |s| {
             if let Some(slot) = got.get_mut(at) {
-                *slot = (s.sig, s.value());
+                *slot = (s.sig.get(), s.value());
             }
             at += 1;
         })

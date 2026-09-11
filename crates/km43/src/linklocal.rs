@@ -293,6 +293,10 @@ pub enum LinkError {
     UnknownOutcome(u8),
     /// An `op` this version does not allocate (P-014).
     UnknownOp(u8),
+    /// A `TimeOffer` `source` other than `1 ntp`, the only one LINK.md
+    /// allocates (P-014). Refused rather than recorded: a `time set` record
+    /// names its source, and one nobody allocated names nothing.
+    UnknownSource(u8),
     /// A passphrase outside WPA's own 8 to 63 bytes (L-131).
     PassphraseLength(usize),
     /// A `country` that is not ISO 3166-1 alpha-2.
@@ -326,6 +330,7 @@ impl fmt::Display for LinkError {
             Self::UnknownReason(raw) => write!(f, "reason {raw} is not allocated"),
             Self::UnknownOutcome(raw) => write!(f, "outcome {raw} is not allocated"),
             Self::UnknownOp(raw) => write!(f, "op {raw} is not allocated"),
+            Self::UnknownSource(raw) => write!(f, "time source {raw} is not allocated"),
             Self::PassphraseLength(len) => {
                 write!(f, "a passphrase of {len} bytes is outside 8 to 63")
             }
@@ -1008,10 +1013,19 @@ pub struct ClockOffer<'a> {
     pub server: &'a str,
 }
 
+/// The one `source` LINK.md allocates for a `TimeOffer`: `1 ntp`. It is the
+/// link's own one-value space and not the registry's `time_source` (L-162), so
+/// it lives here beside the field it bounds.
+const NTP: u8 = 1;
+
 impl<'a> ClockOffer<'a> {
     /// # Errors
-    /// A `server` past the link's text cap, or a `dst` too small.
+    /// A `source` other than NTP, a `server` past the link's text cap, or a
+    /// `dst` too small.
     pub fn write(&self, header: LinkHeader, dst: &mut [u8]) -> Result<usize, LinkError> {
+        if self.source != NTP {
+            return Err(LinkError::UnknownSource(self.source));
+        }
         bounded(LinkField::Server, self.server)?;
         let mut cbor = header
             .write(4, dst)
@@ -1055,7 +1069,10 @@ impl<'a> ClockOffer<'a> {
             // `unix_ms` read as 0 is an offer of 1970 that the floor would then
             // have to catch, which is a rule doing a decoder's job.
             unix_ms: unix_ms.ok_or(LinkError::Missing(LinkField::UnixMs))?,
-            source: source.ok_or(LinkError::Missing(LinkField::Source))?,
+            source: match source.ok_or(LinkError::Missing(LinkField::Source))? {
+                NTP => NTP,
+                other => return Err(LinkError::UnknownSource(other)),
+            },
             accuracy_ms: accuracy_ms.ok_or(LinkError::Missing(LinkField::AccuracyMs))?,
             server: server.ok_or(LinkError::Missing(LinkField::Server))?,
         })
@@ -2469,5 +2486,46 @@ mod tests {
                 Some(LinkError::CountryNotTwoBytes(country.len()))
             );
         }
+    }
+
+    /// `source` was carried as a bare `u8` and checked by nothing, while every
+    /// other closed field on the link is refused under P-014. LINK.md allocates
+    /// `1 ntp` and nothing else, and a `time set` record that names source 7
+    /// names nobody.
+    #[test]
+    fn a_time_source_nobody_allocated_is_refused_on_both_ends() {
+        let mut bytes = [0u8; 128];
+        let offer = ClockOffer {
+            unix_ms: 1_786_802_653_000,
+            source: 2,
+            accuracy_ms: 40,
+            server: "time.example",
+        };
+        assert_eq!(
+            offer
+                .write(link_header(LinkMessageType::TimeOffer), &mut bytes)
+                .err(),
+            Some(LinkError::UnknownSource(2))
+        );
+
+        // Built by hand, because the writer will no longer build it.
+        let mut cbor = link_header(LinkMessageType::TimeOffer)
+            .write(4, &mut bytes)
+            .expect("a header");
+        cbor.key(1).expect("key");
+        cbor.u64(1_786_802_653_000).expect("unix_ms");
+        cbor.key(2).expect("key");
+        cbor.u64(2).expect("source");
+        cbor.key(3).expect("key");
+        cbor.u64(40).expect("accuracy");
+        cbor.key(4).expect("key");
+        cbor.text("time.example").expect("server");
+        let len = cbor.finish().expect("a closed body");
+        let envelope = crate::envelope::LinkEnvelope::decode(bytes.get(..len).expect("the frame"))
+            .expect("a link envelope");
+        assert_eq!(
+            ClockOffer::decode(envelope).err(),
+            Some(LinkError::UnknownSource(2))
+        );
     }
 }

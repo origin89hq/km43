@@ -330,25 +330,34 @@ impl PresenceChanged {
 }
 
 /// The shared read of a sweep body: `rev`, and the array positioned to walk.
+///
+/// The whole body is walked to its end **before** an entry is handed out. This
+/// used to return the moment key 2 was found, so anything after the array —
+/// bytes of a second body, garbage from a resynchronising receiver — was
+/// accepted without being looked at, and a body cut short inside the array
+/// was a record that iterated cleanly up to the cut.
 fn sweep(payload: &[u8]) -> Result<(u32, CborReader<'_>, usize), ChangeError> {
     let mut body = CborReader::new(payload);
     let pairs = body.map()?;
-    let mut rev = None;
+    let (mut rev, mut entries) = (None, None);
     for _ in 0..pairs {
         match body.key()? {
             1 => rev = Some(body.u32()?),
-            2 => {
-                let left = body.array()?;
-                if left == 0 {
-                    return Err(ChangeError::NothingChanged);
-                }
-                let rev = rev.ok_or(ChangeError::MissingBody(1))?;
-                return Ok((rev, body, left));
-            }
+            // Taken as bytes, which proves the array is well formed to its
+            // last byte; the iterator then reads a slice this walk has vouched
+            // for.
+            2 => entries = Some(body.raw()?),
             _ => body.skip()?,
         }
     }
-    Err(ChangeError::MissingBody(2))
+    body.finish()?;
+    let rev = rev.ok_or(ChangeError::MissingBody(1))?;
+    let mut entries = CborReader::new(entries.ok_or(ChangeError::MissingBody(2))?);
+    let left = entries.array()?;
+    if left == 0 {
+        return Err(ChangeError::NothingChanged);
+    }
+    Ok((rev, entries, left))
 }
 
 /// The entries of an `0x0102`, decoded on demand.
@@ -859,12 +868,12 @@ mod tests {
         let len = sweep.encode(&mut out).expect("encodes");
         for cut in 0..len {
             let short = out.get(..cut).expect("a prefix");
-            if let Ok((_, entries)) = ValidityChanged::decode(short) {
-                for entry in entries {
-                    let _ = entry;
-                }
-            }
+            assert!(
+                ValidityChanged::decode(short).is_err(),
+                "a prefix of {cut} bytes decoded as a sweep"
+            );
         }
+        assert!(ValidityChanged::decode(out.get(..len).expect("the body")).is_ok());
 
         let moved = TopologyChanged {
             rev: 42,
@@ -884,5 +893,85 @@ mod tests {
             assert!(ValidityChanged::decode(&noise).is_err());
             assert!(PresenceChanged::decode(&noise).is_err());
         }
+    }
+
+    /// The body was read as far as key 2 and no further, so bytes after the
+    /// array were never looked at. Three of them here; a whole second body
+    /// would have passed the same way.
+    #[test]
+    fn a_sweep_body_with_bytes_after_its_array_is_refused() {
+        let mut sweep = ValidityChanged::new(41);
+        assert!(
+            sweep
+                .push(&VChange {
+                    sig: id(1),
+                    q: absent(),
+                    prev: ok(),
+                })
+                .expect("encodes")
+        );
+        let mut out = [0u8; MAX_EVENT_BODY + 3];
+        let len = sweep.encode(&mut out).expect("encodes");
+        assert!(ValidityChanged::decode(out.get(..len).expect("the body")).is_ok());
+        for tail in out.get_mut(len..len + 3).expect("room for a tail") {
+            *tail = 0xff;
+        }
+        assert!(
+            ValidityChanged::decode(out.get(..len + 3).expect("the body and a tail")).is_err(),
+            "a body with three bytes after its array was accepted"
+        );
+    }
+
+    /// `0x0901` had an encoder and a decoder that agreed with each other and
+    /// had never been asked by a test. Read back whole, refused at every cut.
+    #[test]
+    fn a_topology_change_reads_back_and_is_refused_at_every_cut() {
+        let change = TopologyChanged {
+            rev: 42,
+            reason: TopologyChangeReason::DeviceReplaced,
+            added: 3,
+            removed: 1,
+        };
+        let mut out = [0u8; 32];
+        let len = change.encode(&mut out).expect("encodes");
+        assert_eq!(
+            TopologyChanged::decode(out.get(..len).expect("the body")),
+            Ok(change)
+        );
+        for cut in 0..len {
+            assert!(
+                TopologyChanged::decode(out.get(..cut).expect("a prefix")).is_err(),
+                "a prefix of {cut} bytes decoded"
+            );
+        }
+    }
+
+    /// The presence sweep had no truncation test at all, and the validity one
+    /// asserted nothing. Both read a body the same way, so both are refused at
+    /// every cut.
+    #[test]
+    fn a_presence_sweep_cut_short_at_any_byte_is_refused() {
+        let mut sweep = PresenceChanged::new(41);
+        assert!(
+            sweep
+                .push(&PChange {
+                    dev: id(3),
+                    presence: Presence::Offline,
+                    prev: Presence::Online,
+                })
+                .expect("encodes")
+        );
+        let mut out = [0u8; MAX_EVENT_BODY];
+        let len = sweep.encode(&mut out).expect("encodes");
+        for cut in 0..len {
+            assert!(
+                PresenceChanged::decode(out.get(..cut).expect("a prefix")).is_err(),
+                "a prefix of {cut} bytes decoded as a sweep"
+            );
+        }
+        let (rev, entries) =
+            PresenceChanged::decode(out.get(..len).expect("the body")).expect("whole");
+        assert_eq!(rev, 41);
+        assert_eq!(entries.count(), 1);
     }
 }

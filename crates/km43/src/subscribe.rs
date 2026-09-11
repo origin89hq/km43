@@ -855,4 +855,23 @@ mod tests {
         ];
         Rendering::<96>::each_says_something_of_its_own(&EVERY);
     }
+
+    /// A `Subscribe` cut at any byte is refused, never read as a shorter
+    /// request. A resynchronising receiver hands the decoder arbitrary prefixes.
+    #[test]
+    fn a_subscribe_cut_short_at_any_byte_is_refused() {
+        let mut dst = [0u8; 32];
+        let len = Subscribe {
+            replay: Replay::From(LogSeq(41)),
+        }
+        .encode(&mut dst)
+        .expect("it encodes");
+        for cut in 0..len {
+            assert!(
+                Subscribe::decode(dst.get(..cut).expect("a prefix")).is_err(),
+                "a prefix of {cut} bytes decoded"
+            );
+        }
+        assert!(Subscribe::decode(dst.get(..len).expect("the body")).is_ok());
+    }
 }

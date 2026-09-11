@@ -242,6 +242,10 @@ struct Open {
 struct Nest {
     open: [Open; NESTING],
     depth: usize,
+    /// The deepest this walk has been. What a writer copying a raw item needs to
+    /// know about it: not how deep the item is on its own, but how deep the
+    /// reader on the other end will be when it reaches the item's last level.
+    deepest: usize,
 }
 
 impl Nest {
@@ -255,6 +259,7 @@ impl Nest {
         Self {
             open: [Self::EMPTY; NESTING],
             depth: 0,
+            deepest: 0,
         }
     }
 
@@ -310,6 +315,9 @@ impl Nest {
             last_key: None,
         };
         self.depth = self.depth.saturating_add(1);
+        if self.depth > self.deepest {
+            self.deepest = self.depth;
+        }
         Ok(())
     }
 
@@ -699,9 +707,11 @@ impl<'a> CborWriter<'a> {
         if !self.nest.has_room() {
             return Err(CborError::DepthExceeded);
         }
+        // Before the head is written, or a refused map leaves its head byte
+        // behind and `DestinationTooSmall` no longer means nothing was written.
+        let items = pairs.checked_mul(2).ok_or(CborError::DestinationTooSmall)?;
         self.head(Major::Map, Self::argument(pairs)?, 0)?;
         self.nest.count_item()?;
-        let items = pairs.checked_mul(2).ok_or(CborError::DestinationTooSmall)?;
         self.nest.push(Nesting::Map, items)
     }
 
@@ -799,7 +809,16 @@ impl<'a> CborWriter<'a> {
         self.open_item()?;
         let mut walk = CborReader::new(item);
         walk.skip()?;
+        let deepest = walk.nest.deepest;
         walk.finish()?;
+        // Counted from where this writer already is, because the reader on the
+        // other end will be. A walk started at zero once passed an `Event` body
+        // nested exactly `MAX_DEPTH` deep, and the same bytes were
+        // `DepthExceeded` the moment a decoder read them back: the controller
+        // built a frame its own decoder refused.
+        if self.nest.depth.saturating_add(deepest) > NESTING {
+            return Err(CborError::DepthExceeded);
+        }
         self.emit(item)?;
         self.nest.count_item()
     }
@@ -2089,5 +2108,50 @@ mod tests {
         assert_eq!(r.key(), Ok(1));
         assert_eq!(r.raw(), Ok(&[0xa1u8, 0x02, 0x82, 0x03, 0x04][..]));
         assert_eq!(r.finish(), Ok(()));
+    }
+    /// A raw item is copied in at the depth the writer is already at, and that
+    /// is the depth the reader will count it at. Walked from zero, an item two
+    /// levels deep looked fine inside seven open arrays; read back, level nine
+    /// is one past the cap and the whole message is refused.
+    #[test]
+    fn a_raw_item_that_would_nest_past_the_cap_inside_its_container_is_refused() {
+        const TWO_DEEP: [u8; 2] = [0x81, 0x80];
+        const ONE_DEEP: [u8; 1] = [0x80];
+        let outer = usize::from(MAX_DEPTH) - 1;
+
+        let mut dst = [0u8; 32];
+        let mut writer = CborWriter::new(&mut dst);
+        for _ in 0..outer {
+            writer.array(1).expect("one level short of the cap");
+        }
+        assert_eq!(writer.raw(&TWO_DEEP), Err(CborError::DepthExceeded));
+
+        let mut dst = [0u8; 32];
+        let mut writer = CborWriter::new(&mut dst);
+        for _ in 0..outer {
+            writer.array(1).expect("one level short of the cap");
+        }
+        writer.raw(&ONE_DEEP).expect("exactly at the cap is legal");
+        let len = writer.finish().expect("a closed message");
+        let mut reader = CborReader::new(dst.get(..len).expect("the message"));
+        reader
+            .skip()
+            .expect("what the writer accepted, the reader accepts");
+        reader.finish().expect("and it ends where it should");
+    }
+
+    /// `DestinationTooSmall` promises nothing was written. A map whose pair
+    /// count could not be doubled used to write its head first and refuse
+    /// second, leaving one byte behind in a buffer the caller then reused.
+    #[test]
+    fn a_map_refused_for_its_pair_count_writes_no_byte_at_all() {
+        // A count whose doubling overflows, in a buffer its nine-byte head
+        // would fit: the head is the byte the old order left behind.
+        let pairs = usize::MAX / 2 + 1;
+        let mut dst = [0u8; 16];
+        let mut writer = CborWriter::new(&mut dst);
+        assert_eq!(writer.map(pairs), Err(CborError::DestinationTooSmall));
+        assert_eq!(writer.finish(), Ok(0));
+        assert_eq!(dst, [0u8; 16]);
     }
 }
