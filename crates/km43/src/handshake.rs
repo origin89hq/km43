@@ -3358,4 +3358,54 @@ mod tests {
             }
         }
     }
+    /// Every strict prefix of a frame is refused, at the envelope or in the
+    /// body it carries.
+    fn refused_at_every_cut(
+        bytes: &[u8],
+        decode: impl Fn(Envelope<'_>) -> Result<(), HandshakeError>,
+    ) {
+        for cut in 0..bytes.len() {
+            let prefix = bytes.get(..cut).expect("a prefix");
+            let read = Envelope::decode(prefix)
+                .map_err(|_| ())
+                .and_then(|envelope| decode(envelope).map_err(|_| ()));
+            assert!(read.is_err(), "a prefix of {cut} bytes decoded");
+        }
+        let whole = Envelope::decode(bytes).expect("the whole frame");
+        assert!(
+            decode(whole).is_ok(),
+            "the whole frame must decode, or the loop proves nothing"
+        );
+    }
+
+    /// The three handshake frames a peer reads, cut at every byte. Each had
+    /// tests for a missing key and a wrong width and none for a body that
+    /// simply stops.
+    #[test]
+    fn every_handshake_frame_cut_short_at_any_byte_is_refused() {
+        let mut frame = [0u8; SCRATCH];
+        let len = discovery()
+            .write(header(MessageType::DiscoverResponse), &mut frame)
+            .expect("encodes");
+        refused_at_every_cut(frame.get(..len).expect("the frame"), |e| {
+            Discovery::decode(e).map(|_| ())
+        });
+
+        let key = enrolment().client_key();
+        let mut scratch = [0u8; MAX_HELLO_INNER];
+        let request = inner()
+            .prove(&key, &CHALLENGE, &mut scratch)
+            .expect("the body encodes and proves");
+        let len = request
+            .write(header(MessageType::Hello), &mut frame)
+            .expect("encodes");
+        refused_at_every_cut(frame.get(..len).expect("the frame"), |e| {
+            HelloClaim::decode(e).map(|_| ())
+        });
+
+        let wire = answered(&report(), header(MessageType::HelloResponse));
+        refused_at_every_cut(wire.bytes(), |e| {
+            Session::open(e, &enrolment(), &handshake(), Version::V1_0).map(|_| ())
+        });
+    }
 }

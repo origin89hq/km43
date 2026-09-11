@@ -1141,4 +1141,31 @@ mod tests {
             "a frame that arrived slowly was thrown away as a stall"
         );
     }
+    /// A frame cut at any byte and then delimited is never handed up as a
+    /// frame. A COBS prefix can itself be a valid encoding, so what stands
+    /// between a cut and a shorter message being obeyed is the CRC, and this
+    /// is the test that says the CRC does that job at every length.
+    #[test]
+    fn a_frame_cut_at_any_byte_and_then_delimited_never_hands_up_a_frame() {
+        let payload = [0x11, 0x22, 0x00, 0x33, 0x44, 0x55, 0x66, 0x77, 0x00, 0x88];
+        let mut writer = FrameWriter::new();
+        let mut wire = [0u8; 64];
+        let len = writer
+            .write(&payload, &mut wire)
+            .expect("room for the frame");
+        assert_eq!(
+            wire.get(len - 1).copied(),
+            Some(DELIMITER),
+            "the writer ends a frame with the delimiter"
+        );
+        for cut in 0..len - 1 {
+            let mut line = Line::watching(&payload);
+            line.feed(wire.get(..cut).expect("a prefix"));
+            line.feed(&[DELIMITER]);
+            assert_eq!(line.frames, 0, "a frame cut at {cut} bytes was handed up");
+        }
+        let mut line = Line::watching(&payload);
+        line.feed(wire.get(..len).expect("the whole frame"));
+        assert_eq!(line.echoes, 1, "the whole frame is handed up once");
+    }
 }

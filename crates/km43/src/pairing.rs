@@ -2309,4 +2309,42 @@ mod tests {
             .expect("the widest client_id fits too");
         assert!(len <= MAX_PAIR_ACK_BODY + ENVELOPE);
     }
+    /// Every strict prefix of a frame is refused, at the envelope or in the
+    /// body it carries.
+    fn refused_at_every_cut(bytes: &[u8], decode: impl Fn(Envelope<'_>) -> Result<(), PairError>) {
+        for cut in 0..bytes.len() {
+            let prefix = bytes.get(..cut).expect("a prefix");
+            let read = Envelope::decode(prefix)
+                .map_err(|_| ())
+                .and_then(|envelope| decode(envelope).map_err(|_| ()));
+            assert!(read.is_err(), "a prefix of {cut} bytes decoded");
+        }
+        let whole = Envelope::decode(bytes).expect("the whole frame");
+        assert!(
+            decode(whole).is_ok(),
+            "the whole frame must decode, or the loop proves nothing"
+        );
+    }
+
+    /// Both pairing frames, cut at every byte. The claim decoders read the
+    /// fields before any proof is checked, which is exactly where a short body
+    /// has to be refused rather than read as a shorter label.
+    #[test]
+    fn every_pairing_frame_cut_short_at_any_byte_is_refused() {
+        let mut bytes = [0u8; SCRATCH];
+        let len = request()
+            .write(
+                &device().pair_key(),
+                &attempt(),
+                header(MessageType::Pair),
+                &mut bytes,
+            )
+            .expect("encodes");
+        refused_at_every_cut(bytes.get(..len).expect("the frame"), |e| {
+            PairClaim::decode(e).map(|_| ())
+        });
+
+        let frame = answered(&answer(Outcome::Enrolled(slot())), &attempt());
+        refused_at_every_cut(frame.bytes(), |e| PairAckClaim::decode(e).map(|_| ()));
+    }
 }
