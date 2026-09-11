@@ -84,10 +84,11 @@ minutes. If one of them takes more than about a minute, that is the finding: a
 dependency that should not be there, a test doing real I/O, a generic
 instantiated per call site. Fix the cause.
 
-**Measure before you act on that.** `cargo test` reads as slow and the cause is
-worth every second: the `compile_fail` doctests are separate `rustc` runs that
-have to be *made* to fail and cannot be merged. `just test-fast` skips them
-while working; pay the full `just test` once before committing.
+**Measure before you act on that.** If `cargo test` ever reads as slow, the
+first suspects are the `compile_fail` doctests: they are separate `rustc` runs
+that have to be *made* to fail and cannot be merged. They are also the
+type-state guards, so the answer is `just test-fast` while working and the
+full `just test` once before committing, never deleting one.
 
 ### Nothing has shipped, so nothing is owed compatibility
 

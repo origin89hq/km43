@@ -17,9 +17,9 @@ and apply to everyone, not only to an assistant.
 ## Before a pull request
 
 `just check` runs everything CI runs. While working, `just test-fast` runs the
-unit and integration tests; the rest of `just test` is the compile-fail
-doctests, each a separate compiler run. They are the type-state guards, not
-something to cut when the gate feels slow.
+unit and integration tests; the rest of `just test` is the doctests, including
+the compile-fail ones that guard the type-state types. They are not something
+to cut if the gate ever feels slow.
 
 ## Changing the protocol
 

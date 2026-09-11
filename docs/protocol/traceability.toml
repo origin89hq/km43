@@ -1,0 +1,1271 @@
+# Requirements nothing can test, and a count of the ones nobody has tested yet.
+#
+# Read with docs/protocol/VERIFICATION.md section 1, which carries the
+# reasoning. `cargo xtask check` sorts every **P-nnn** in PROTOCOL.md and every
+# **L-nnn** in LINK.md into three buckets: covered by a test named after it that
+# can actually fail, declared here, or uncovered.
+#
+# The two are different words. Uncovered means nobody has written the test.
+# Untestable means no test can be written, and it needs a kind and a reason
+# somebody argued for in review. Filling this file with `deferred` entries to
+# make the count go down turns "we have not written tests" into "these are
+# untestable", which is the graveyard this file exists to not become.
+
+# The number somebody defends at each audit round: requirements that are neither
+# covered nor declared below.
+#
+# The check fails when the real count goes above it, and fails when it drops
+# below and this number was not lowered with it — a ratchet nobody tightens
+# rusts open, and the slack quietly absorbs the next rules nobody covers. It
+# started at nearly the whole specification, because when it was written not one
+# test in the workspace stood behind a requirement, and a check that is red on
+# its first run is a check somebody switches off before its second.
+#
+# It goes up for exactly one reason: the specification gained a rule. Anything
+# else moving it up is a test that stopped standing behind something.
+#
+# 42 -> 48, and this is that reason. PROTOCOL.md gained the five descriptor row
+# bodies and eight rules with them, P-200 through P-207, promoted out of
+# TOPOLOGY-DESIGN.md because the rows had been published in vectors/v1.json --
+# 61 keys of them -- with nothing in any settled document defining them.
+#
+# Two of the eight arrived covered: P-200 by the sentinel test in signals.rs and
+# P-207 by the six identity tests beside it. The other six went up. That is not
+# six tests nobody bothered to write: P-201's empty-array refusal, P-202's addr
+# uniqueness, P-203's rollup cycles, P-204's unit-and-scale condition, P-205's
+# since and P-206's ebase arithmetic are all rules about a row this controller
+# does not yet register -- there is no parameter table in o89-core at all, and
+# no component table with a rollup on it. A test named after one of them today
+# would stand over nothing, which is the failure this whole file exists against.
+#
+# They come down as the rows land, not as somebody finds a name to give a test.
+#
+# 48 -> 47, and it is one of those six coming down the way that paragraph said
+# they would. P-202 -- `addr` present exactly where the bus addresses, and unique
+# within a bus -- is covered because `Topology` now holds device rows and can be
+# asked. Two devices at one address on one pair is the failure: only one is ever
+# heard, which one depends on the wiring rather than on any file, and the silent
+# one's readings appear under the other's signals.
+#
+# P-201, P-204, P-205 and P-206 stay up. They are about `cmds` arrays,
+# parameters and `ebase`, and none of those exists yet.
+#
+# **That sentence was false when it was written, and an audit for exactly this
+# shape of claim is what found it.** All five row kinds are in `inventory.rs`
+# with `cmds` on two of them, `since` required on two, and `ebase`, `unit`,
+# `scale` and `vns` on a `SignalRow` -- encoded, width-tested, and published in
+# `vectors/v1.json`. The reason was written about `o89-core`'s tables; the rules
+# bind the row encoder, which existed the whole time. A blocker stated once and
+# never re-read is how four requirements sit in this count on the strength of a
+# sentence nobody checked.
+#
+# 47 -> 46. P-203's rollup half is covered now that `Topology` holds component
+# rows: a rollup names a component that is already there, so the charger's
+# combined PV figure cannot be declared already-counted in something nothing
+# describes. The double-the-sun half of P-203 -- a client MUST NOT combine a
+# component with the one it rolls up into -- is a client rule and stays
+# uncounted here for the same reason P-125 does.
+# 46 -> 47, and this is the second reason the file allows: a citation that was
+# never standing behind anything. P-143 says which refusal a session-requiring
+# request gets -- error 4 before any `Hello`, error 9 on a session the controller
+# does not hold -- and it was claimed by a `cites:` header on `envelope.rs`.
+# Nothing in the tree performs either refusal and no test asserts one. The
+# decision belongs to a request dispatcher, which does not exist.
+#
+# Found by the check that now prints how many covered rules have no test named
+# after them: fifty-six of them, a third of the count, resting on a header that
+# claims a requirement for a whole file. Most are honest -- `crc.rs` claiming the
+# CRC rule is a file about nothing else -- and that list is the reading queue.
+# P-143 was the first one read.
+#
+# It is uncovered rather than deferred on purpose. A test can be written the day
+# there is a dispatcher to drive, which is the line this file draws between the
+# two words.
+#
+# 47 -> 48, and it is the first reason again: the specification gained four rules
+# when `Concerns 0x0F`/`0x8F` was promoted into it. Three of the four arrived
+# covered by tests that were already asserting them under other names -- P-208's
+# two page-cap arms in `inventory.rs` and `concerns.rs`, P-209's cid-ascending
+# walk, P-210's pin -- so only one went up.
+#
+# P-211 is the one. It says a concern's accumulated `age` survives a restart, and
+# there is no `age` on a `Concern` in `o89-core` at all: the struct carries the
+# id, what it is about, the condition, the severity, the state and the vendor
+# code, and nothing that counts seconds. Nor is there a FRAM path to persist one
+# through. A test named after it today would assert something about a field that
+# does not exist, which is the failure this whole file is against.
+#
+# It comes down with the field, not with a name for a test.
+#
+# 48 -> 47, and it is P-211 coming down the way that paragraph said it would.
+# `Concern` carries an `Age` now: two numbers, because P-004's tick is zero at
+# boot and a concern outlives one. Both clauses have a test, so it takes a
+# `[[clauses]]` entry with them.
+#
+# There is still no FRAM path, and that is deliberately not what this rule needs
+# to be tested. What P-211 says is that a restored row carries what it
+# accumulated and a controller that cannot recover that number does not restore
+# the row -- and `Age`'s two constructors are exactly those two sentences. Where
+# the seconds are read back from is a storage question the rule does not have an
+# opinion about.
+# 47 -> 46. P-143 comes down, and it is the entry above coming true rather than
+# somebody finding a name for a test. That paragraph said the decision belongs to
+# a request dispatcher which does not exist, and named the day a test could be
+# written as the line this file draws between *uncovered* and *untestable*.
+#
+# What it turned out to need was not a dispatcher. It was the decision a
+# dispatcher would make: `Sessions::admit` answers whether a frame may reach a
+# handler, and `MessageType::admits` is the classification it reads. Both
+# refusals are asserted, and P-143 takes a `[[clauses]]` entry because it names
+# two of them.
+#
+# The rest of a dispatcher -- routing, inflight, the handler table -- is still
+# absent and this rule never needed it. Waiting for the whole thing is how the
+# citation on `envelope.rs` sat there for months claiming a rule nothing
+# performed.
+# 46 -> 45. P-201 comes down, and it came down as a **bug** rather than as a
+# test somebody finally wrote. An absent `cmds` means that scope accepts no
+# commands and an empty array is error 1 -- and `Row::new` checked required
+# against optional, never looked inside a list, and encoded the empty array
+# cleanly. So the rule was not merely untested; the encoder could emit the row
+# the rule forbids.
+#
+# What the audit found beside it is bigger and is not fixed here. `Field` says
+# required or optional and cannot say *it depends*, so five keys carry a comment
+# reading *REQUIRED iff* and no check at all: `n` iff the shape is a series,
+# `esp` iff the vtype names a space, and `unit`, `scale` and `vns` iff the kind
+# is in the vendor range -- which is P-204 in as many words. Enforcing them was
+# attempted in this commit and backed out: the width fixtures build a row with
+# every optional key present, which those conditions make illegal, so the
+# committed byte widths for a `SignalRow` and a `ParamRow` have to be re-derived
+# against the widest row that can legally exist. That is a piece of work with
+# arithmetic in it, not a rider on this one.
+#
+# P-204, P-205 and P-206 therefore stay up, with honest reasons now: P-204 is
+# unenforced and buildable, P-205's *set `since` when the thing behind the row
+# changes* needs a controller that maintains rows, and P-206's `elem`-as-position
+# half is already enforced by `ElementAt` while its `ebase` half is a client
+# rule -- so it needs a `[[clauses]]` entry and both halves tested before it can
+# be named, or it reads covered on one clause.
+#
+# 45 -> 44. P-204 comes down, and it is the arithmetic in the paragraph above
+# being done rather than a name found for a test. `Row::new` reads the five
+# conditional keys now -- `n` iff the shape is a series, `esp` iff the vtype
+# names a space, `unit`, `scale` and `vns` iff the kind is a vendor's own -- in
+# both directions, because a standard kind carrying its own unit is a second
+# source of truth for the number on a screen and a vendor kind without one is a
+# number nothing can render.
+#
+# The width fixtures moved with it, which is the part that had to be re-derived:
+# a `SignalRow` at its widest is 94 bytes and a `ParamRow` 100, not 96 and 101.
+# Every optional key present is what makes a row widest, and `n` and `esp` are
+# legal only when `shape` is 2 and `vtype` is 3 or 4 -- one byte each where the
+# type's widest is two. The widest row the *types* permit is a row the field
+# lists forbid, and it was what the encoder test and `vectors/v1.json` both
+# measured. Rows per page did not move: 880/94 and 880/100 are still 9 and 8.
+#
+# P-205 and P-206 stay up, and P-206's reason needed correcting too -- the same
+# stale-blocker shape, this time in a doc comment. `a_label_written_where_a_
+# position_belongs_is_refused` said it could not be named after P-206 because
+# *there is no `ebase` in the tree*. There is: a `SignalRow` carries it at key 12
+# and the committed vector publishes one. What P-206's other clause actually
+# needs is a **reader** -- an omitted `ebase` is read as 1, element `k`'s label is
+# `ebase` + `k` -- and nothing in `km43` decodes a descriptor row. It comes
+# down with a decoder, not with an `ebase`.
+#
+# P-103 was re-read in the same pass and its blocker holds: no key number for a
+# per-section `shadow` flag exists, because the section bodies are DEFERRED entry
+# 9's. **Capability bit 7 is not it**, and it is worth naming here because
+# somebody will find it and think the rule is met: it is live, it says *any
+# behaviour is in shadow mode*, and it is site-wide. P-103 asks which behaviour,
+# under one key repeated in all four sections. A site-wide bit cannot answer that
+# and a deployment whose whole purpose is being audited is exactly where the
+# difference bites.
+
+# 44 -> 44, and the specification gained a rule. P-182 was promoted into
+# PROTOCOL.md and arrived **covered**, with a `[[clauses]]` entry naming all
+# four of the things it says -- so the count did not move. That is the shape this
+# file wants: the rule went in when the last of its three sweeps existed rather
+# than when the first did, because a four-clause rule standing on one test reads
+# greener than an unbuilt one and nobody re-reads a number that is already green.
+
+# 44 -> 43. P-205 comes down, and it is the entry above coming true rather than
+# a name found for a test: *set `since` when the thing behind the row changes*
+# needed a controller that maintains rows, and now there is one. `Topology`
+# carries the revision its rows are, stamps `since` on every row it takes, and
+# has the two operations that move it -- a device replaced, a component that
+# means something else.
+#
+# **`since` is stamped and is not a field of the row**, which is what makes it
+# worth anything: a config write declares what a device *is*, and the controller
+# says when it last became that. A caller-supplied `since` is a number a driver
+# can get wrong, and the whole point of the field is that a client refuses to
+# plot history across it -- a wrong one draws the old shunt and the new one as
+# one continuous meter, with a step in the middle that reads as consumption
+# nobody had.
+#
+# It takes a `[[clauses]]` entry because it names two rows with two different
+# triggers, and one test cannot stand behind both.
+#
+# The revision moving *with* the row is not decoration either: P-150 makes a
+# descriptor change a revision change, and two calls leave a window where the row
+# describes the new instrument under the old `rev`. A client fetching inside it
+# caches a row nothing will ever tell it to discard. It also closed a hole this
+# file did not know about -- `Presences::same_revision` could not check the
+# topology's revision because a `Topology` did not have one, and it does now.
+
+# 43 -> 42. P-206 comes down, and it is the paragraph above coming true: *it
+# comes down with a decoder, not with an `ebase`*. There is a decoder now.
+# `RowSlots::decode` walks the same field table the encoder walks, in the other
+# direction, so a row this crate refuses to write is a row it refuses to read --
+# a short row, a row that says *series* and never says how long, and a row
+# carrying one key twice, which is the one only the other end can produce
+# (P-016 makes `CborWriter` refuse to emit it and P-017 forbids the reader from
+# requiring canonical order).
+#
+# The two clauses are the default and the arithmetic, and the second is why this
+# needed a real fixture rather than a width one. **A series based at 1 gives the
+# same answer whether the reader adds `ebase` or ignores it**, so the obvious
+# test passes on the implementation the rule exists to forbid. Pack 2 is based at
+# 17 and its element 7 is cell 23.
+#
+# What the vectors published before this was half a rule: `concerns_0x8F` carries
+# *element 7 of signal 204* and nothing published said what signal 204's elements
+# are called, so the two numbers met only in a sentence in `rows_readable`. Prose
+# is what P-206 exists because somebody implemented from. `signal_series` is that
+# descriptor, and the integration test reads both artefacts and joins them --
+# move either and it goes red.
+#
+# The row-name check in `xtask` refused the new vector, which was the right
+# answer: two suffixes meant two prescriptions, and a third row shape needs a
+# third. `Fill::Series` names its two extra keys rather than numbering them, so
+# renumbering `ebase` in `PROTOCOL.md` moves what the bytes have to carry.
+#
+# Two things this turned up and did not fix. `n` is documented as `2..MAX_SERIES_
+# LEN` and nothing checks it, so `signal_widest` publishes a series of 255 --
+# which is the P-204 shape again, a documented range with no check, and bounding
+# it re-derives a committed width. And `ebase` has no bound at all, so a series
+# based near the top of `u16` runs out of labels before it runs out of elements;
+# the reader refuses rather than wrapping, which is right, but the encoder can
+# still build the row.
+
+# 42 -> 42, and the specification gained a sentence. P-206 now says `ebase` + `n`
+# - 1 MUST fit a `u16`, which is the third of the two findings the entry above
+# recorded and did not fix. A label that wraps is not a missing label, it is a
+# **different cell**: sixteen elements based at `0xFFFF` render their second as
+# cell 0, a number somebody can find on some other rack, and nothing in the row
+# or the reading looks wrong. It takes a third `[[clauses]]` fragment rather than
+# raising the count, because the rule was already covered and this is one more
+# thing it says.
+#
+# The other finding came down with it and needed no new rule: `n` is `2..MAX_
+# SERIES_LEN` in the field list and nothing read it, so `signal_widest` published
+# a series of **255** for as long as the row existed. A series past
+# `MAX_SERIES_LEN` has elements no `Concern` can name -- `ElementAt` stops there
+# -- so a 32-element signal registers and publishes and then a fault on its cell
+# 20 has no position to travel in. That is why a 32-cell string is two signals,
+# and until now the encoder would happily have written it as one.
+#
+# **The widest signal row is 93 bytes, not 94, and this is the third time that
+# number has moved for the same reason.** 96 -> 94 was the conditions; 94 -> 93
+# is the ranges. Each time the fixture was built from what the *types* permit and
+# each time the field list forbade it, so the published vector, the encoder test
+# and the row-width table all measured a row that could not legally exist. Rows
+# per page did not move: 880/93 is still 9.
+#
+# What is left of the same shape, recorded rather than fixed: `sig` from 1,
+# `cmp` 0 reserved on a `ComponentRow`, and six keys that are closed sets wearing
+# a bare `u8` -- `shape`, `vtype`, `domain`, `dir`, `hist`, `transport`. The six
+# want generated enums off the registry rather than range checks, which is the
+# no-stringly-typed rule one layer down and a different piece of work from this.
+
+# 42 -> 42, and this is the last of the three findings the two entries above
+# recorded: six keys that are closed sets wearing a bare `u8`. `transport`,
+# `shape`, `vtype`, `domain`, `dir` and `hist` each had a list of legal values in
+# a comment and a check nowhere, and each has had a generated enum with a
+# `TryFrom<u8>` sitting beside it the whole time.
+#
+# What a client does with an unallocated one is the failure. `domain` says
+# whether a number is *now* or *yesterday's peak*, so an unrecognised one either
+# blanks a reading or renders yesterday's maximum as the present; `shape` decides
+# which of two arrays a reading travels in, so a third value is a signal whose
+# readings can never be delivered. None of the six has a vendor range, so a
+# number outside one is error 1 -- unlike `product`, `dialect` and the two
+# `role`s, which P-019 gives one and which a test now says out loud must **not**
+# be refused. Blanking a snapshot because somebody hung a vendor meter next to
+# the frost probe is one line of over-eager checking away.
+#
+# **The row-width table has moved three times and every move was toward the
+# numbers derived by hand before any of it was built.** Bus 47, Device 170,
+# Component 80, Signal 90, Param 98 -- the encoder wrote 48/96/101, then
+# 48/94/100, then 48/93/100, and each round the *table* was edited to match the
+# encoder while the hand derivation had been right and the encoder had been
+# missing a check the field list already stated. The doc comment on
+# `a_row_at_its_widest_is_the_width_the_document_derives` has named the correct
+# five numbers since it was written. **A check whose two sides can both be edited
+# only holds if whoever edits knows which side is the witness**, and for three
+# rounds nobody did.
+#
+# This contradicted a reasoned decision in TOPOLOGY-DESIGN.md, which is amended
+# in the same commit. It said to cost every field at its **type's** widest,
+# because costing `transport` at one byte *because the space has seven members*
+# assumes a member count that can change. The objection was right and the fix was
+# wrong, because the width table and the published vector are the same bytes: a
+# row costed by type carries `domain 200`, which every conforming reader is
+# required to refuse, and a vector both ends reject is not a vector. The rule is
+# *legal* now -- the type where the field is open, the space where it is closed --
+# and the assumption is answered by not making one: the fixture asks the space
+# for its largest member on every run.
+#
+# **Watched, not argued.** A tenth `signal_domain` was allocated in
+# `protocol.toml`, the registry regenerated, and
+# `the_published_inventory_rows_are_the_ones_this_encoder_writes` went red saying
+# the vectors need regenerating -- while the width test stayed green, because
+# 9 and 10 are both one byte. That is the right division: the vector pins the
+# value, the width test pins the length.
+
+# 42 -> 43, and it is the second reason this file allows: a citation that was
+# never standing behind anything. P-097 was claimed by a `cites:` header on
+# `outbound.rs`, and it says a **client** MUST NOT re-read the log on every hole,
+# and that a hole explained by a `0x0701 records dropped` needs nothing further.
+# Both obligations are a client's. `outbound.rs` is the controller's per-session
+# outbound queue: two methods, one offering a record and one taking it out,
+# neither of which reads a log or has ever seen a hole. Nothing in this tree
+# produces an `0x0701` either, which the rule's own text already says.
+#
+# **It came out of the reading queue this file named**, which is now the second
+# thing that queue has found: P-143 was the first, claimed by `envelope.rs` and
+# performed by nothing. The queue is the fifty-odd covered rules resting on a
+# header that claims a requirement for a whole file, and the test is the same
+# each time — read the rule beside the code and ask which line performs it.
+#
+# It goes up rather than being declared, for the reason P-143 did: a test can be
+# written the day there is a client to drive, which is the line this file draws
+# between *uncovered* and *untestable*. Filling this file with `deferred` entries
+# to make the count go down is the graveyard it exists to not become.
+#
+# P-098 stays on that header and is honest: a class A event that cannot be queued
+# closes the connection, and `push` returns `Shed::CloseTheSession` when the
+# queue is full. Every record is class A while class B has no members, so a full
+# queue has nothing it may drop.
+
+# 43 -> 43, and L-180 gained the half it never had. It says three of the nine
+# link error codes MUST reach the client whose frame raised them and the other
+# six MUST NOT appear in a client-facing frame, and `envelope.rs` cited it while
+# producing exactly one of the three and classifying nothing. Not the P-097 shape
+# -- it performs a real part of the rule -- but the negative half rested on the
+# fact that no code path happened to construct one of the six, which is not a
+# check.
+#
+# `LinkErrorCode::reaches_a_client` is the classification, exhaustive so a tenth
+# code stops the build rather than defaulting to whichever answer the author of
+# the day assumed. The count does not move, because L-180 was already covered by
+# its first clause; what moves is that it can no longer read covered on it.
+
+# 43 -> 46, and it is the second reason three times over in one file. P-066,
+# P-067 and P-078 were claimed by a `cites:` header on `pairing.rs`, and every
+# obligation the three of them carry binds an **enrolment table and a pairing
+# window that do not exist**: the button gates enrolment for 120 seconds, a full
+# table refuses rather than evicts, and a `label` byte-identical to an occupied
+# row reclaims it before allocation is even attempted.
+#
+# What `pairing.rs` has is the *outcome numbers* -- `window_closed`,
+# `table_full`, `reclaimed` -- and **an outcome nobody decides is an enum variant
+# and not a gate.** Nothing in the tree holds eight rows or knows what a button
+# is; `Enrolment` appears in no file of `o89-core`. The nineteen tests in that
+# module are excellent and every one of them is about the wire and the MACs: a
+# label rewritten in flight, an ack moved to another connection, a proof under
+# another unit's key. Not one is about a table being full.
+#
+# **This is the same shape the file already applied to itself once.** *P-201,
+# P-204, P-205 and P-206 stay up. They are about `cmds` arrays, parameters and
+# `ebase`, and none of those exists yet* -- rules about a controller that does
+# not yet register rows were counted rather than claimed by the crate that
+# encodes them. These are rules about a controller that does not yet enrol
+# clients.
+#
+# The two neighbours that stay are the ones that file really does perform, and
+# the difference is worth writing down because it is the test to apply to the
+# rest of the queue. P-064's *outcome 1 carrying the allocated `client_id`* has
+# `a_client_id_of_zero_with_outcome_enrolled_is_refused` behind it. P-065's *the
+# response MUST NOT carry a starting counter* is enforced by `PairAckKey` having
+# exactly four keys and none of them a counter -- a starting counter is
+# **unencodable**, which is a stronger answer than a check. Ask of each rule
+# which line performs it, and an outcome number is never the answer.
+#
+# Uncovered rather than declared: a test can be written the day there is a table
+# to fill, which is the line this file draws between the two words.
+
+# 46 -> 47, and this entry corrects the one that stood here an hour ago. P-022's
+# window was built, cited and named after -- and **DEFERRED entry 12 says in
+# advance not to do that**, in the words the code should have been read against:
+# *a window built today is a data structure no caller consults, wearing a P-022
+# citation that nothing can make red, and the traceability matrix would report
+# the strongest rule in the document as covered.* The tests can be made red, so
+# half that sentence does not apply; the half that does is the one that matters,
+# because the rule says **the controller MUST refuse** and nothing refuses
+# anything. There is no controller-side session, so `admit` has no caller and the
+# ordering has no chokepoint.
+#
+# So the code stays and the claim goes. `requests.rs` cites nothing and its tests
+# are not named `p_022_`; it is the decision, ready for the day there is a
+# session to hold one, the way `rollcall.rs` is the watchdog decision with no
+# IWDG. The `cites:` on `envelope.rs` goes too, which is why the count moves at
+# all: that file reads `req_id` as the `u32` the rule says it is, and that
+# sentence is a statement of the field rather than one of its three MUSTs.
+#
+# **Entry 12 was itself stale on one point and is corrected with this.** It said
+# P-022 *is listed uncovered by traceability.toml*, and it was not — the header
+# on `envelope.rs` had it reading covered the whole time, which is exactly the
+# state the entry was written to prevent. Now it is what that paragraph says.
+#
+# What was found while building it stands, and is why the code is kept:
+# which reads `req_id` off the wire, and the rule's own middle paragraph says in
+# bold: *The controller MUST enforce this rather than trust it.* It MUST hold,
+# per session, the highest `req_id` accepted and which of the last `MAX_INFLIGHT`
+# it has already taken. Grepping `req_id` across `o89-core` returned **nothing**
+# outside `inflight.rs`, which is the internal link and which deliberately reuses
+# ids for retries and says so.
+#
+# What that leaves open is the rule's own worked example, and it is the sharpest
+# sentence in the specification: a frame captured off the air and withheld
+# replays whenever the holder chooses, and every other rule it meets is
+# satisfied -- the MAC is valid, the counter was above the stored one when the
+# frame was made, and the dedup entry aged out ten minutes later. **Start the
+# generator, sent at nine in the morning and delivered at midnight.** The
+# requirement exists because it was missing; the implementation was still
+# missing while the citation read covered.
+#
+# `Accepted` is that state, and its one number is worth writing down: it
+# remembers **`MAX_INFLIGHT` + 1**, not `MAX_INFLIGHT`. The floor is inclusive,
+# so the band of ids that are at once accepted and not below it is
+# `highest - MAX_INFLIGHT ..= highest` -- five values, not four. Remember four
+# and the oldest of them falls out of memory while still inside the window, and a
+# replay of it passes both checks at once: not remembered, not too old. Watched
+# by setting it to `MAX_INFLIGHT` and seeing *req_id 100 is inside the window and
+# was forgotten*.
+#
+# No error code is chosen here. The registry allocates none for a refused
+# `req_id` -- 11 `counter not fresh` is the counter's -- and this file answers
+# with a typed refusal for whoever dispatches to turn into a wire answer. A
+# module that picked one would be allocating a registry number from the middle
+# of a decision.
+
+# 46 -> 46, and this entry changes no code. It is what an audit round found, so
+# the next one does not read the same twenty rules to reach the same answers.
+#
+# **The test, sharpened by four findings: ask which line performs the rule.** An
+# outcome number is never the answer, and neither is a field's width. P-067 had
+# `table_full` and no table; P-097 had a queue that has never seen a hole; P-022
+# had `req_id` parsed as a `u32` while the paragraph demanding a per-session
+# window went unbuilt.
+#
+# Two sweeps did most of the work and both are worth running again on a later
+# spec. The first: rules whose obligations are entirely a **client's**, claimed by
+# controller-side code -- that found P-097 and flagged P-021 and P-022. The
+# second: rules containing *the controller MUST*, cross-referenced against
+# whether any `p_nnn_` test lives in `o89-core` rather than only in `km43`
+# -- that found P-022's missing window and surfaced P-080 and P-085.
+#
+# **Two boundaries found and deliberately not moved.**
+#
+# P-080 -- the six steps of a signed write, in order -- stays uncovered and that
+# is correct. Steps 1 and 2 are enforced by the type-state in `signed.rs`:
+# `SignedClaim` -> `verify` -> `SignedWrite` -> `fresh` -> `FreshWrite`, and the
+# operation cannot be read before both. Steps 3 to 6 are the dedup entry reserved
+# and persisted with the counter **in one FRAM transaction**, the execution, and
+# the entry marked complete -- none of which exists. Naming a `p_080_` test after
+# the two that work would make a six-step rule read covered on a third of itself.
+#
+# P-085 was partial and the missing half was built in the next commit, so the
+# paragraph that stood here is corrected rather than kept. `kdf.rs` and
+# `pairing.rs` perform its cryptographic half: a key derived under epoch *n* is
+# unusable at *n+1*, and a zero epoch is FRAM nobody wrote rather than an epoch.
+# What was missing was the controller's -- a factory reset that increments,
+# persists, reads back and verifies **before** clearing the client table, the
+# counters and the dedup table in that order, raising a concern at
+# `epoch write failed` and refusing every `Pair` until the write succeeds.
+# `Epoch` appeared in no file of `o89-core` and `0x0013` was produced by nothing.
+#
+# **Three that looked wrong and are right**, recorded so nobody reads them again.
+# P-026, P-099 and P-146 all say *the controller MUST* and are tested only in
+# `km43`, which is what flagged them. Each one's obligation is the **shape
+# of a response** -- stamp the handle into `session_id`, answer from `oldest_seq`,
+# answer `superseded` with an empty array -- and the wire crate is where a
+# response is composed. Testing them there is not a layer violation, it is the
+# layer.
+#
+# Also cleared this round, each by finding the line: P-005 and P-006 (a
+# `const_assert!` ties the reported caps to `limits.rs`, so *report what you
+# enforce* is checked at compile time), P-064, P-065 (`PairAckKey` has four keys
+# and none is a counter, so a starting counter is **unencodable**), P-084 (the
+# identity is checked after the MAC and before any counter, by type-state, with a
+# `compile_fail` doctest), P-102 and P-140 (`bare()` returns a `Hint`, so an
+# unauthenticated error cannot be passed where a fact is wanted), and L-002
+# (`Envelope::decode`'s classifier is named `client_type` and both firmwares run
+# it, so the comms processor refusing a forwarded link-local frame is that code).
+
+# 46 -> 46 again, and again the number not moving is the point: P-085 read as
+# covered before any of its controller half existed. `Epochs` is that half now.
+#
+# **The order is the whole rule and it is a type.** [`Clearing`] is the
+# permission to clear, its field is private and there is no constructor, so the
+# only one that exists came out of a read-back that agreed -- *clear before the
+# epoch is verified* is not a rule somebody has to remember, it is a program that
+# does not compile. A `compile_fail` doctest says so, and it was watched: making
+# a failed read-back return `Ok(Clearing)` turns three tests red.
+#
+# Two decisions inside it worth arguing with rather than re-deriving.
+#
+# **The bar on pairing is not persisted.** A failed write bars `Pair` for the
+# rest of the run, and a reboot lifts it -- because a reboot reads whatever FRAM
+# actually holds, which after a failed write is the epoch that was already there,
+# and pairing under *that* is what was safe before anybody asked for a reset. The
+# bar exists to stop this run enrolling somebody under a number it is no longer
+# sure of, not to remember a reset that did not happen.
+#
+# **A read-back that disagrees and one that returns nothing are carried apart.**
+# `found: Option<Epoch>` rather than a bool, because a zero is FRAM nobody wrote
+# and a wrong number is a part that took a write and lost it -- different faults
+# in the same chip, and a technician driving out wants to know which.
+#
+# What is still absent is the storage either side of it: `Epochs::bump` says what
+# to persist and `read_back` takes what came back, and nothing writes FRAM. That
+# is the same seam `Rollcall` leaves for the IWDG, and it is what lets a torn
+# write be tested on a laptop.
+
+# 47 -> 47. P-085's claim was held to the same test the entry above applies to
+# P-022's, and it survives — but only two of its four controller obligations do,
+# so it takes a `[[clauses]]` entry rather than a covered mark that reads as all
+# four. The difference from P-022 is worth stating once because it is the line
+# between a decision worth citing and one that is not: **P-022's ordering cannot
+# be checked without the path it orders against, and P-085's cannot be violated
+# at all.** One waits for a caller; the other is a program that does not compile.
+#
+# The two without an actor are recorded in that entry: nothing raises the
+# concern, and nothing consults `may_pair` because no `Pair` is answered
+# anywhere. That last one is the same absence that took P-066, P-067 and P-078
+# off `pairing.rs` an hour earlier, which is the useful part — the audit found
+# the missing pairing machine twice from two directions, and the second time it
+# was the author's own new code that ran into it.
+
+# 47 -> 44. The enrolment table exists, and P-066, P-067 and P-078 come back
+# down the way the entry that took them off `pairing.rs` said they would: *rules
+# about a controller that does not yet enrol clients*. Now it does.
+#
+# **Four separate findings converged on this absence and the fourth was this
+# session's own new code.** Three citations came off `pairing.rs` because an
+# outcome number is not a gate; then `reset.rs` was written and its `may_pair`
+# had nothing to consult, because no `Pair` was answered anywhere. A gap that
+# four readings arrive at from four directions is the one to build.
+#
+# The order is the rule and it is what the tests pin: **an open window, then a
+# byte-identical label, then the lowest free slot, then refuse.** Reclaim before
+# allocate is the one somebody gets wrong -- under the other order a phone
+# reinstalled every few months takes a fresh row each time, a site with one owner
+# runs out of a table sized for eight people, and `table_full` comes to mean
+# eight *pairings* rather than eight distinct labels. Watched by making the
+# reclaim unreachable: three tests red, including the full-table one.
+#
+# The byte comparison has its own test and its own three forbidden operations
+# named -- no case folding, no trimming, no Unicode normalisation. Folding to
+# lowercase turns exactly one test red, and the failure it prevents is one phone
+# silently inheriting another's row, its `client_id` and its capability mask
+# because somebody typed a capital.
+#
+# **P-078's second paragraph had no actor when the table landed, and it has one
+# now**: see the entry below, which closes it in the same shape P-085's ordering
+# is closed in.
+
+# 44 -> 43. P-022 is cited where it is performed, which is `Sessions::admit` —
+# and the reason it can be is that **DEFERRED entry 12's trigger was already
+# met.** That entry says the window waits on *a controller-side session, in
+# whichever crate ends up owning one, so the window has a caller and the ordering
+# has a chokepoint*. It is precise that `km43` has no such type and it is
+# right, and it stops one crate short: `o89-core`'s `Sessions` is the controller's
+# view, it has held the rows and the bindings all along, and `admit` is a gate
+# that already answers P-143's error 4 and error 9.
+#
+# So the window went in beside them. **Nothing downstream of `admit` has run**,
+# which is what makes *without acting, and before the counter is read* true by
+# construction rather than by a comment asking somebody to keep it that way.
+#
+# Two decisions in the wiring worth reading before they are changed.
+#
+# **The window belongs to the session, not the connection.** A fresh `Hello` on
+# the same row starts it over. Carried across, a client that reconnects and
+# numbers from where it left off is refused every request it sends with no way to
+# tell why — watched by deleting the reset, which turns exactly that test red.
+#
+# **Taking the `req_id` at the gate, before the MAC, is safe here and would not
+# be one layer out.** Reaching `Admission::On` already requires a bound
+# connection, so a frame that has not been through `Hello` is error 4 and never
+# touches the window. There is no third party who can burn a session's `req_id`s;
+# the only one who can is the client whose window it is.
+#
+# What is still deferred is the number. `Admission::Replay` is its own answer
+# rather than a `Refuse(code)`, because the registry allocates none — 7 `busy` is
+# the *count* of requests in flight and 11 is the signed counter, one layer
+# further in and after the point this refusal has to happen. Entry 12's other
+# half stands, and it is an allocation somebody argues for out loud.
+
+# 43 -> 43, and it closes P-078's second paragraph rather than moving a number.
+# *Every session bound to that `client_id` MUST be unbound before the row is
+# rewritten, and the counter MUST NOT be reset while any binding survives.* The
+# table landed with that recorded as owed, and owing it is the shape this file
+# spent the day removing from other people's citations.
+#
+# **So the ordering is a type, the way P-085's is.** `Clients::pair` no longer
+# rewrites a row it finds: it hands back a `Reclaim`, and only
+# `Clients::reclaimed` writes -- taking an `Unbound` that `Sessions::unbind_all`
+# is the only thing that builds. The token carries **whose** sessions went,
+# because unbinding client 3 and rewriting client 1 leaves exactly the hole the
+# rule closes: a live session on row 1 holding a key derived under the old
+# enrolment while the counter goes back to zero underneath it.
+#
+# Watched both ways -- dropping the row check on the token, and making
+# `unbind_all` take every binding on the site, which would log eight people out
+# because one of them reinstalled an app.
+#
+# **A defect in the table's first commit went with it.** `Clients` held its own
+# `counter`, and `counters.rs` has owned the per-client high-water mark all
+# along with an `enrolled` that puts it back to zero. Two tables both believing
+# a number is how they come to disagree, and the one not swept by every path is
+# the one that goes stale. The field is gone, the counter clause is cited where
+# the counter is, and the test drives both tables so the ordering between them is
+# visible: unbind, rewrite, then `Counters::enrolled`.
+
+# 43 -> 43, and **P-080 stays uncovered on purpose** while two rules it sits
+# beside were found broken. The count not moving is the honest answer: that rule
+# is six numbered steps, steps 4 and 6 want the entry and the counter persisted
+# in **one FRAM transaction**, and nothing in this tree writes FRAM. A test named
+# after it would report a six-step rule as covered on a sixth of itself, and the
+# `cites:` header that would do the same was written and taken off again in the
+# same commit.
+#
+# It nearly arrived as a DEFERRED entry instead. The reading was that P-080
+# steps 4 and 6 introduce an in-flight/complete entry that P-120 to P-124 never
+# mention again, so what a retry meets against an in-flight entry is unanswered.
+# **That was wrong and the specification answers it in full**, three lines below
+# the step: the controller MUST NOT assume either side of `execute` and MUST
+# answer from the **state store**, which is authoritative for what the hardware
+# is doing. Checking before writing the entry is the whole of why it is not
+# there.
+#
+# What the checking found instead were two present defects, both with the failure
+# named in the spec's own prose:
+#
+# **An entry was created for a command that was then refused.** `rejected`,
+# `inhibited` and `unauthorised` each name a condition the client is expected to
+# retry past -- the selector was at Off and somebody has since turned it. Leave
+# an entry behind and the retry that should finally run is answered `duplicate`:
+# the same silent no-op wearing the word for success that the table exists to
+# prevent, reached from the other side.
+#
+# **A match was answered `duplicate` unconditionally.** A live match MUST be
+# answered with the outcome that was **recorded** -- `shadowed` where it was
+# `shadowed`. A retried command in shadow answered `duplicate` tells the client
+# an action was taken at a site where, by definition, nothing was actuated, and
+# shadow mode is the whole deployment strategy: a month of it is meant to be
+# evidence about the firmware that will later be given authority.
+#
+# So `admit` reserves and `finished` completes or discards, and the seat between
+# them has no public constructor. `Verdict::InFlight` hands the reset case back
+# rather than choosing -- guessing `duplicate` silently fails to start and
+# guessing `fresh` starts an engine that may already be running.
+#
+# The entry now exists **from the moment a command is reserved**, which is
+# P-080's ordering and the part that was invisible before: written only after the
+# operation ran, it is exactly the record a brown-out between the two destroys.
+
+# 43 -> 43, and P-051 comes off the header queue rather than out of the count.
+# It was covered the whole time by a `cites:` on `wrapper.rs`, which performs
+# the half that is a type: `Wrapper<Unverified>` cannot hand out a payload, so
+# *verify before decoding* is a program that does not compile. The other half is
+# a counter, and it did not exist.
+#
+# **It was named in three doc comments, each of which said it belonged
+# somewhere else.** `Traffic::FailedMac` said it counts against
+# `MAX_AUTH_FAILURES` instead of refreshing expiry; `BadProof::outcome` said the
+# count "belongs to whoever holds the connection row"; and the P-077 test that
+# feeds a failed MAC said the same in passing. There was no somewhere else --
+# `MAX_AUTH_FAILURES` was not a constant in the workspace, only a word in prose.
+# Grepping a cap and finding only comments is the same finding shape as P-097
+# and P-022, and it is worth adding to the sweep list: **a limit the
+# specification names, grepped for as an identifier rather than as a word.**
+#
+# What it costs to be missing is in P-051's own paragraphs. `Pair` is the one
+# message that has to work while somebody is standing at the panel with a phone,
+# it is answered before any session exists, and answering it costs an
+# HMAC-SHA256. Unmetered, a peer within BLE range makes the controller compute
+# one per frame for as long as it likes and nothing ever ends the conversation.
+#
+# Three clauses, because three different pieces of code:
+#
+# **The cap closes the connection**, reason 3, and the row goes with it -- and in
+# `Link` the challenge goes too, for the reason expiry already gives. A peer that
+# has just failed eight proofs is the last one whose leftovers should be lying
+# around for whoever gets that handle next.
+#
+# **A `Goodbye` and a fresh `Hello` do not clear the count**, which is
+# conformance item 7's own sentence. So `hello` resets `seen` and deliberately
+# does not touch `failures`, one field over, and the reasons are opposite: a new
+# session's `req_id`s have nothing to do with the last one's, and a threshold the
+# peer resets by handshaking again is not a threshold. Watched by clearing it,
+# which turns exactly that test red.
+#
+# **Only a proof that was computed and failed counts.** Outcome 2
+# `window_closed` and outcome 4 `table_full` verify nothing, and counting them
+# would let anybody close a technician's connection by sending `Pair` at a
+# controller with no window open. That is one exhaustive match on `Outcome`, so a
+# sixth outcome has to answer it.
+#
+# One decision inside it worth arguing with rather than re-deriving. **The window
+# is anchored on the first failure of a run rather than sliding.** Sliding wants
+# `MAX_AUTH_FAILURES` ticks in every connection row -- a kilobyte of `u64`s -- and
+# what it buys is that a peer cannot straddle the boundary with seven either
+# side. Both permit the same sustained seven a minute; the difference is one
+# burst of fourteen HMACs on a part that computes one in about a millisecond,
+# and the number this bounds is CPU.
+#
+# `VERIFICATION.md` moved with it. Its stage-7 row called this an open question
+# -- *P-051 says `Pair` is the exception; the Limits section says the cap is
+# reached by presenting proofs it cannot pass* -- and P-051 has answered it in
+# full for as long as that paragraph has been there. A row describing a
+# contradiction that was resolved is a document telling somebody to go and
+# re-argue a decision.
+
+# 43 -> 43 across four commits, and this entry is the method rather than the
+# number. **Sweep the registry for values nothing produces**, which is the same
+# question as *which line performs the rule* asked from the wire's end instead
+# of the specification's.
+#
+# Two passes, both cheap enough to run every round:
+#
+# **Every backticked ALL_CAPS name in PROTOCOL.md, LINK.md and REGISTRY.md,
+# grepped across the workspace as an identifier rather than as a word.** That is
+# what found `MAX_AUTH_FAILURES` living only in three doc comments, each saying
+# the count belonged somewhere else. Twenty-four names; one other did not
+# resolve, and that was `MAX_LOG_PAGE` being one name over the two constants
+# `limits.rs` actually derives.
+#
+# **Every generated enum variant nothing outside `generated.rs` names, keeping
+# the enums where *some* variants are used.** A wholly unused enum is a message
+# not built yet; a partly used one is a path with a hole. Match the variant as a
+# bare token or `capability.rs` reads as dead, because it imports its outcomes
+# as `SetConfigOutcome` and friends.
+#
+# Four holes came out of the second pass and every one was a decision that had
+# been made with no number attached to it:
+#
+# - `CloseReason::Shedding` had no producer. `Shed::CloseTheSession` is P-098's
+#   decision and carried no reason, so the dispatcher picks one -- and reason 1
+#   is nearest to hand and wrong, because `session_expired` tells a client that
+#   was mid-alarm it went quiet and gives it no cause to catch up from its last
+#   `seq`.
+# - `TimeOffer` was 3 of 4 and all three lived inside a test, as a hand-written
+#   match with a bare `4` for `needs_button`. On a `TimeOfferAck` 4 is
+#   `refused_step_too_large`. Two registries in one match, which is L-162's own
+#   failure reproduced inside a test.
+# - `ClientConnected::RefusedLinkNotUp` had no producer and `PeerLink` had no
+#   caller. Those turned out to be the same hole.
+# - `linkup.rs` held 261 and 256 as `pub const`s with an `assert_ne!` between
+#   them, which is the retyped-vector shape a fifth time wearing a number.
+#
+# **Three residues are documented as reserved and were checked rather than
+# assumed**: `Presence::Degraded` (TOPOLOGY-DESIGN says it is not produced and
+# the producer lands with the driver work), `TimeOffer` outcome 3 (L-152
+# withdraws it), and `SetConfig::Staged`. The rest are messages nobody has
+# built.
+#
+# The shape all four share is worth naming for the next round: **a type in
+# `o89-core` that decides something the wire has a number for, and does not
+# carry the number.** The house pattern is `Full::code`, `Connected::outcome`,
+# `Recorded::on_retry`, `Outcome::code`, `Source::recorded` -- the decision
+# holds the mapping, exhaustively, so a new variant breaks the build. `Shed`,
+# `Refusal` and `Refused` were the three that did not.
+
+# 43 -> 43 again, and the sweep that produced the entries above has a third
+# form worth writing down because it found four more: **a type whose own doc
+# comment says an obligation belongs somewhere else, grepped for that
+# somewhere.**
+#
+# `Rung::LinkDown` says *sessions are gone* and nothing made them go.
+# `Traffic::FailedMac` said the count belonged to whoever holds the connection
+# row. `BadProof::outcome` said the same. `Challenges::present` held P-061's
+# single-use rule and `Link` -- the only thing that owns a `Challenges` -- had
+# no way to call it. In each case the sentence was true and the place it pointed
+# at was empty.
+#
+# The four this round, all on the link seam and all reachable only once `Link`
+# owned the `PeerLink`:
+#
+# **L-070's outcome 4.** `ClientConnectedAck` allocates `refused_link_not_up`
+# and `Connected` had three variants for a four-outcome message. The case is the
+# ordinary boot race -- `ClientConnected` beating `LinkUp` up the wire -- and
+# taking it allocates a row against a link whose majors may differ.
+#
+# **L-041's teardown had no trigger.** `Learned::restarted` and
+# `Sessions::comms_rebooted` both existed and nothing called one from the other.
+#
+# **L-110's first sentence had no actor**, and the reboot case does not cover
+# it: a stack that wedges for six seconds and answers again comes back on the
+# *same* `boot_id`, and the rail is not cut until sixty. That silence is exactly
+# the one `link_up` never hears about.
+#
+# **L-033's code 258 was produced by nothing.** `forwards_client_frames`
+# answered a bool where the rule names a number, and 261 could not stand in for
+# it because L-180 keeps 261 off a client-facing frame.
+#
+# **P-061 was the sharpest of the four and the least visible.** A challenge is
+# single-use, consumed by the first `Hello` or `Pair` that presents it -- and
+# `Link` could mint one and drop one and never spend one, so a captured `Hello`
+# proof replayed for the whole 120 seconds. The table enforced the rule
+# correctly and nothing could ask it to.
+#
+# `Link` grew four methods and a field, and the argument for each is the one its
+# own header already makes about the challenge table: **the mint is part of
+# answering `accepted`**. So is knowing whether the link is up, so is spending
+# the challenge a proof was computed against, and so is dropping the rows a
+# reboot or a silence took. A caller expected to notice and then remember to say
+# so is a caller that forgets once.
+
+# 43 -> 43, and the last four findings of the round came out of the same sweep
+# pointed at one registry: **the condition space**. Four values are allocated for
+# concerns the controller raises about itself -- `counter write failed`, `epoch
+# write failed`, `clock stepped`, `floor overridden` -- and TOPOLOGY-DESIGN.md
+# names the set in one sentence. Three of the four were produced by nothing.
+#
+# What made them invisible is that each alarm *did* carry a number: `kind:
+# EventKind::CONCERN_RAISED`. That is `0x0501`, which is the same value for
+# every concern in the log, so an alarm holding only that is a record saying *a
+# concern was raised* and nothing else. Reading the field list, the type looks
+# complete.
+#
+# **Two of them carried, instead, a magnitude the rules explicitly forbid.**
+# P-115 spends a sentence on it: *the concern names the condition and not the
+# size of the step -- the `time set` record carries the old value and the new
+# one, so the step is already written, and one number recorded twice is two
+# numbers that can disagree.* P-116 points at that sentence for its own.
+#
+# `FloorOverridden.backwards_by` was worse than a duplicate. It measured against
+# the **floor**, not against the previous clock, so it was a third quantity that
+# disagrees with the record by construction -- and the case the test exercises
+# is one where the clock was never known at all, so there was no old value to
+# subtract and a number was being reported for a distance nobody had measured.
+#
+# The two clock conditions are `0x0014` and `0x0015`, one apart, and they send
+# somebody to look at completely different things: a schedule that fired twice
+# because the wall clock jumped, against a person who stood at the panel and
+# authorised going backwards. That is the mix-up the sweep would not have caught
+# and a test now does.
+#
+# The sweep is a test now rather than something somebody ran once: every
+# condition this controller raises, matched exhaustively, each arm reaching it
+# by driving the decision that raises it. They live in three modules that cannot
+# ask each other anything, which is exactly why nothing noticed.
+
+# 43 -> 43, and the last sweep of the round is the one to run on a crate rather
+# than on the specification: **a `&mut self` method returning a bare decision,
+# where nothing forces the caller to read it.** Fourteen in `o89-core`, and the
+# type at the top of the list was `Decision` -- the whole boundary this project
+# draws, dropped in silence by construction, because a behaviour that decided
+# and was not acted on leaves no pin to check afterwards.
+#
+# `#[must_use]` on the type rather than the method, which is where this crate
+# already puts it. Forty sites came back, and what they showed was not forty
+# bugs:
+#
+# **A signature was wrong.** `Site::run(minutes)` returned the last `Decision`
+# while two thirds of its callers were advancing rather than asking. When a
+# `must_use` fires on most callers, the return type is saying the wrong thing.
+#
+# **Ladders were pinned at one rung.** `backpressure.rs` walked to the third
+# shed by calling `shed` twice and dropping both -- and the first two are what
+# L-023 is *about*. `heartbeat.rs` walked to a resync dropping every beat on the
+# way. Both now say what rung each step is on.
+#
+# **Two frost ticks turned out to be something other than what I would have
+# written down.** A stale probe's first tick is `Hold`, not `Energise`: the
+# grace has not run, so it holds on the last thing it knew rather than falling
+# to a safe-looking off. An hour later it is `Energise`, because past the grace
+# this behaviour's `on_unknown` is to heat. Neither was recorded anywhere and
+# both were being returned and discarded.
+#
+# The rule went into `.claude/rules/code-style.md` beside the one about a
+# decision carrying its own wire number, because the two are the same idea from
+# opposite ends: what a decision *is* should be impossible to get wrong, and
+# what happens to it should be impossible to skip.
+
+# 43 -> 43, and the round finished on the queue the check itself prints:
+# **states two or more things and stands on one test.** Read rule by rule
+# against the code rather than swept, and the first thing it found was mine.
+#
+# `Refusal::client_outcome` mapped a rate-limited `Time 0x0A` to `TimeAck`
+# outcome 2 `rejected`. P-118 says **error 7 `busy`, before the operation
+# executes**. P-113 and P-114 were read when that mapping was written an hour
+# earlier and P-118 was not, so the two window edges got their numbers right and
+# the rate limit got whichever arm it fell into — the same defect the mapping
+# was introduced to fix, one rule over.
+#
+# What it costs a client is why the codes differ at all: `rejected` reads as
+# *the time you sent is wrong* and sends a phone to check its own clock, while
+# error 7 reads as *the controller did not do this, send it again*, and waiting
+# out the quarter hour is the thing that works.
+#
+# **Three rules in three modules turned out to be one shape**, which is the part
+# worth keeping. P-079's counter that will not persist, P-118's rate limit and
+# P-122's full dedup table are all error 7 rather than an outcome, and all three
+# for one reason: nothing has reached a handler, so there is no ack to carry an
+# outcome. That is P-141's own condition rather than an exception to it.
+#
+# So there is a type: `Answered<T>` is `Ack(T)` or `Error(ErrorCode)`. A method
+# that returns only the outcome leaves the other arm for a caller to invent, and
+# inventing it is exactly what happened.
+#
+# P-124 came down the same path. `Verdict` had five variants and one carried a
+# number; a reused `cmd_id` is outcome 2 `rejected` with a `detail`, and the
+# answer a dispatcher reaches for without it is `duplicate` — the one P-124
+# spends three paragraphs forbidding, because a client told it stops satisfied
+# with nothing having run. Two of the five answer nothing on purpose: `Fresh`
+# means execute and `InFlight` means ask the state store, which is P-080's own
+# instruction.
+
+[ratchet]
+# 42 -> 35 in one night, and what the last of it found is worth more than the
+# number. Five rules were reached for and put back untested, each because the
+# thing it constrains does not exist:
+#
+#   P-080  sequences six steps for `Command 0x08`. Nothing handles a command.
+#          The pieces are here -- `dedup.rs`, `counters.rs` -- and nothing
+#          sequences them. Testable the day one request dispatcher does.
+#   P-097  a client must not re-read the log on every hole. `o89-cli` neither
+#          subscribes nor tracks `seq` gaps, so there is no hole to react to.
+#   P-119  the same client, comparing its highest accepted `seq` against what
+#          arrives inside MAC'd responses. Same absence.
+#   P-123  `inhibited` and `shadowed` are outcomes, not errors. Half is
+#          reachable: nothing produces the wire `Command::Inhibited`, and
+#          `Decision::Inhibited` lives in the behaviour layer and never reaches
+#          an ack. A test would assert what an enum contains.
+#   P-112  events written with no timestamp are never stamped later. No path
+#          writes one, so there is nothing to leave alone.
+#
+# **They stay uncovered on purpose.** The header of this file draws the line
+# between *uncovered* and *untestable* and says what filling the gap with
+# declarations turns this into. A rule whose subject has not been built is not
+# untestable; it is untested, and the discomfort is the point. P-143 is the
+# precedent -- it sat here waiting for a dispatcher and then turned out not to
+# need one, which is an argument against declaring anything early.
+#
+# The 23 `L-` rules are one absence rather than 23: LINK.md describes the comms
+# processor's protocol and no code in this tree implements it.
+#
+# What did come down: P-012 and P-017 needed no new capability and had simply
+# never been looked at; P-014 and P-068 were implemented and unnamed; P-024 and
+# P-071 needed the cable to stop being a serial port before a test could reach
+# them, which is the seam being in the wrong place rather than the rule being
+# hard. P-055 was implemented **wrongly** and the test is the fix.
+
+# 33 -> 122, and the specification did not gain a rule. The protocol moved
+# into its own repository, and the controller's tests did not come with it:
+# 27 files in `o89-core` and one in `o89-cli` carry `p_nnn_` and `l_nnn_`
+# tests, and every rule they stood behind now reads uncovered here. That is
+# 89 rules, and it is the honest number for this tree -- nothing in it enrols a
+# client, sweeps a concern table, holds a session row or speaks the link, so a
+# test named after one of those rules would stand over nothing, which is the
+# failure this file exists against.
+#
+# The rule that the count only rises when the specification gains a rule
+# holds one repository over. origin89 keeps its own copy of this ratchet over
+# the same specification, walking this repository beside its own crates, and
+# the 33 lives there. What this number now says is what the wire crate's own
+# tests stand behind, and it comes down for the same two reasons it always
+# did: a test written here, or a rule that turns out to be the wire's.
+#
+# The `[[clauses]]` entries below whose fragments no test here names stay.
+# They say what a test must be called to stand behind a rule that says two
+# things, wherever that test lives, and deleting them would let the controller's
+# copy read a half-built rule as covered.
+
+uncovered = 122
+
+# P-045 is the shape this file is for. Nothing can drive an implementation into
+# transmitting a key it does not have, so the thing that stands behind it reads
+# the corpus rather than an implementation: every derived key and the printed
+# secret, hunted for in the bytes of every MAC'd body in the vectors. The check
+# named here has to be one `cargo xtask check` actually runs, or the nomination
+# reads as coverage forever.
+[[entry]]
+id = "P-045"
+kind = "spec-check"
+check = "no_response_carries_key_material"
+reason = """
+No test can prove a negative about every implementation. What can be proved is \
+that no artefact we publish carries key material, which is what \
+no_response_carries_key_material reads out of the vectors — the bytes, not the \
+description of the bytes, because an early draft returned the client's \
+long-term key in a perfectly well formed pairing response."""
+
+# The subject of P-033 is a connector. A host test cannot tell a board that
+# carries RTS/CTS from one that does not, because on the host both are a `Vec`.
+[[entry]]
+id = "P-033"
+kind = "hardware"
+reason = """
+The requirement is about two wires. It is proved on the bench by a worst-case \
+frame ten thousand times at 921600 with flow control, zero CRC failures, and \
+the same run with the two lines disconnected, which must fail — proving the \
+requirement by demonstrating its absence is the only thing that stops it being \
+a sentence. The dated bench log that records it is named here once it exists; \
+until a board with the production connector has been run, this entry is what \
+says nobody has checked."""
+
+# VERIFICATION.md section 1 names this file's four kinds and gives a worked
+# example of each. Two of those examples are requirements, and neither had an
+# entry here — so the document that governs this file and the file itself
+# disagreed about which bucket two rules were already in.
+
+# P-103's own last sentence defers it: until the `shadow` key number lands with
+# the section schemas, there is no field an implementer can write.
+[[entry]]
+id = "P-103"
+kind = "deferred"
+reason = """
+The requirement is a promise about what a section must contain rather than a \
+field that exists. DEFERRED entry 9 owns the section body schemas, and its \
+trigger — the first configuration written over the API rather than flashed — is \
+this test's due date. A test written now would assert a key number nobody has \
+allocated, which is the shape of check that passes forever and means nothing. \
+It comes out of this bucket in the same commit as the schema."""
+
+# P-075 is a SHOULD about a client, and the half that matters is a person.
+[[entry]]
+id = "P-075"
+kind = "judgement"
+reason = """
+A test can prove the controller surfaced a regressed `log_newest_seq` or \
+`state_seq`, and nothing can prove an operator read it. It is SHOULD rather \
+than MUST for a reason this corpus states out loud: a board swap or a NOR erase \
+regresses the sequence legitimately, and a hard rule would turn a repair into a \
+lockout at a site four hours from a road. Saying that here is more honest than \
+a test named after the surfacing that stands in for the reading."""
+
+# Requirements that state more than one thing.
+#
+# A rule with two clauses used to read as covered the moment one of them had a
+# test. P-164 sat that way: the validity clause tested, the concern clause
+# unwritten, and the only thing that said so was a paragraph in
+# TOPOLOGY-DESIGN.md saying the matrix could not tell. A half-built rule read
+# greener than an unbuilt one, which is the worst direction for this file to be
+# wrong in — nobody goes looking at a number that is already green.
+#
+# A clause is a fragment of a test name. Not a count of tests, because two tests
+# about the same clause satisfy a count and prove nothing. Renaming a test that
+# stands behind a clause turns this red on purpose: the rename is exactly when
+# somebody should be asked whether the clause still has a test.
+#
+# This table is for rules that say two things. Most say one, and adding them
+# here would make it a tax rather than a check.
+
+[[clauses]]
+id = "P-164"
+each = ["is_never_published", "raises_a_concern"]
+reason = """
+Two sentences joined by MUST and MUST: report `validity 8 unnamed_state` with \
+no value, and raise a concern carrying the source's own code and namespace. The \
+first was built and tested for months while the second did not exist — there \
+was no concern table in o89-core at all — and the matrix read the rule as \
+covered throughout."""
+
+[[clauses]]
+id = "P-202"
+each = ["required_exactly_where", "one_address_on_one_bus"]
+reason = """
+Presence and uniqueness are different failures. An addressed transport with no \
+address is a device nothing can reach; an unaddressed one carrying an address \
+is a number nothing uses. Two devices at one address on one bus is the worse \
+half, and a test for either one alone leaves the other looking checked."""
+
+[[clauses]]
+id = "P-187"
+each = ["cycle_is_unconstructible", "deeper_than_the_cap"]
+reason = """
+A chain that returns to where it started makes every walk non-terminating; one \
+past the cap makes a walk unbounded on a controller with no allocator to bound \
+it. Both are refused and they are refused by different code, so one test cannot \
+stand behind the other."""
+
+[[clauses]]
+id = "P-180"
+each = ["only_when_it_is_over", "cid_is_reused_only_after"]
+reason = """
+`cleared` being terminal and a `cid` not being reallocated until the record \
+announcing it is committed are two rules with one number. The first is about \
+what a client still sees; the second is about a client acknowledging by an id \
+that now means something else."""
+
+# The client half of this one — a page count is `min(row cap, byte cap ÷ row
+# width)` — stays uncounted for the reason P-203's does. It binds whoever reads
+# the response, and nothing in this tree reads one.
+[[clauses]]
+id = "P-211"
+each = ["carries_the_age_it_accumulated", "raised_again_starts_at_zero"]
+reason = """
+Carrying the age across a restart and refusing to restore a row that cannot be \
+dated are two halves with one number, and the second is the one with no obvious \
+encoding: key 9 is always present, so there is no third value meaning *unknown*. \
+The answer is that the row is not restored at all and the condition is raised \
+again under a new `cid`, which is a different assertion from the first and fails \
+on a different implementation."""
+
+[[clauses]]
+id = "P-051"
+each = ["close_the_connection", "do_not_clear_the_count", "counts_against_the_shed"]
+reason = """
+Verify-before-decode and the shed counter are one rule number over two crates, \
+and the second half was named in three doc comments as belonging somewhere \
+else. Closing the connection at the cap, not clearing the count on a fresh \
+`Hello`, and counting only a proof that was computed and failed are three \
+different pieces of code: the first bounds the CPU a peer can spend, the second \
+is what makes it a threshold rather than a formality, and the third is what \
+stops anybody closing a technician's connection by sending `Pair` at a \
+controller with no window open."""
+
+[[clauses]]
+id = "P-143"
+each = ["before_any_hello", "does_not_hold"]
+reason = """
+Error 4 and error 9 are two states of a connection row and they are told apart \
+by different code: nothing has proved on it, against something has and it is not \
+this session. A client that gets the wrong one of the two is told to do the \
+wrong thing -- *Hello first* to a client already past that, or *your session is \
+gone* to one that never had one."""
+
+[[clauses]]
+id = "P-182"
+each = ["quiet_pair", "clearing_at_dawn", "one_event_and_not_one_per_device", "still_owes"]
+reason = """
+Four things with one number, and they are bounded in three different tables by \
+three different pieces of code: the validity sweep in `store.rs`, the concern \
+sweep in `concerns.rs`, and the presence sweep in `presence.rs`. A test for one \
+leaves the other two looking checked, which is exactly how this rule sat \
+unpromoted -- it was written whole and buildable a third at a time. The fourth \
+clause is the carry-over, and it is the one a `const_assert!` over four \
+constants cannot see: delete it and every cap still holds while 336 of 384 \
+changes disappear."""
+
+[[clauses]]
+id = "P-205"
+each = ["first_appeared", "replaced_instrument"]
+reason = """
+Two rows with two different triggers under one number: a `DeviceRow` is re-dated \
+when the **physical instrument** behind it changes, a `ComponentRow` when **that \
+row's meaning** does. The half with no obvious encoding is the first clause -- \
+there is no value meaning *never changed*, so a row that has been through \
+nothing carries the revision it first appeared at, and a test for the \
+replacement alone leaves that looking checked while an implementation is free to \
+send a zero somebody renders as *rev 0*."""
+
+[[clauses]]
+id = "P-022"
+each = ["already_took", "older_than_the_reorder_window"]
+reason = """
+The two refusals the controller owes fail differently. A repeat replays an \
+**answer** as well as a request, because the response MAC covers \
+`(type, session_id, req_id)` and nothing that moves. A stale one is a frame \
+captured off the air in the morning and delivered at midnight, whose MAC, \
+counter and dedup entry are all satisfied by the time it lands -- and P-022's \
+receiver rule is the only thing in the corpus that notices. The client's own \
+half -- strictly increasing, never reused, no more than `MAX_INFLIGHT` \
+outstanding -- stays uncounted, because the rule says in bold that the \
+controller MUST enforce rather than trust it, so the client half is not what \
+makes it true."""
+
+[[clauses]]
+id = "P-085"
+each = ["nothing_is_cleared_until", "bars_pairing_until_one_succeeds"]
+reason = """
+**Two of this rule's four controller obligations have an actor and two do not, \
+and the entry exists to stop the covered mark reading as all four.** What is \
+real is the ordering, and it is real in the strongest way available: `Clearing` \
+is the permission to clear, its field is private and there is no constructor, so \
+*clear before the epoch reads back* cannot be written. That is why this citation \
+stands where P-022's did not -- P-022's *before the counter is read* needs the \
+counter path to exist before anyone can check it, and this needs nothing. A \
+failed read-back returning no `Clearing` is the second half, and it is the same \
+guarantee.
+
+What has no actor: **nothing raises the concern** at `epoch write failed` \
+though the condition is allocated and named here, **nothing consults \
+`may_pair`** because no `Pair` is answered anywhere -- which is the same absence \
+that took P-066, P-067 and P-078 off `pairing.rs` -- and **there is no client \
+table to clear**. The cryptographic half is elsewhere and uncounted: `kdf.rs` \
+makes a key derived under epoch *n* unusable at *n+1*, and `pairing.rs` refuses \
+a zero epoch as FRAM nobody wrote."""
+
+[[clauses]]
+id = "L-180"
+each = [
+    "only_the_three_a_clients_own_frame_raised",
+    "no_refusal_from_a_client_transport",
+]
+reason = """
+Which three reach a client and which six must not are two halves that fail \
+differently. Withhold one of the three and a client retries forever against a \
+refusal it never hears; leak one of the six and a browser is shown `no \
+authorisation` or `link major mismatch` -- true statements about a machine it is \
+not talking to, and nothing at all about its own request, so whoever is reading \
+the screen goes looking for a permission problem in the client. The second \
+clause is also the one that needs a **driver** rather than a predicate: a \
+classification nothing consults is a comment with a return type, so the test \
+runs every way an envelope can be refused through the one function that turns a \
+client-facing decode into a code on the wire."""
+
+[[clauses]]
+id = "P-206"
+each = ["numbers_its_elements_from_one", "cell_twenty_three", "labels_leave_u16"]
+reason = """
+The default, the arithmetic and the range are three separate failures. An \
+omitted `ebase` read as 0 numbers every cell of every unnumbered string one \
+below what somebody counting them out loud would say; `elem` rendered as a label \
+rather than added to `ebase` sends them to the other pack entirely; and a base \
+near the top of `u16` wraps, which is not a missing label but a **different \
+cell**. All three produce a small number that parses and MAC-verifies, and the \
+second passes a test written only for the first -- a series based at 1 gives the \
+same answer whether the reader adds `ebase` or ignores it, which is the fixture \
+anybody writes first."""
+
+[[clauses]]
+id = "P-208"
+each = ["row_cap", "byte_cap"]
+reason = """
+Two arms, and the whole rule is that either can bind first. A page of narrow \
+rows runs out of rows and a page of wide ones runs out of bytes, and a test for \
+one leaves the other looking checked — which is how a cap nobody can reach ends \
+up being planned against. The arms bind in different messages, so the tests are \
+in different crates: the row arm in `concerns.rs`, where twelve widest rows are \
+756 bytes against 832 and the byte cap is never touched, and the byte arm in \
+`inventory.rs`, where five widest device rows spend 850 of 880 and the row cap \
+of 48 is nowhere near."""
+
+[[clauses]]
+id = "P-209"
+each = ["by_cid_ascending", "is_still_a_row_the_walk_returns"]
+reason = """
+The order and what `total` counts are two ways for one walk to lie. Ordered by \
+where a row landed in the table, two pages hold one row twice and miss another. \
+Counting only the rows still going wrong, `total` comes back smaller than the \
+number of rows the same walk delivers, and a client cannot tell a short page \
+from a torn one. Both pass every other assertion on the page."""
+
+# The client half — restart a walk whose `seq` moved — is a client rule and stays
+# uncounted, like P-208's.
+[[clauses]]
+id = "P-210"
+each = ["moves_the_pin", "does_not_tear_a_walk"]
+reason = """
+Moving the pin and not moving it are separate failures with opposite costs. A \
+pin that never moves cannot report a torn walk at all; a pin that moves on every \
+state change tears every walk in progress on the morning thirty-two per-cell \
+rows clear at once, which is the site this table was sized for. The second test \
+is the one that fails on the tempting implementation, and it passes the first."""

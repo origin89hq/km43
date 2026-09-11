@@ -1,0 +1,23 @@
+[package]
+name = "xtask"
+version = "0.0.0"
+publish = false
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# NOTHING here may depend on km43, and `cargo xtask check` enforces it.
+# The vectors this crate generates are the independent witness against which
+# km43 is tested; a witness that shares the accused's code is not a witness.
+# See the independence check in src/check.rs for the failure that rule is
+# written against.
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+ciborium.workspace = true
+sha2.workspace = true
+hmac.workspace = true
+hkdf.workspace = true

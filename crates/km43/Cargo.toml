@@ -1,0 +1,36 @@
+[package]
+name = "km43"
+version = "0.0.0"
+description = "KM43, the bounded, authenticated message protocol between an Origin89 controller and its clients"
+readme = "../../README.md"
+keywords = ["protocol", "no-std", "embedded", "cbor"]
+categories = ["no-std", "no-std::no-alloc", "encoding", "embedded"]
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# The same audited primitives the generator uses. Sharing them means the
+# published vectors no longer prove our HMAC independently — but what the
+# vectors are for is the *preimage*, which is what varies, what a label bug
+# already broke once, and what stays independent. Agreement with RFC 4231
+# covers the primitive, and there is nothing to gain from our own SHA-256: it
+# is a fixed function with no restriction of ours to enforce, unlike the CBOR
+# subset.
+hkdf.workspace = true
+sha2.workspace = true
+hmac.workspace = true
+subtle.workspace = true
+
+# `clippy::pedantic` minus the one lint that contradicts a house rule.
+#
+# `missing_errors_doc` demands a `# Errors` heading on every function returning
+# `Result`; CLAUDE.md forbids "a ceremonial `# Errors` section repeating what
+# the `Result` says". Both cannot hold. This is settled here, once, at the
+# manifest — not with `#[allow]` at three call sites, which CLAUDE.md bans
+# outright and which would have to be repeated on every fallible function
+# written from now on.
+[lints.clippy]
+pedantic = "warn"
+missing_errors_doc = "allow"

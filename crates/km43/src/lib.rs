@@ -1,0 +1,74 @@
+//! The wire: framing, the envelope, and the numbers both implementations agree on.
+//!
+//! `no_std` and **no `alloc`**, which is the proof rather than the claim: with no
+//! allocator crate in scope there is no `Vec` and no `Box` to reach for, so
+//! "nothing here allocates" is enforced by the compiler on every build rather
+//! than by a rule somebody remembers. Nothing here names a peripheral either —
+//! a caller hands it bytes.
+
+#![no_std]
+#![deny(unsafe_code)]
+
+macro_rules! const_assert {
+    ($($tt:tt)*) => {
+        const _: () = assert!($($tt)*);
+    };
+}
+
+mod admission;
+mod cbor;
+mod changes;
+mod cobs;
+mod concerns;
+mod crc;
+mod empty;
+mod envelope;
+mod error;
+mod event;
+mod frame;
+mod generated;
+mod handshake;
+mod ident;
+mod inventory;
+mod kdf;
+mod limits;
+mod linklocal;
+mod mac;
+mod pairing;
+mod reading;
+mod readings;
+mod readlog;
+#[cfg(test)]
+mod render;
+mod routing;
+mod signed;
+mod subscribe;
+mod wrapper;
+
+pub use admission::*;
+pub use cbor::*;
+pub use changes::*;
+pub use cobs::*;
+pub use concerns::*;
+pub use crc::*;
+pub use empty::*;
+pub use envelope::*;
+pub use error::*;
+pub use event::*;
+pub use frame::*;
+pub use generated::*;
+pub use handshake::*;
+pub use ident::*;
+pub use inventory::*;
+pub use kdf::*;
+pub use limits::*;
+pub use linklocal::*;
+pub use mac::*;
+pub use pairing::*;
+pub use reading::*;
+pub use readings::*;
+pub use readlog::*;
+pub use routing::*;
+pub use signed::*;
+pub use subscribe::*;
+pub use wrapper::*;

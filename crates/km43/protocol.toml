@@ -1,0 +1,2729 @@
+#  The registry, as data.
+#
+#  Data only. The tables in REGISTRY.md are generated from this file; the prose
+#  around them is written by hand and stays there, because a data file carrying
+#  three kilobytes of markdown is a document with an awkward syntax.
+#
+#  Edit here, run `cargo xtask registry`, commit both. A number allocated in two places is a number two people can
+#  allocate differently, which is the whole failure this registry exists to stop
+#  and which it was itself an instance of: PROTOCOL.md said `Pair` authenticates
+#  under a derived key while REGISTRY.md said it did not, for an hour, in a repo
+#  with five audit rounds behind it.
+
+[meta]
+protocol = "1.0"
+
+# The two spaces where an unrecognised value is surfaced rather than refused.
+# Everything else is a closed set: an unknown value there is a message whose
+# meaning is not knowable, and the generated bindings make that a parse error.
+skip_unknown = ["metric_kind", "event_kind"]
+
+[[messages]]
+request = 0x00
+response = 0x80
+name = "Discover"
+auth_request = "none"
+auth_response = "none"
+status = "live"
+since = "1.0"
+
+[[messages]]
+request = 0x01
+response = 0x81
+name = "Hello"
+auth_request = "proof"
+auth_response = "rsp"
+status = "live"
+since = "1.0"
+
+[[messages]]
+request = 0x02
+response = 0x82
+name = "Snapshot"
+auth_request = "wrq"
+auth_response = "rsp"
+status = "retired"
+since = "1.0"
+
+[[messages]]
+request = 0x03
+response = 0x83
+name = "Subscribe"
+auth_request = "wrq"
+auth_response = "rsp"
+status = "live"
+since = "1.0"
+
+[[messages]]
+response = 0x04
+name = "Event"
+auth_response = "evt"
+status = "live"
+since = "1.0"
+
+[[messages]]
+request = 0x05
+response = 0x85
+name = "ReadLog"
+auth_request = "wrq"
+auth_response = "rsp"
+status = "live"
+since = "1.0"
+
+[[messages]]
+request = 0x06
+response = 0x86
+name = "GetConfig"
+auth_request = "wrq"
+auth_response = "rsp"
+status = "reserved"
+since = "1.0"
+
+[[messages]]
+request = 0x07
+response = 0x87
+name = "SetConfig"
+auth_request = "signed"
+auth_response = "rsp"
+status = "reserved"
+since = "1.0"
+
+[[messages]]
+request = 0x08
+response = 0x88
+name = "Command"
+auth_request = "signed"
+auth_response = "rsp"
+status = "reserved"
+since = "1.0"
+
+[[messages]]
+request = 0x09
+response = 0x89
+name = "Firmware"
+auth_request = "signed"
+auth_response = "rsp"
+status = "reserved"
+since = "1.0"
+
+[[messages]]
+request = 0x0A
+response = 0x8A
+name = "Time"
+auth_request = "signed"
+auth_response = "rsp"
+status = "live"
+since = "1.0"
+
+[[messages]]
+request = 0x0B
+response = 0x8B
+name = "Pair"
+auth_request = "pair_key"
+auth_response = "pair_key"
+status = "live"
+since = "1.0"
+
+[[messages]]
+request = 0x0C
+response = 0x8C
+name = "Goodbye"
+auth_request = "wrq"
+auth_response = "rsp"
+status = "live"
+since = "1.0"
+
+[[messages]]
+request = 0x0D
+response = 0x8D
+name = "Inventory"
+auth_request = "wrq"
+auth_response = "rsp"
+status = "live"
+since = "1.0"
+
+[[messages]]
+request = 0x0E
+response = 0x8E
+name = "Readings"
+auth_request = "wrq"
+auth_response = "rsp"
+status = "live"
+since = "1.0"
+
+[[messages]]
+request = 0x0F
+response = 0x8F
+name = "Concerns"
+auth_request = "wrq"
+auth_response = "rsp"
+status = "live"
+since = "1.0"
+
+[[messages]]
+request = 0x10
+response = 0x90
+name = "History"
+auth_request = "wrq"
+auth_response = "rsp"
+status = "reserved"
+since = "1.0"
+
+[[message_ranges]]
+request_lo = 0x60
+request_hi = 0x7E
+response_lo = 0xE0
+response_hi = 0xFE
+name = "link-local"
+see = "LINK.md"
+since = "1.0"
+
+[[messages]]
+response = 0xFF
+name = "Error"
+auth_response = "rsp_or_bare"
+status = "live"
+since = "1.0"
+
+
+[[errors]]
+code = 1
+meaning = "Malformed frame"
+macd = false
+status = "live"
+
+[[errors]]
+code = 2
+meaning = "Unknown message type"
+macd = false
+status = "live"
+
+[[errors]]
+code = 3
+meaning = "Protocol major mismatch"
+macd = false
+status = "live"
+
+[[errors]]
+code = 4
+meaning = "Hello required first"
+macd = false
+status = "live"
+
+[[errors]]
+code = 5
+meaning = "Payload too large"
+macd = false
+status = "live"
+
+[[errors]]
+code = 6
+meaning = "Unknown section"
+macd = true
+status = "live"
+
+[[errors]]
+code = 7
+meaning = "Busy — retry"
+macd = true
+status = "live"
+
+[[errors]]
+code = 8
+meaning = "Session table full"
+macd = false
+status = "live"
+
+[[errors]]
+code = 9
+meaning = "Session expired"
+macd = false
+status = "live"
+
+[[errors]]
+code = 10
+meaning = "Bad MAC"
+macd = false
+status = "live"
+
+[[errors]]
+code = 11
+meaning = "Counter not fresh"
+macd = true
+status = "live"
+
+[[errors]]
+code = 12
+meaning = "Unknown client"
+macd = false
+status = "live"
+
+[[errors]]
+code = 13
+meaning = "Pairing window closed"
+macd = false
+status = "withdrawn"
+
+[[errors]]
+code = 14
+meaning = "Stale challenge — reconnect and retry"
+macd = false
+status = "live"
+
+[[errors]]
+code = 15
+meaning = "Snapshot exceeds channel cap"
+macd = true
+status = "withdrawn"
+
+[[errors]]
+code = 16
+meaning = "Not permitted on this transport"
+macd = false
+status = "withdrawn"
+
+[[errors]]
+code = 17
+meaning = "Clock not set"
+macd = true
+status = "withdrawn"
+
+[[error_ranges]]
+lo = 256
+hi = 511
+name = "link-local"
+see = "LINK.md"
+
+# Allocated in LINK.md, listed here so a number cannot be handed out twice and so
+# the three that reach a client can be named by a generated constant rather than
+# by a literal somebody typed.
+[[enums.transport]]
+value = 1
+name = "rs485"
+status = "reserved"
+meaning = "A two-wire multidrop serial bus; `addr` is required on it (P-189)"
+
+[[enums.transport]]
+value = 2
+name = "can"
+status = "reserved"
+meaning = "CAN, where a device is addressed by node id"
+
+[[enums.transport]]
+value = 3
+name = "ve_direct"
+status = "reserved"
+meaning = "Victron's point-to-point serial; one device per port, so no address"
+
+[[enums.transport]]
+value = 4
+name = "local_io"
+status = "reserved"
+meaning = "The controller's own inputs and outputs"
+
+[[enums.transport]]
+value = 5
+name = "ip"
+status = "reserved"
+meaning = "Ethernet or Wi-Fi, addressed by host"
+
+[[enums.transport]]
+value = 6
+name = "onewire"
+status = "reserved"
+meaning = "1-Wire, addressed by ROM id"
+
+[[enums.transport]]
+value = 7
+name = "internal"
+status = "reserved"
+meaning = "Inside the controller; nothing physical to unplug"
+
+[[enums.shape]]
+value = 1
+name = "scalar"
+status = "reserved"
+meaning = "One value"
+
+[[enums.shape]]
+value = 2
+name = "series"
+status = "reserved"
+meaning = "`n` values in one signal, addressed by position"
+
+[[enums.vtype]]
+value = 1
+name = "gauge"
+status = "reserved"
+meaning = "A quantity that moves in both directions"
+
+[[enums.vtype]]
+value = 2
+name = "counter"
+status = "reserved"
+meaning = "A running total. It never reverses, which is why a coarse history bucket takes the last constituent and not their sum (P-195)"
+
+[[enums.vtype]]
+value = 3
+name = "enum"
+status = "reserved"
+meaning = "One member of the space named by `esp`"
+
+[[enums.vtype]]
+value = 4
+name = "flags"
+status = "reserved"
+meaning = "A bitmask over the space named by `esp`; member m is bit m − 1 (P-186)"
+
+[[enums.signal_domain]]
+value = 1
+name = "live"
+status = "reserved"
+meaning = "What it is now"
+
+[[enums.signal_domain]]
+value = 2
+name = "lifetime"
+status = "reserved"
+meaning = "Since the device was made"
+
+[[enums.signal_domain]]
+value = 3
+name = "since_reset"
+status = "reserved"
+meaning = "Since somebody last cleared it"
+
+[[enums.signal_domain]]
+value = 4
+name = "today"
+status = "reserved"
+meaning = "Since local midnight"
+
+[[enums.signal_domain]]
+value = 5
+name = "yesterday"
+status = "reserved"
+meaning = "The previous whole day"
+
+[[enums.signal_domain]]
+value = 6
+name = "limit_upper"
+status = "reserved"
+meaning = "A ceiling the source states it is honouring"
+
+[[enums.signal_domain]]
+value = 7
+name = "limit_lower"
+status = "reserved"
+meaning = "A floor the source states it is honouring"
+
+[[enums.signal_domain]]
+value = 8
+name = "max"
+status = "reserved"
+meaning = "The largest seen over the domain's window"
+
+[[enums.signal_domain]]
+value = 9
+name = "min"
+status = "reserved"
+meaning = "The smallest seen over the domain's window"
+
+[[enums.direction]]
+value = 1
+name = "positive_is_in"
+status = "reserved"
+meaning = "Positive flows into the component"
+
+[[enums.direction]]
+value = 2
+name = "positive_is_out"
+status = "reserved"
+meaning = "Positive flows out of it"
+
+[[enums.direction]]
+value = 3
+name = "magnitude_only"
+status = "reserved"
+meaning = "Unsigned; the sign carries no meaning"
+
+[[enums.validity]]
+value = 1
+name = "ok"
+status = "live"
+meaning = "Current"
+
+[[enums.validity]]
+value = 2
+name = "stale"
+status = "live"
+meaning = "Was good; the value is the last known and `age` says how old"
+
+[[enums.validity]]
+value = 3
+name = "initialising"
+status = "live"
+meaning = "The source is up and has not produced a first reading"
+
+[[enums.validity]]
+value = 4
+name = "unsupported"
+status = "live"
+meaning = "This device does not implement it, including a vendor's in-band absence pattern (P-176)"
+
+[[enums.validity]]
+value = 5
+name = "sensor_fault"
+status = "live"
+meaning = "The source reports it bad, or the reply did not arrive intact"
+
+[[enums.validity]]
+value = 6
+name = "out_of_range"
+status = "live"
+meaning = "A number arrived and was refused: impossible here, or outside `i32` at the registry's scale (P-185)"
+
+[[enums.validity]]
+value = 7
+name = "absent"
+status = "live"
+meaning = "The component or device is not present"
+
+[[enums.validity]]
+value = 8
+name = "unnamed_state"
+status = "live"
+meaning = "The source reported an operating state we have no value for (P-164)"
+
+[[enums.provenance]]
+value = 0
+name = "none"
+status = "live"
+meaning = "There is no number"
+
+[[enums.provenance]]
+value = 1
+name = "measured"
+status = "live"
+meaning = "Read directly from an instrument"
+
+[[enums.provenance]]
+value = 2
+name = "counted"
+status = "live"
+meaning = "Integrated or accumulated by the source, and trustworthy as a total"
+
+[[enums.provenance]]
+value = 3
+name = "derived"
+status = "live"
+meaning = "This controller computed it from other signals"
+
+[[enums.provenance]]
+value = 4
+name = "estimated"
+status = "live"
+meaning = "Inferred from a proxy — state of charge from terminal voltage"
+
+[[enums.provenance]]
+value = 5
+name = "reported"
+status = "live"
+meaning = "The device states it: a limit, or a setpoint it says it is honouring"
+
+[[enums.provenance]]
+value = 6
+name = "commanded"
+status = "live"
+meaning = "What was asked for, never what was observed"
+
+[[enums.severity]]
+value = 1
+name = "info"
+status = "reserved"
+meaning = "Worth recording"
+
+[[enums.severity]]
+value = 2
+name = "warning"
+status = "reserved"
+meaning = "Worth looking at"
+
+[[enums.severity]]
+value = 3
+name = "fault"
+status = "reserved"
+meaning = "Something is broken"
+
+[[enums.severity]]
+value = 4
+name = "protection"
+status = "reserved"
+meaning = "A source is refusing to operate to protect itself"
+
+[[enums.concern_state]]
+value = 1
+name = "active"
+status = "reserved"
+meaning = "The condition is present"
+
+[[enums.concern_state]]
+value = 2
+name = "active_acked"
+status = "reserved"
+meaning = "Somebody has read it. The condition is still present"
+
+[[enums.concern_state]]
+value = 3
+name = "latched_cleared"
+status = "reserved"
+meaning = "The condition is gone; the source's latch is not, and will clear on the source's own terms"
+
+[[enums.concern_state]]
+value = 4
+name = "clearing_blocked"
+status = "reserved"
+meaning = "The condition is gone and the source states it cannot reset the latch yet — the difference between *wait* and *drive out*"
+
+[[enums.concern_state]]
+value = 5
+name = "cleared"
+status = "reserved"
+meaning = "Over. Terminal, and the only state a row carries as it leaves the table (P-180)"
+
+[[enums.presence]]
+value = 1
+name = "online"
+status = "reserved"
+meaning = "Answering"
+
+[[enums.presence]]
+value = 2
+name = "degraded"
+status = "reserved"
+meaning = "Answering, with errors or omissions"
+
+[[enums.presence]]
+value = 3
+name = "offline"
+status = "reserved"
+meaning = "Was seen and has stopped answering"
+
+[[enums.presence]]
+value = 4
+name = "never_seen"
+status = "reserved"
+meaning = "Configured and has never answered"
+
+[[enums.bucket]]
+value = 1
+name = "day"
+status = "reserved"
+meaning = "Coarsest"
+
+[[enums.bucket]]
+value = 2
+name = "hour"
+status = "reserved"
+meaning = "Four quarter-hours"
+
+[[enums.bucket]]
+value = 3
+name = "quarter_hour"
+status = "reserved"
+meaning = "Finest. The three nest exactly, which is why P-194's conversion has no rounding rule"
+
+[[enums.history_source]]
+value = 1
+name = "device_reported"
+status = "reserved"
+meaning = "The device's own record, on its own axis"
+
+[[enums.history_source]]
+value = 2
+name = "controller_derived"
+status = "reserved"
+meaning = "This controller integrated it, including any bucket it aggregated (P-195)"
+
+[[enums.history_stop_reason]]
+value = 1
+name = "device_replaced"
+status = "reserved"
+meaning = "A `DeviceRow.since` boundary: a different instrument"
+
+[[enums.history_stop_reason]]
+value = 2
+name = "component_reassigned"
+status = "reserved"
+meaning = "A `ComponentRow.since` boundary: the same instrument, a different meaning"
+
+[[enums.history_stop_reason]]
+value = 3
+name = "gap_in_record"
+status = "reserved"
+meaning = "The store holds nothing here and does not claim how wide the hole is"
+
+[[enums.history_stop_reason]]
+value = 4
+name = "end_of_record"
+status = "reserved"
+meaning = "Past the newest closed bucket"
+
+[[enums.history_stop_reason]]
+value = 5
+name = "older_than_store"
+status = "reserved"
+meaning = "Before the oldest bucket held"
+
+[[enums.history_stop_reason]]
+value = 6
+name = "page_full"
+status = "reserved"
+meaning = "The response reached its byte or point cap"
+
+[[enums.topology_change_reason]]
+value = 1
+name = "boot"
+status = "reserved"
+meaning = "First inventory after a restart"
+
+[[enums.topology_change_reason]]
+value = 2
+name = "config_write"
+status = "reserved"
+meaning = "An operator wrote topology"
+
+[[enums.topology_change_reason]]
+value = 3
+name = "sub_device_adopted"
+status = "reserved"
+meaning = "A module answered and was taken into the tables"
+
+[[enums.topology_change_reason]]
+value = 4
+name = "sub_device_removed"
+status = "reserved"
+meaning = "A module was taken out of them"
+
+[[enums.topology_change_reason]]
+value = 5
+name = "device_replaced"
+status = "reserved"
+meaning = "The instrument behind a row changed (P-156)"
+
+[[enums.inventory_kind]]
+value = 1
+name = "buses"
+status = "reserved"
+meaning = "`BusRow`"
+
+[[enums.inventory_kind]]
+value = 2
+name = "devices"
+status = "reserved"
+meaning = "`DeviceRow`"
+
+[[enums.inventory_kind]]
+value = 3
+name = "components"
+status = "reserved"
+meaning = "`ComponentRow`"
+
+[[enums.inventory_kind]]
+value = 4
+name = "signals"
+status = "reserved"
+meaning = "`SignalRow`"
+
+[[enums.inventory_kind]]
+value = 5
+name = "parameters"
+status = "reserved"
+meaning = "`ParamRow`"
+
+[[enums.control_owner]]
+value = 1
+name = "local_panel"
+status = "reserved"
+meaning = "The buttons on the device itself"
+
+[[enums.control_owner]]
+value = 2
+name = "this_controller"
+status = "reserved"
+meaning = "Origin 89"
+
+[[enums.control_owner]]
+value = 3
+name = "bms"
+status = "reserved"
+meaning = "The battery is deciding"
+
+[[enums.control_owner]]
+value = 4
+name = "gx_ess"
+status = "reserved"
+meaning = "A Victron GX or ESS assistant"
+
+[[enums.control_owner]]
+value = 5
+name = "remote_client"
+status = "reserved"
+meaning = "A person, through this protocol"
+
+[[enums.control_owner]]
+value = 6
+name = "device_automation"
+status = "reserved"
+meaning = "The device's own schedule or logic"
+
+[[outcomes.inventory]]
+value = 1
+name = "ok"
+status = "live"
+meaning = "The request was answered, in whole or in part"
+
+[[outcomes.inventory]]
+value = 2
+name = "superseded"
+status = "live"
+meaning = "`rev` is neither 0 nor the controller's current one (P-146)"
+
+[[outcomes.inventory]]
+value = 3
+name = "unknown_kind"
+status = "live"
+meaning = "`what` is not in 1..5"
+
+[[outcomes.inventory]]
+value = 4
+name = "out_of_range"
+status = "live"
+meaning = "`from` is past the last row the request resolves to"
+
+[[outcomes.readings]]
+value = 1
+name = "ok"
+status = "live"
+meaning = "The request was answered, in whole or in part"
+
+[[outcomes.readings]]
+value = 2
+name = "superseded"
+status = "live"
+meaning = "`rev` is neither 0 nor the controller's current one (P-146)"
+
+[[outcomes.readings]]
+value = 3
+name = "unknown_selector"
+status = "live"
+meaning = "A `Sel` names a `dev`, `cmp` or `sig` that does not exist at this `rev`"
+
+[[outcomes.readings]]
+value = 4
+name = "out_of_range"
+status = "live"
+meaning = "`from` is past the last row the request resolves to"
+
+[[outcomes.concerns]]
+value = 1
+name = "ok"
+status = "live"
+meaning = "The request was answered, in whole or in part; an empty table is this and not outcome 3"
+
+[[outcomes.concerns]]
+value = 2
+name = "superseded"
+status = "live"
+meaning = "`rev` is neither 0 nor the controller's current one (P-146)"
+
+[[outcomes.concerns]]
+value = 3
+name = "out_of_range"
+status = "live"
+meaning = "`from` is greater than the largest `cid` the table holds"
+
+[[outcomes.history]]
+value = 1
+name = "ok"
+status = "reserved"
+meaning = "The request was answered, in whole or in part"
+
+[[outcomes.history]]
+value = 2
+name = "superseded"
+status = "reserved"
+meaning = "`rev` is neither 0 nor the controller's current one (P-146)"
+
+[[outcomes.history]]
+value = 3
+name = "unknown_signal"
+status = "reserved"
+meaning = "`sig` does not exist at this `rev`"
+
+[[outcomes.history]]
+value = 4
+name = "series_not_historable"
+status = "reserved"
+meaning = "The signal exists and its `shape` is 2 `series`"
+
+[[outcomes.history]]
+value = 5
+name = "no_history"
+status = "reserved"
+meaning = "The signal exists, is a scalar, and carries no `hist` key"
+
+[[outcomes.history]]
+value = 6
+name = "out_of_range"
+status = "reserved"
+meaning = "`from` is past the last row the request resolves to"
+
+[[enums.unit]]
+value = 1
+name = "volt"
+status = "reserved"
+meaning = "V"
+
+[[enums.unit]]
+value = 2
+name = "ampere"
+status = "reserved"
+meaning = "A"
+
+[[enums.unit]]
+value = 3
+name = "watt"
+status = "reserved"
+meaning = "W"
+
+[[enums.unit]]
+value = 4
+name = "watt hour"
+status = "reserved"
+meaning = "Wh"
+
+[[enums.unit]]
+value = 5
+name = "ampere hour"
+status = "reserved"
+meaning = "Ah"
+
+[[enums.unit]]
+value = 6
+name = "degree celsius"
+status = "reserved"
+meaning = "°C"
+
+[[enums.unit]]
+value = 7
+name = "percent"
+status = "reserved"
+meaning = "%"
+
+[[enums.unit]]
+value = 8
+name = "hertz"
+status = "reserved"
+meaning = "Hz"
+
+[[enums.unit]]
+value = 9
+name = "second"
+status = "reserved"
+meaning = "s"
+
+[[enums.unit]]
+value = 10
+name = "minute"
+status = "reserved"
+meaning = "min"
+
+[[enums.unit]]
+value = 11
+name = "hour"
+status = "reserved"
+meaning = "h"
+
+[[enums.unit]]
+value = 12
+name = "count"
+status = "reserved"
+meaning = "a plain tally"
+
+[[enums.unit]]
+value = 13
+name = "ohm"
+status = "reserved"
+meaning = "Ω"
+
+[[enums.unit]]
+value = 14
+name = "pascal"
+status = "reserved"
+meaning = "Pa"
+
+[[enums.unit]]
+value = 15
+name = "litre"
+status = "reserved"
+meaning = "L"
+
+[[enums.unit]]
+value = 16
+name = "none"
+status = "reserved"
+meaning = "a number with no unit — an enum or a flags word"
+
+[[open_registries.component_role]]
+number = 1
+name = "pv array"
+status = "reserved"
+
+[[open_registries.component_role]]
+number = 2
+name = "mppt tracker"
+status = "reserved"
+
+[[open_registries.component_role]]
+number = 3
+name = "battery bank"
+status = "reserved"
+
+[[open_registries.component_role]]
+number = 4
+name = "battery pack"
+status = "reserved"
+
+[[open_registries.component_role]]
+number = 5
+name = "heater"
+status = "reserved"
+
+[[open_registries.component_role]]
+number = 6
+name = "contactor"
+status = "reserved"
+
+[[open_registries.component_role]]
+number = 7
+name = "fet"
+status = "reserved"
+
+[[open_registries.component_role]]
+number = 8
+name = "ac input"
+status = "reserved"
+
+[[open_registries.component_role]]
+number = 9
+name = "ac output"
+status = "reserved"
+
+[[open_registries.component_role]]
+number = 10
+name = "phase"
+status = "reserved"
+
+[[open_registries.component_role]]
+number = 11
+name = "line pair"
+status = "reserved"
+
+[[open_registries.component_role]]
+number = 12
+name = "dc output"
+status = "reserved"
+
+[[open_registries.component_role]]
+number = 13
+name = "load output"
+status = "reserved"
+
+[[open_registries.component_role]]
+number = 14
+name = "start battery"
+status = "reserved"
+
+[[open_registries.component_role]]
+number = 15
+name = "meter"
+status = "reserved"
+
+[[open_registries.component_role]]
+number = 16
+name = "circuit"
+status = "reserved"
+
+[[open_registries.component_role]]
+number = 17
+name = "merged circuit"
+status = "reserved"
+
+[[open_registries.component_role]]
+number = 18
+name = "transfer relay"
+status = "reserved"
+
+[[open_registries.component_role]]
+number = 19
+name = "inverter"
+status = "reserved"
+
+[[open_registries.component_role]]
+number = 20
+name = "charger"
+status = "reserved"
+
+[[open_registries.component_role]]
+number = 21
+name = "probe"
+status = "reserved"
+
+[[open_registries.component_role]]
+number = 22
+name = "tank"
+status = "reserved"
+
+[[open_registries.component_role]]
+number = 23
+name = "cell"
+status = "reserved"
+
+[[open_registries.component_role]]
+number = 24
+name = "relay"
+status = "reserved"
+
+[[open_registries.component_role]]
+number = 25
+name = "generator"
+status = "reserved"
+
+[[open_registries.component_role]]
+range = "`0xF000`–`0xFFFF`"
+name = "vendor range, skip-unknown under P-019"
+
+[[open_registries.device_role]]
+number = 1
+name = "solar charger"
+status = "reserved"
+
+[[open_registries.device_role]]
+number = 2
+name = "inverter"
+status = "reserved"
+
+[[open_registries.device_role]]
+number = 3
+name = "inverter charger"
+status = "reserved"
+
+[[open_registries.device_role]]
+number = 4
+name = "bms"
+status = "reserved"
+
+[[open_registries.device_role]]
+number = 5
+name = "energy meter"
+status = "reserved"
+
+[[open_registries.device_role]]
+number = 6
+name = "shunt"
+status = "reserved"
+
+[[open_registries.device_role]]
+number = 7
+name = "sensor"
+status = "reserved"
+
+[[open_registries.device_role]]
+number = 8
+name = "power module"
+status = "reserved"
+
+[[open_registries.device_role]]
+number = 9
+name = "controller"
+status = "reserved"
+
+[[open_registries.device_role]]
+number = 10
+name = "battery monitor"
+status = "reserved"
+
+[[open_registries.device_role]]
+number = 11
+name = "temperature sensor"
+status = "reserved"
+
+[[open_registries.device_role]]
+range = "`0xF000`–`0xFFFF`"
+name = "vendor range, skip-unknown under P-019"
+
+[[open_registries.measurement_point]]
+number = 1
+name = "line to neutral"
+status = "reserved"
+
+[[open_registries.measurement_point]]
+number = 2
+name = "line to line"
+status = "reserved"
+
+[[open_registries.measurement_point]]
+number = 3
+name = "terminal"
+status = "reserved"
+
+[[open_registries.measurement_point]]
+number = 4
+name = "cell"
+status = "reserved"
+
+[[open_registries.measurement_point]]
+number = 5
+name = "internal"
+status = "reserved"
+
+[[open_registries.measurement_point]]
+number = 6
+name = "ambient"
+status = "reserved"
+
+[[open_registries.measurement_point]]
+number = 7
+name = "heatsink"
+status = "reserved"
+
+[[open_registries.measurement_point]]
+number = 8
+name = "case"
+status = "reserved"
+
+[[open_registries.measurement_point]]
+number = 9
+name = "inlet"
+status = "reserved"
+
+[[open_registries.measurement_point]]
+number = 10
+name = "outlet"
+status = "reserved"
+
+[[open_registries.measurement_point]]
+number = 11
+name = "transformer"
+status = "reserved"
+
+[[open_registries.measurement_point]]
+range = "`0xF000`–`0xFFFF`"
+name = "vendor range, skip-unknown under P-019"
+
+[[open_registries.dialect]]
+number = 1
+name = "no protocol"
+status = "reserved"
+
+[[open_registries.dialect]]
+number = 2
+name = "pzem dc"
+status = "reserved"
+
+[[open_registries.dialect]]
+number = 3
+name = "epever b"
+status = "reserved"
+
+[[open_registries.dialect]]
+number = 4
+name = "victron mppt rs hex"
+status = "reserved"
+
+[[open_registries.dialect]]
+number = 5
+name = "victron gx modbus vebus"
+status = "reserved"
+
+[[open_registries.dialect]]
+number = 6
+name = "eg4 lifepower4 serial"
+status = "reserved"
+
+[[open_registries.dialect]]
+number = 7
+name = "morningstar sunsaver duo"
+status = "reserved"
+
+[[open_registries.dialect]]
+number = 8
+name = "emporia vue3 esphome i2c"
+status = "reserved"
+
+[[open_registries.dialect]]
+number = 9
+name = "ecoflow power kits"
+status = "reserved"
+
+[[open_registries.dialect]]
+range = "`0xF000`–`0xFFFF`"
+name = "vendor range, skip-unknown under P-019"
+
+[[open_registries.product]]
+number = 1
+name = "origin 89 controller"
+status = "reserved"
+
+[[open_registries.product]]
+number = 2
+name = "pzem 003"
+status = "reserved"
+
+[[open_registries.product]]
+number = 3
+name = "pzem 017"
+status = "reserved"
+
+[[open_registries.product]]
+number = 4
+name = "epever tracer b"
+status = "reserved"
+
+[[open_registries.product]]
+number = 5
+name = "victron mppt rs"
+status = "reserved"
+
+[[open_registries.product]]
+number = 6
+name = "victron multiplus"
+status = "reserved"
+
+[[open_registries.product]]
+number = 7
+name = "eg4 lifepower4"
+status = "reserved"
+
+[[open_registries.product]]
+number = 8
+name = "morningstar sunsaver duo"
+status = "reserved"
+
+[[open_registries.product]]
+number = 9
+name = "emporia vue 3"
+status = "reserved"
+
+[[open_registries.product]]
+number = 10
+name = "ecoflow power kit"
+status = "reserved"
+
+[[open_registries.product]]
+range = "`0xF000`–`0xFFFF`"
+name = "vendor range, skip-unknown under P-019"
+
+[[open_registries.vendor_namespace]]
+number = 1
+name = "victron"
+status = "reserved"
+
+[[open_registries.vendor_namespace]]
+number = 2
+name = "epever"
+status = "reserved"
+
+[[open_registries.vendor_namespace]]
+number = 3
+name = "pzem"
+status = "reserved"
+
+[[open_registries.vendor_namespace]]
+number = 4
+name = "eg4"
+status = "reserved"
+
+[[open_registries.vendor_namespace]]
+number = 5
+name = "morningstar"
+status = "reserved"
+
+[[open_registries.vendor_namespace]]
+number = 6
+name = "emporia"
+status = "reserved"
+
+[[open_registries.vendor_namespace]]
+number = 7
+name = "ecoflow"
+status = "reserved"
+
+[[open_registries.vendor_namespace]]
+number = 8
+name = "magnum"
+status = "reserved"
+
+[[open_registries.vendor_namespace]]
+number = 9
+name = "xantrex"
+status = "reserved"
+
+[[open_registries.vendor_namespace]]
+range = "`0xF000`–`0xFFFF`"
+name = "vendor range, skip-unknown under P-019"
+
+[[open_registries.condition]]
+number = 1
+name = "over voltage"
+status = "reserved"
+
+[[open_registries.condition]]
+number = 2
+name = "under voltage"
+status = "reserved"
+
+[[open_registries.condition]]
+number = 3
+name = "over temperature"
+status = "reserved"
+
+[[open_registries.condition]]
+number = 4
+name = "under temperature"
+status = "reserved"
+
+[[open_registries.condition]]
+number = 5
+name = "charge over current"
+status = "reserved"
+
+[[open_registries.condition]]
+number = 6
+name = "discharge over current"
+status = "reserved"
+
+[[open_registries.condition]]
+number = 7
+name = "short circuit"
+status = "reserved"
+
+[[open_registries.condition]]
+number = 8
+name = "overload"
+status = "reserved"
+
+[[open_registries.condition]]
+number = 9
+name = "cell imbalance"
+status = "reserved"
+
+[[open_registries.condition]]
+number = 10
+name = "low state of charge"
+status = "reserved"
+
+[[open_registries.condition]]
+number = 11
+name = "charge inhibited"
+status = "reserved"
+
+[[open_registries.condition]]
+number = 12
+name = "discharge inhibited"
+status = "reserved"
+
+[[open_registries.condition]]
+number = 13
+name = "unnamed state"
+status = "reserved"
+
+[[open_registries.condition]]
+number = 14
+name = "registration refused"
+status = "reserved"
+
+[[open_registries.condition]]
+number = 15
+name = "series too long"
+status = "reserved"
+
+[[open_registries.condition]]
+number = 16
+name = "inventory full"
+status = "reserved"
+
+[[open_registries.condition]]
+number = 17
+name = "bay flapping"
+status = "reserved"
+
+# The four the controller raises about itself. `0x0501` was `alarm raised` with
+# these as unnamed producers; it is `concern raised` now, and `cond` is the
+# discriminator DEFERRED entry 10 asked for. None of them carries a magnitude:
+# the size of a clock step is derivable from `0x0604 time set`, which already
+# owes the old value and the new one, and one number lives in one place.
+[[open_registries.condition]]
+number = 18
+name = "counter write failed"
+status = "reserved"
+
+[[open_registries.condition]]
+number = 19
+name = "epoch write failed"
+status = "reserved"
+
+[[open_registries.condition]]
+number = 20
+name = "clock stepped"
+status = "reserved"
+
+[[open_registries.condition]]
+number = 21
+name = "floor overridden"
+status = "reserved"
+
+[[open_registries.condition]]
+range = "`0xF000`–`0xFFFF`"
+name = "vendor range, skip-unknown under P-019"
+
+[[open_registries.enum_space]]
+number = 1
+name = "presence"
+status = "reserved"
+
+[[open_registries.enum_space]]
+number = 2
+name = "control owner"
+status = "reserved"
+
+[[open_registries.enum_space]]
+number = 3
+name = "generator state"
+status = "reserved"
+
+[[open_registries.enum_space]]
+number = 4
+name = "generator selector"
+status = "reserved"
+
+[[open_registries.enum_space]]
+number = 5
+name = "boot reason"
+status = "reserved"
+
+[[open_registries.enum_space]]
+number = 6
+name = "charge stage"
+status = "reserved"
+
+[[open_registries.enum_space]]
+number = 7
+name = "balancing"
+status = "reserved"
+
+[[open_registries.enum_space]]
+range = "`0xF000`–`0xFFFF`"
+name = "vendor range, skip-unknown under P-019"
+
+[[link_errors]]
+code = 256
+name = "wrong_side"
+meaning = "Unknown link-local opcode, or one sent from the wrong side"
+reaches_client = false
+status = "live"
+
+[[link_errors]]
+code = 257
+name = "link_type_on_client_transport"
+meaning = "Link-local type on a client transport"
+reaches_client = true
+status = "live"
+
+[[link_errors]]
+code = 258
+name = "before_link_up"
+meaning = "Client frame before LinkUp completed"
+reaches_client = true
+status = "live"
+
+[[link_errors]]
+code = 259
+name = "unknown_handle"
+meaning = "Unknown connection handle"
+reaches_client = true
+status = "live"
+
+[[link_errors]]
+code = 260
+name = "connection_table_full"
+meaning = "Connection table full"
+reaches_client = false
+status = "live"
+
+[[link_errors]]
+code = 261
+name = "link_major_mismatch"
+meaning = "Link protocol major mismatch"
+reaches_client = false
+status = "live"
+
+[[link_errors]]
+code = 262
+name = "too_many_outstanding"
+meaning = "Too many outstanding link-local requests"
+reaches_client = false
+status = "live"
+
+[[link_errors]]
+code = 263
+name = "non_zero_session"
+meaning = "Link-local type with a non-zero session"
+reaches_client = false
+status = "live"
+
+[[link_errors]]
+code = 264
+name = "no_authorisation"
+meaning = "No authorisation matches this image"
+reaches_client = false
+status = "live"
+
+# The per-client capability mask. P-105 is the rule; this allocates the bits and
+# the row each client_kind is handed.
+[[client_capability]]
+bit = 0
+name = "write_config"
+may = "write configuration at all"
+granted_to = ["app", "browser", "cloud", "cli"]
+status = "live"
+
+[[client_capability]]
+bit = 1
+name = "write_network_and_cloud"
+may = "write the **network** (`0x0020`) and **cloud** (`0x0021`) sections"
+granted_to = ["app", "browser", "cli"]
+status = "live"
+
+[[client_capability]]
+bit = 2
+name = "send_command"
+may = "send `Command 0x08`"
+granted_to = ["app", "browser", "cloud", "cli"]
+status = "live"
+
+[[client_capability]]
+bit = 3
+name = "set_clock"
+may = "set the clock with `Time 0x0A`"
+granted_to = ["app", "browser", "cli"]
+status = "live"
+
+[[client_capability]]
+bit = 4
+name = "push_firmware"
+may = "push firmware with `Firmware 0x09`"
+granted_to = ["app", "browser", "cli"]
+status = "live"
+
+[[client_capability]]
+range = "5–15"
+may = "unallocated"
+
+
+[[outcomes.command]]
+value = 1
+name = "accepted"
+status = "live"
+meaning = "Acted on"
+
+[[outcomes.command]]
+value = 2
+name = "rejected"
+status = "live"
+meaning = "Refused, `detail` says why"
+
+[[outcomes.command]]
+value = 3
+name = "duplicate"
+status = "live"
+meaning = "Already seen this `cmd_id`; not acted on twice"
+
+[[outcomes.command]]
+value = 4
+name = "inhibited"
+status = "live"
+meaning = "The selector is at Off, or the generator is not ours"
+
+[[outcomes.command]]
+value = 5
+name = "unauthorised"
+status = "live"
+meaning = "This client may not do this"
+
+[[outcomes.command]]
+value = 6
+name = "shadowed"
+status = "live"
+meaning = "Would have been accepted; nothing was actuated"
+
+[[outcomes.command]]
+value = 7
+name = "stale_topology"
+status = "reserved"
+meaning = "The `rev` the command was composed under is not current, so `dev` and `cmp` may name something else now (P-166)"
+
+[[outcomes.command]]
+value = 8
+name = "wrong_target"
+status = "reserved"
+meaning = "The target does not list this `kind` in its `cmds` (P-166)"
+
+
+[[outcomes.set_config]]
+value = 1
+name = "accepted"
+status = "live"
+
+[[outcomes.set_config]]
+value = 2
+name = "stale_version"
+status = "live"
+
+[[outcomes.set_config]]
+value = 3
+name = "invalid"
+status = "live"
+
+[[outcomes.set_config]]
+value = 4
+name = "unauthorised"
+status = "live"
+
+[[outcomes.set_config]]
+value = 5
+name = "exceeds_cap"
+status = "live"
+
+[[outcomes.set_config]]
+value = 9
+name = "staged"
+status = "reserved"
+meaning = "Correct, and applied at the next `MIN_REV_INTERVAL_MS` boundary rather than now (P-154)"
+
+
+[[outcomes.pair]]
+value = 1
+name = "enrolled"
+status = "live"
+
+[[outcomes.pair]]
+value = 2
+name = "window_closed"
+status = "live"
+
+[[outcomes.pair]]
+value = 3
+name = "bad_proof"
+status = "live"
+
+[[outcomes.pair]]
+value = 4
+name = "table_full"
+status = "live"
+
+[[outcomes.pair]]
+value = 5
+name = "reclaimed"
+status = "live"
+
+
+[[outcomes.time]]
+value = 1
+name = "accepted"
+status = "live"
+
+[[outcomes.time]]
+value = 2
+name = "rejected"
+status = "live"
+
+[[outcomes.time]]
+value = 3
+name = "unauthorised"
+status = "live"
+
+[[outcomes.time]]
+value = 4
+name = "needs_button"
+status = "live"
+
+
+[[outcomes.firmware]]
+value = 1
+name = "accepted"
+status = "reserved"
+
+[[outcomes.firmware]]
+value = 2
+name = "bad_offset"
+status = "reserved"
+
+[[outcomes.firmware]]
+value = 3
+name = "bad_signature"
+status = "reserved"
+
+[[outcomes.firmware]]
+value = 4
+name = "wrong_target"
+status = "reserved"
+
+[[outcomes.firmware]]
+value = 5
+name = "too_large"
+status = "reserved"
+
+[[outcomes.firmware]]
+value = 6
+name = "no_transfer_in_progress"
+status = "reserved"
+
+[[outcomes.firmware]]
+value = 7
+name = "not_owner"
+status = "reserved"
+
+[[outcomes.firmware]]
+value = 8
+name = "unauthorised"
+status = "reserved"
+
+
+
+[[metrics]]
+group = "`0x01xx` — DC electrical"
+kind = 257
+name = "DC voltage"
+unit = "V"
+scale = -3
+status = "live"
+
+[[metrics]]
+group = "`0x01xx` — DC electrical"
+kind = 258
+name = "DC current (+ into the component)"
+unit = "A"
+scale = -3
+status = "live"
+
+[[metrics]]
+group = "`0x01xx` — DC electrical"
+kind = 259
+name = "DC power (signed)"
+unit = "W"
+scale = -1
+status = "live"
+
+[[metrics]]
+group = "`0x01xx` — DC electrical"
+kind = 260
+name = "state of charge"
+unit = "%"
+scale = -1
+status = "live"
+
+[[metrics]]
+group = "`0x01xx` — DC electrical"
+kind = 261
+name = "battery temperature"
+unit = "°C"
+scale = -1
+status = "retired"
+
+[[metrics]]
+group = "`0x01xx` — DC electrical"
+kind = 272
+name = "PV array voltage"
+unit = "V"
+scale = -3
+status = "retired"
+
+[[metrics]]
+group = "`0x01xx` — DC electrical"
+kind = 273
+name = "PV array current"
+unit = "A"
+scale = -3
+status = "retired"
+
+[[metrics]]
+group = "`0x01xx` — DC electrical"
+kind = 274
+name = "PV array power"
+unit = "W"
+scale = -1
+status = "retired"
+
+[[metrics]]
+group = "`0x01xx` — DC electrical"
+kind = 288
+name = "load current"
+unit = "A"
+scale = -3
+status = "retired"
+
+[[metrics]]
+group = "`0x01xx` — DC electrical"
+kind = 289
+name = "load power"
+unit = "W"
+scale = -1
+status = "retired"
+
+[[metrics]]
+group = "`0x01xx` — DC electrical"
+kind = 304
+name = "start battery voltage"
+unit = "V"
+scale = -3
+status = "retired"
+
+
+[[metrics]]
+group = "`0x02xx` — AC electrical"
+kind = 513
+name = "AC voltage"
+unit = "V"
+scale = -1
+status = "live"
+
+[[metrics]]
+group = "`0x02xx` — AC electrical"
+kind = 514
+name = "AC current"
+unit = "A"
+scale = -3
+status = "live"
+
+[[metrics]]
+group = "`0x02xx` — AC electrical"
+kind = 515
+name = "AC power"
+unit = "W"
+scale = -1
+status = "live"
+
+[[metrics]]
+group = "`0x02xx` — AC electrical"
+kind = 516
+name = "AC frequency"
+unit = "Hz"
+scale = -2
+status = "live"
+
+[[metrics]]
+group = "`0x02xx` — AC electrical"
+kind = 517
+name = "AC energy"
+unit = "Wh"
+scale = 0
+status = "live"
+
+
+[[metrics]]
+group = "`0x02xx` — AC electrical"
+kind = 518
+name = "ac energy imported"
+unit = "Wh"
+scale = 0
+status = "reserved"
+
+[[metrics]]
+group = "`0x02xx` — AC electrical"
+kind = 519
+name = "ac energy exported"
+unit = "Wh"
+scale = 0
+status = "reserved"
+
+[[metrics]]
+group = "`0x03xx` — temperature"
+kind = 769
+name = "ambient temperature"
+unit = "°C"
+scale = -1
+status = "retired"
+
+[[metrics]]
+group = "`0x03xx` — temperature"
+kind = 770
+name = "temperature"
+unit = "°C"
+scale = -1
+status = "live"
+
+
+[[metrics]]
+group = "`0x04xx` — level"
+kind = 1025
+name = "tank level"
+unit = "%"
+scale = -1
+status = "live"
+
+[[metrics]]
+group = "`0x04xx` — level"
+kind = 1026
+name = "tank sender current"
+unit = "A"
+scale = -6
+status = "live"
+
+
+[[metrics]]
+group = "`0x05xx` — generator"
+kind = 1281
+name = "generator state (enum, see below)"
+unit = "—"
+scale = 0
+status = "live"
+
+[[metrics]]
+group = "`0x05xx` — generator"
+kind = 1282
+name = "generator run hours"
+unit = "h"
+scale = -2
+status = "live"
+
+[[metrics]]
+group = "`0x05xx` — generator"
+kind = 1283
+name = "generator starts since commissioning"
+unit = "count"
+scale = 0
+status = "live"
+
+[[metrics]]
+group = "`0x05xx` — generator"
+kind = 1284
+name = "run contact commanded (bool)"
+unit = "—"
+scale = 0
+status = "live"
+
+
+[[metrics]]
+group = "`0x06xx` — controller"
+kind = 1537
+name = "generator selector position (enum, see below)"
+unit = "—"
+scale = 0
+status = "live"
+
+[[metrics]]
+group = "`0x06xx` — controller"
+kind = 1538
+name = "uptime since boot"
+unit = "s"
+scale = 0
+status = "live"
+
+[[metrics]]
+group = "`0x06xx` — controller"
+kind = 1539
+name = "last boot reason (enum)"
+unit = "—"
+scale = 0
+status = "live"
+
+[[metrics]]
+group = "`0x06xx` — controller"
+kind = 1540
+name = "log ring utilisation"
+unit = "%"
+scale = -1
+status = "live"
+
+[[metrics]]
+group = "`0x07xx` — charger stage durations"
+kind = 1793
+name = "time in bulk"
+unit = "min"
+scale = 0
+status = "reserved"
+
+[[metrics]]
+group = "`0x07xx` — charger stage durations"
+kind = 1794
+name = "time in absorption"
+unit = "min"
+scale = 0
+status = "reserved"
+
+[[metrics]]
+group = "`0x07xx` — charger stage durations"
+kind = 1795
+name = "time in float"
+unit = "min"
+scale = 0
+status = "reserved"
+
+
+[[events]]
+kind = 257
+name = "value changed"
+class = "B"
+status = "retired"
+
+[[events]]
+kind = 258
+name = "signal validity changed"
+class = "A"
+status = "live"
+
+[[events]]
+kind = 513
+name = "generator state changed"
+class = "A"
+status = "reserved"
+
+[[events]]
+kind = 514
+name = "generator command withdrawn"
+class = "A"
+status = "reserved"
+
+[[events]]
+kind = 515
+name = "generator stop not honoured"
+class = "A"
+status = "reserved"
+
+[[events]]
+kind = 769
+name = "behaviour decision (shadow or applied)"
+class = "A"
+status = "reserved"
+
+[[events]]
+kind = 770
+name = "behaviour inhibited"
+class = "A"
+status = "reserved"
+
+[[events]]
+kind = 1025
+name = "output changed"
+class = "A"
+status = "reserved"
+
+[[events]]
+kind = 1281
+name = "concern raised"
+class = "A"
+status = "live"
+
+[[events]]
+kind = 1282
+name = "concern changed"
+class = "A"
+status = "live"
+
+[[events]]
+kind = 1537
+name = "boot"
+class = "A"
+status = "reserved"
+
+[[events]]
+kind = 1538
+name = "config changed"
+class = "A"
+status = "reserved"
+
+[[events]]
+kind = 1539
+name = "client enrolled"
+class = "A"
+status = "reserved"
+
+[[events]]
+kind = 1540
+name = "time set"
+class = "A"
+status = "reserved"
+
+[[events]]
+kind = 1793
+name = "records dropped"
+class = "A"
+status = "reserved"
+
+[[events]]
+kind = 1794
+name = "record failed CRC"
+class = "A"
+status = "reserved"
+
+[[events]]
+kind = 2049
+name = "comms link lost"
+class = "A"
+status = "reserved"
+
+[[events]]
+kind = 2050
+name = "comms power cycled"
+class = "A"
+status = "reserved"
+
+[[events]]
+kind = 2051
+name = "comms unrecoverable"
+class = "A"
+status = "reserved"
+
+[[events]]
+kind = 2052
+name = "sessions shed for backpressure"
+class = "A"
+status = "reserved"
+
+[[events]]
+kind = 2305
+name = "topology changed"
+class = "A"
+status = "live"
+
+[[events]]
+kind = 2306
+name = "device presence changed"
+class = "A"
+status = "live"
+
+
+[[codes.config_section]]
+number = 1
+name = "identity and site"
+status = "reserved"
+
+[[codes.config_section]]
+number = 2
+name = "channels"
+status = "reserved"
+
+[[codes.config_section]]
+number = 3
+name = "buses and devices"
+status = "reserved"
+
+[[codes.config_section]]
+number = 16
+name = "generator behaviour"
+status = "reserved"
+
+[[codes.config_section]]
+number = 17
+name = "frost behaviour"
+status = "reserved"
+
+[[codes.config_section]]
+number = 18
+name = "schedule behaviour"
+status = "reserved"
+
+[[codes.config_section]]
+number = 19
+name = "load-shed behaviour"
+status = "reserved"
+
+[[codes.config_section]]
+number = 32
+name = "network"
+status = "reserved"
+
+[[codes.config_section]]
+number = 33
+name = "cloud"
+status = "reserved"
+
+
+[[codes.command_kind]]
+number = 257
+name = "start generator"
+status = "reserved"
+
+[[codes.command_kind]]
+number = 258
+name = "stop generator"
+status = "reserved"
+
+[[codes.command_kind]]
+number = 259
+name = "run exercise cycle now"
+status = "reserved"
+
+[[codes.command_kind]]
+number = 513
+name = "set output"
+status = "reserved"
+
+[[codes.command_kind]]
+number = 514
+name = "clear alarm"
+status = "retired"
+
+[[codes.command_kind]]
+number = 515
+name = "acknowledge concern"
+status = "reserved"
+
+[[codes.command_kind]]
+number = 769
+name = "clear override"
+status = "reserved"
+
+
+[[codes.capability_bit]]
+number = 0
+name = "event log readable"
+status = "live"
+
+[[codes.capability_bit]]
+number = 1
+name = "configuration writable"
+status = "live"
+
+[[codes.capability_bit]]
+number = 2
+name = "commands accepted"
+status = "reserved"
+
+[[codes.capability_bit]]
+number = 3
+name = "firmware update accepted"
+status = "reserved"
+
+[[codes.capability_bit]]
+number = 4
+name = "clock settable by client"
+status = "live"
+
+[[codes.capability_bit]]
+number = 5
+name = "counted state of charge available"
+status = "live"
+
+[[codes.capability_bit]]
+number = 6
+name = "AC metering on the generator"
+status = "live"
+
+[[codes.capability_bit]]
+number = 7
+name = "any behaviour is in shadow mode"
+status = "live"
+
+[[codes.capability_bit]]
+range = "8–31"
+name = "unallocated"
+
+
+[[enums.quality]]
+value = 1
+name = "measured"
+meaning = "Read directly from an instrument"
+
+[[enums.quality]]
+value = 2
+name = "counted"
+meaning = "Integrated or accumulated, and trustworthy as a total"
+
+[[enums.quality]]
+value = 3
+name = "estimated"
+meaning = "Derived from something else, e.g. SoC from terminal voltage"
+
+[[enums.quality]]
+value = 4
+name = "stale"
+meaning = "Was measured, is no longer current: older than its channel's maximum age, or the same reading for so long that the instrument is presumed hung"
+
+[[enums.quality]]
+value = 5
+name = "absent"
+meaning = "No reading. **The value key is omitted entirely**"
+
+
+[[enums.time_source]]
+value = 1
+name = "client"
+meaning = "A signed `Time` write from an enrolled client"
+
+[[enums.time_source]]
+value = 2
+name = "ntp-via-comms"
+meaning = "A `TimeOffer` the controller accepted from the comms processor"
+
+
+[[enums.client_kind]]
+value = 1
+name = "app"
+
+[[enums.client_kind]]
+value = 2
+name = "browser"
+
+[[enums.client_kind]]
+value = 3
+name = "cloud"
+
+[[enums.client_kind]]
+value = 4
+name = "cli"
+
+
+# The three spaces P-125 names: a metric whose key 3 is an answer rather than a
+# measurement. They were prose under the metric tables until a client had to
+# decide what an unrecognised one means, and prose is not something an
+# implementation can be generated from.
+
+[[enums.generator_state]]
+value = 1
+name = "stopped"
+meaning = "No AC and our contact open. Autostart may fire"
+
+[[enums.generator_state]]
+value = 2
+name = "starting"
+meaning = "Our contact closed, no AC yet. Gives up after the start window"
+
+[[enums.generator_state]]
+value = 3
+name = "running"
+meaning = "AC present with our contact closed. Ours, and ours to stop"
+
+[[enums.generator_state]]
+value = 4
+name = "running, not ours"
+meaning = "AC present with our contact **open** — somebody started it with the fob. Not a fault, and never rendered as one"
+
+[[enums.generator_state]]
+value = 5
+name = "stop not honoured"
+meaning = "Our command was withdrawn and the AC persists. Notify; never retry"
+
+[[enums.generator_state]]
+value = 6
+name = "gave up"
+meaning = "Commanded to run and it did not, as many times as the starter is worth. The contact stays open and nothing here will try again until a person clears it — out of fuel, an oil-alert shutdown and a flat start battery are indistinguishable from the controller, and hammering a start line into any of them is wrong"
+
+
+[[enums.generator_selector]]
+value = 1
+name = "auto"
+meaning = "Behaviours may command the generator"
+
+[[enums.generator_selector]]
+value = 2
+name = "off"
+meaning = "Never command it, for any reason. A behaviour that needs it reports itself `inhibited`"
+
+[[enums.generator_selector]]
+value = 3
+name = "manual"
+meaning = "The operator is driving. The controller monitors and logs only"
+
+
+[[enums.boot_reason]]
+value = 1
+name = "power-on"
+
+[[enums.boot_reason]]
+value = 2
+name = "watchdog"
+
+[[enums.boot_reason]]
+value = 3
+name = "brown-out"
+
+[[enums.boot_reason]]
+value = 4
+name = "software reset"
+
+[[enums.boot_reason]]
+value = 5
+name = "panic"
+
+# The link-local enum spaces. Allocated here for the same reason the link error
+# codes are: a space allocated somewhere else is a space two people can allocate
+# from. LINK.md's body listings stay the documentation — they are where the rule
+# and the value sit together — and `every_live_number_is_reachable` checks that
+# every value below is named there, so the two cannot drift.
+#
+# Rendered into no Markdown table on purpose. REGISTRY.md is the client
+# protocol's registry, and eleven link-local tables in it would bury the spaces a
+# client author actually needs. They reach no client, so they are emitted into
+# the Rust bindings both firmwares share and into no TypeScript at all.
+
+[[link_outcomes.client_connected]]
+value = 1
+name = "accepted"
+status = "live"
+
+[[link_outcomes.client_connected]]
+value = 2
+name = "refused_table_full"
+status = "live"
+
+[[link_outcomes.client_connected]]
+value = 3
+name = "refused_handle_in_use"
+status = "live"
+
+[[link_outcomes.client_connected]]
+value = 4
+name = "refused_link_not_up"
+status = "live"
+
+[[link_outcomes.client_disconnected]]
+value = 1
+name = "released"
+status = "live"
+
+[[link_outcomes.client_disconnected]]
+value = 2
+name = "unknown_handle"
+status = "live"
+
+[[link_outcomes.close_connection]]
+value = 1
+name = "closed"
+status = "live"
+
+[[link_outcomes.close_connection]]
+value = 2
+name = "unknown_handle"
+status = "live"
+
+[[link_outcomes.net_config]]
+value = 1
+name = "stored"
+status = "live"
+
+[[link_outcomes.net_config]]
+value = 2
+name = "rejected_invalid"
+status = "live"
+
+[[link_outcomes.net_config]]
+value = 3
+name = "nvs_write_failed"
+status = "live"
+
+[[link_outcomes.time_offer]]
+value = 1
+name = "accepted"
+status = "live"
+
+[[link_outcomes.time_offer]]
+value = 2
+name = "refused_implausible"
+status = "live"
+
+# Held rather than reallocated: L-152 says no rule produces it and no sound rule
+# can, and handing the number to whoever allocates next is how a withdrawn
+# meaning comes back wearing somebody else's name.
+[[link_outcomes.time_offer]]
+value = 3
+name = "refused_have_better"
+status = "withdrawn"
+
+[[link_outcomes.time_offer]]
+value = 4
+name = "refused_step_too_large"
+status = "live"
+
+[[link_outcomes.time_offer]]
+value = 5
+name = "refused_rate_limited"
+status = "live"
+
+[[link_outcomes.comms_release]]
+value = 1
+name = "authorised"
+status = "live"
+
+[[link_outcomes.comms_release]]
+value = 2
+name = "installed"
+status = "live"
+
+[[link_outcomes.comms_release]]
+value = 3
+name = "activated"
+status = "live"
+
+[[link_outcomes.comms_release]]
+value = 4
+name = "refused_digest_mismatch"
+status = "live"
+
+[[link_outcomes.comms_release]]
+value = 5
+name = "refused_signature"
+status = "live"
+
+[[link_outcomes.comms_release]]
+value = 6
+name = "refused_no_space"
+status = "live"
+
+[[link_outcomes.comms_release]]
+value = 7
+name = "rolled_back"
+status = "live"
+
+[[link_enums.disconnect_reason]]
+value = 1
+name = "closed_by_client"
+status = "live"
+
+[[link_enums.disconnect_reason]]
+value = 2
+name = "transport_error"
+status = "live"
+
+[[link_enums.disconnect_reason]]
+value = 3
+name = "idle_timeout"
+status = "live"
+
+[[link_enums.disconnect_reason]]
+value = 4
+name = "closed_by_comms"
+status = "live"
+
+[[link_enums.close_reason]]
+value = 1
+name = "session_expired"
+status = "live"
+
+[[link_enums.close_reason]]
+value = 2
+name = "shedding"
+status = "live"
+
+[[link_enums.close_reason]]
+value = 3
+name = "authentication_failures"
+status = "live"
+
+[[link_enums.close_reason]]
+value = 4
+name = "resync"
+status = "live"
+
+[[link_enums.link_transport]]
+value = 1
+name = "ble"
+status = "live"
+
+[[link_enums.link_transport]]
+value = 2
+name = "wifi_local"
+status = "live"
+
+[[link_enums.link_transport]]
+value = 3
+name = "cloud"
+status = "live"
+
+[[link_enums.link_transport]]
+value = 4
+name = "usb"
+status = "live"
+
+[[link_enums.net_config_op]]
+value = 1
+name = "set"
+status = "live"
+
+[[link_enums.net_config_op]]
+value = 2
+name = "clear"
+status = "live"
+
+[[link_enums.comms_release_op]]
+value = 1
+name = "authorise"
+status = "live"
+
+[[link_enums.comms_release_op]]
+value = 2
+name = "activate"
+status = "live"
+
+[[link_enums.comms_release_op]]
+value = 3
+name = "revoke"
+status = "live"
+
+[[link_enums.comms_release_op]]
+value = 4
+name = "confirm_healthy"
+status = "live"
+
+# The link-local opcodes. LINK.md's own table was the only place these were
+# written down, so the reserved range read as fully allocated and nothing could
+# tell you 0x68 was free. Same argument as the link errors and the link enums.
+[[link_messages]]
+request = 0x60
+response = 0xE0
+name = "LinkUp"
+direction = "either"
+
+[[link_messages]]
+request = 0x61
+response = 0xE1
+name = "Heartbeat"
+direction = "either"
+
+[[link_messages]]
+request = 0x62
+response = 0xE2
+name = "ClientConnected"
+direction = "comms-to-controller"
+
+[[link_messages]]
+request = 0x63
+response = 0xE3
+name = "ClientDisconnected"
+direction = "comms-to-controller"
+
+[[link_messages]]
+request = 0x64
+response = 0xE4
+name = "CloseConnection"
+direction = "controller-to-comms"
+
+[[link_messages]]
+request = 0x65
+response = 0xE5
+name = "NetConfig"
+direction = "controller-to-comms"
+
+[[link_messages]]
+request = 0x66
+response = 0xE6
+name = "TimeOffer"
+direction = "comms-to-controller"
+
+[[link_messages]]
+request = 0x67
+response = 0xE7
+name = "CommsRelease"
+direction = "controller-to-comms"
