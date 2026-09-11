@@ -1308,7 +1308,7 @@ The public equipment dataset ([offgrid-equipment](https://github.com/origin89hq/
 | `pv-energy-total` | *not carried: no DC energy kind (#2)* | — | — | — |
 | `pv-irradiance` | *not carried: no metric kind* | — | — | — |
 | `state-of-health` | *not carried: no metric kind* | — | — | — |
-| `switch-state` | *not carried: the only switch metric is the generator run contact command (0x0504), an echo of a command rather than a measured state* | — | — | — |
+| `switch-state` | *not carried: the only switch metric is the generator run contact command, an echo of a command rather than a measured state* | — | — | — |
 | `tank-volume` | *not carried: the protocol carries a tank level in percent, never a volume* | — | — | — |
 | `time-to-go` | *not carried: no metric kind* | — | — | — |
 

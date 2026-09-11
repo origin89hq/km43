@@ -4,8 +4,8 @@
 //! dataset, and `cargo xtask check` reads them from a copy pinned beside the
 //! registry. The copy is not fetched by the gate: a gate that reaches the
 //! network fails when the network does and cannot be reproduced later, and a
-//! registry that passed in March would fail in April because a word moved,
-//! with no commit here to say so. This fetches instead, on request, shows
+//! registry that once passed would fail again the day the dataset renamed a
+//! word, with no commit here to say so. This fetches instead, on request, shows
 //! which words arrived or left, and moves the pin only with `--accept`, so a
 //! change in the dataset reaches the registry as a reviewable diff.
 
@@ -74,14 +74,26 @@ pub fn run(root: &Path, accept: bool) -> Result<()> {
     };
     if digest == dataset.vocabulary_sha256 {
         println!("the pin is current: {digest}");
+        // An earlier `--accept` that moved the registry and then failed to write the
+        // copy leaves the pin ahead of the file; this is where that is put right.
+        let copy_matches =
+            std::fs::read(&pinned_path).is_ok_and(|b| hex(&sha2::Sha256::digest(&b)) == digest);
+        if !copy_matches {
+            if accept {
+                replace(&pinned_path, &bytes)?;
+                println!("the pinned copy was behind the pin and is written again");
+            } else {
+                println!("the pinned copy does not match the pin; `--accept` writes it again");
+            }
+        }
         // The bytes were pinned before this fetch confirmed them against the index, as
         // the first pin was; `--accept` records that they have been now.
         if accept && !dataset.vocabulary_provenance.starts_with("fetched from ") {
             let toml_path = root.join(Registry::PATH);
             let source = std::fs::read_to_string(&toml_path)?;
-            std::fs::write(
+            replace(
                 &toml_path,
-                move_pin(&source, &digest, &provenance(&digest))?,
+                move_pin(&source, &digest, &provenance(&digest))?.as_bytes(),
             )?;
             println!("provenance now records the fetch");
         }
@@ -121,13 +133,26 @@ pub fn run(root: &Path, accept: bool) -> Result<()> {
     let toml_path = root.join(Registry::PATH);
     let source = std::fs::read_to_string(&toml_path)?;
     let moved = move_pin(&source, &digest, &provenance(&digest))?;
-    std::fs::write(&pinned_path, &bytes)?;
-    std::fs::write(&toml_path, moved)?;
+    // Two files cannot change as one, so each is replaced whole, the registry
+    // first: a failure between the two leaves the pin ahead of the copy, which
+    // the gate reports and a second `--accept` repairs, never a copy with no
+    // pin that names it.
+    replace(&toml_path, moved.as_bytes())?;
+    replace(&pinned_path, &bytes)?;
     println!(
         "\npin moved to {digest}; run `just registry` and `just check`, and read the crosswalk \
          diff before committing"
     );
     Ok(())
+}
+
+/// Replace a file whole: written beside it, then renamed over it, so a failure
+/// mid-write leaves the old file and not a torn one.
+fn replace(path: &Path, bytes: &[u8]) -> Result<()> {
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, bytes).with_context(|| format!("writing {}", tmp.display()))?;
+    std::fs::rename(&tmp, path)
+        .with_context(|| format!("renaming {} over {}", tmp.display(), path.display()))
 }
 
 /// The index beside the published file: `/v1/vocabulary.json` is listed by `/manifest.json`.

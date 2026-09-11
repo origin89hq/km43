@@ -2979,7 +2979,7 @@ absent = "the protocol carries a tank level in percent, never a volume"
 
 [[dataset_metrics]]
 name = "switch-state"
-absent = "the only switch metric is the generator run contact command (0x0504), an echo of a command rather than a measured state"
+absent = "the only switch metric is the generator run contact command, an echo of a command rather than a measured state"
 
 [[dataset_metrics]]
 name = "link-online"
