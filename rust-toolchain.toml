@@ -1,0 +1,7 @@
+# The toolchain the checks were run with. `rust-version` in Cargo.toml is the
+# older compiler consumers may still build with; CI checks both.
+[toolchain]
+channel = "1.98.1"
+profile = "minimal"
+components = ["clippy", "rustfmt"]
+targets = ["thumbv6m-none-eabi", "riscv32imac-unknown-none-elf"]
