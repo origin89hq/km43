@@ -768,9 +768,10 @@ mod tests {
 
     /// Every MAC in `v1.json`, byte for byte.
     ///
-    /// That file is produced by a tool forbidden from importing this crate, so
-    /// it is the only thing here that is an outside opinion about our preimages
-    /// rather than a restatement of them.
+    /// That file is produced by a tool forbidden from importing this crate. The
+    /// reading of it that counts is `tests/vectors.rs`, which drives the public
+    /// API; the hex below is a transcription, and would be the second copy
+    /// CLAUDE.md warns about if that test did not exist.
     #[test]
     fn every_published_mac_is_reproduced_byte_for_byte() {
         for (index, (computed, published)) in published().iter().enumerate() {

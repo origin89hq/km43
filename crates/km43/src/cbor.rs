@@ -787,8 +787,6 @@ impl<'a> CborWriter<'a> {
         u64::try_from(len).map_err(|_| CborError::DestinationTooSmall)
     }
 
-    /// What every non-key write does before its bytes: refuse a second top-level
-    /// item, and refuse a value where a map's key belongs.
     /// One already-encoded item, copied in as it stands.
     ///
     /// The counterpart of [`CborReader::raw`], and the same argument: the caller
@@ -804,6 +802,8 @@ impl<'a> CborWriter<'a> {
         self.nest.count_item()
     }
 
+    /// What every non-key write does before its bytes: refuse a second top-level
+    /// item, and refuse a value where a map's key belongs.
     fn open_item(&mut self) -> Result<(), CborError> {
         self.nest.settle();
         if self.nest.at_key() {

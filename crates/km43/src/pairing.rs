@@ -531,7 +531,7 @@ impl BadProof {
     /// connection's `MAX_AUTH_FAILURES`, which is the other half of P-051's
     /// exception: the outcome says which message answers, not whether the
     /// failure is free. [`Outcome::failed_a_proof`] is what a dispatcher asks,
-    /// and `o89-core`'s connection rows hold the count.
+    /// and the controller's connection rows hold the count.
     #[must_use]
     pub const fn outcome(self) -> Outcome {
         Outcome::BadProof

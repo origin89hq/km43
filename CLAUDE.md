@@ -122,9 +122,9 @@ build failed. `git stash` moves every uncommitted change in the tree, not the
 one file, and is not the fix either.
 
 ```bash
-cp crates/km43/src/session.rs "$SCRATCH/session.bak"   # before the break
+cp crates/km43/src/handshake.rs "$SCRATCH/handshake.bak"   # before the break
 # ... break it, run the test, watch it go red ...
-cp "$SCRATCH/session.bak" crates/km43/src/session.rs   # after
+cp "$SCRATCH/handshake.bak" crates/km43/src/handshake.rs   # after
 ```
 
 ### A vector you retyped is not a vector

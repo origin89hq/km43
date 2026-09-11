@@ -74,6 +74,10 @@ that mapping changed.
 
 ### KM43 sources inspected
 
+The `crates/o89-core/` paths below are the controller's, in origin89; so are the
+vendor documents under `docs/vendor/`, which are not ours to redistribute and are
+not in this repository.
+
 - `docs/PROTOCOL.md`: limits, `Snapshot`, `Value`, subscriptions, events,
   configuration, commands, firmware, and conformance.
 - `docs/PROTOCOL-RATIONALE.md`: CBOR rationale, the rejected paged snapshot, and

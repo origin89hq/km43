@@ -334,7 +334,7 @@ impl fmt::Display for InnerKey {
     }
 }
 
-/// The seventeen keys of `Hello 0x81`.
+/// The twenty-nine keys of `Hello 0x81`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReportKey {
     /// Key 1.
@@ -1072,7 +1072,7 @@ pub struct HelloReport<'a> {
 }
 
 impl<'a> HelloReport<'a> {
-    /// Encode the seventeen keys into `dst`; the caller wraps and MACs them.
+    /// Encode the twenty-nine keys into `dst`; the caller wraps and MACs them.
     ///
     /// A `channels` above [`Caps::CHANNEL_CEILING`] is refused here as well as on
     /// decode, because P-006 binds the controller too and a cap nobody keeps is
@@ -1143,7 +1143,7 @@ impl Caps {
         Ok(())
     }
 
-    /// Keys 12 to 17, split out because seventeen keys in one function is the
+    /// Keys 12 to 17, split out because twenty-nine keys in one function is the
     /// `too_many_lines` the lint is describing.
     fn encode(self, cbor: &mut CborWriter<'_>) -> Result<(), HandshakeError> {
         cbor.key(ReportKey::MaxSessions.number())?;
@@ -1280,7 +1280,7 @@ fn eight(key: impl Into<BodyKey>, raw: &[u8]) -> Result<[u8; 8], HandshakeError>
 
 /// Refuse an envelope whose `type` is not the message this decoder reads.
 ///
-/// Without it a `SnapshotResponse` body gets read as a `Hello 0x81` — every key
+/// Without it a `Readings 0x8E` body gets read as a `Hello 0x81` — every key
 /// it happens to share taken at face value, and the rest reported missing.
 fn expected(header: Header, kind: MessageType) -> Result<(), HandshakeError> {
     if header.kind == kind {
@@ -2560,7 +2560,7 @@ mod tests {
         }
     }
 
-    /// The seventeen keys, and the length the encoder wrote.
+    /// The twenty-nine keys, and the length the encoder wrote.
     fn encoded(reported: &HelloReport<'_>) -> ([u8; MAX_HELLO_REPORT], usize) {
         let mut body = [0u8; MAX_HELLO_REPORT];
         let len = reported.encode(&mut body).expect("the report encodes");
@@ -2963,12 +2963,12 @@ mod tests {
         ReportKey::MaxTopologyDepth,
     ];
 
-    /// Sixteen of the seventeen keys, written independently of
+    /// Twenty-eight of the twenty-nine keys, written independently of
     /// [`HelloReport::encode`] so a fixture can leave any one of them out.
     fn report_without(left_out: ReportKey, dst: &mut [u8]) -> usize {
         let mut cbor = CborWriter::new(dst);
         cbor.map(ReportKey::COUNT.saturating_sub(1))
-            .expect("a sixteen-pair map");
+            .expect("a twenty-eight-pair map");
         for key in EVERY_REPORT_KEY {
             if key == left_out {
                 continue;
@@ -3010,7 +3010,7 @@ mod tests {
     }
 
     /// Every key of `Hello 0x81`, left out one at a time, and every one of the
-    /// seventeen refused by name.
+    /// twenty-nine refused by name.
     ///
     /// The tempting mistake is to read what is there and default the rest. A
     /// `counter` defaulted to zero is a client that signs its next write with a
@@ -3030,7 +3030,7 @@ mod tests {
             );
         }
 
-        // All seventeen present is the case that must pass, or the loop above is
+        // All twenty-nine present is the case that must pass, or the loop above is
         // asserting about a body that was never going to decode.
         assert!(answered(&report(), head).opened().is_ok());
     }
@@ -3160,7 +3160,7 @@ mod tests {
 
     /// An envelope naming another message is refused before its body is read.
     ///
-    /// Without it a `SnapshotResponse` gets decoded as a `Hello 0x81`: every key
+    /// Without it a `Readings 0x8E` gets decoded as a `Hello 0x81`: every key
     /// number the two happen to share taken at face value, and the rest reported
     /// missing, which is a refusal naming the wrong cause at best.
     #[test]

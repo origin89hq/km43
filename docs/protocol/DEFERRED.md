@@ -774,7 +774,7 @@ described, and the remainder is what keeps it open.
 
 - **The reachability check** exists as `Registry::unreachable`, and it sweeps
   message types, error codes, outcome spaces and the link-local error codes
-  against the protocol corpus and local controller requirements. **What it does
+  against the protocol corpus. **What it does
   not sweep is `enums.*` and `codes.*`** — quality, client kinds, time sources, config
   sections, command kinds, capability bits — so no discriminant space is
   reachability-checked. Both ways were tried and neither is honest yet. Sweeping
@@ -868,9 +868,9 @@ Then the code allocation is one line and the citation is honest.
 **Both halves of the *where* are now closed, and the trigger was already met
 when this was written.** The entry says the window waits on *a controller-side
 session, in whichever crate ends up owning one*. It is precise that `km43`
-has no such type and it is right — and it stops one crate short. `o89-core`'s
-`Sessions` is the controller's view, it has held the rows and the bindings all
-along, and `admit` is a gate that already answers P-143's error 4 and error 9. So
+has no such type and it is right — and it stops one repository short. In
+origin89, `o89-core`'s `Sessions` is the controller's view, it has held the rows
+and the bindings all along, and `admit` is a gate that already answers P-143's error 4 and error 9. So
 the window went in beside them, and *without acting, and before the counter is
 read* is true by construction: nothing downstream of `admit` has run.
 
@@ -891,7 +891,8 @@ it passes both checks at once: not remembered, not too old.
 not.* A `cites:` header on `envelope.rs` had it reading covered for as long as
 the header existed — the exact state this entry was written to prevent, arriving
 through a file that parses the field rather than enforcing the rule. That header
-is gone; the citation is on `session.rs`, where the refusal happens.
+is gone; the citation is on the controller's `session.rs`, where the refusal
+happens.
 
 **A finding this turned up that does not wait for the answer.** P-077 refreshes
 the fifteen-minute session timer on any *authenticated* inbound frame — the
@@ -927,8 +928,8 @@ VE.Bus system reports distinct AC inputs and output phases. A battery reports a
 pack, modules, cells, temperature probes, contactors, FETs, and balancing state.
 A dual-bank charger reports two batteries through one enclosure. A circuit meter
 reports nineteen current transformers. The committed catalogue records all five
-shapes in `docs/catalog/ve-direct.md`, `can-bms.md`, `modbus-rs485.md`, and
-`lan-http.md`; they are no longer hypothetical future sites.
+shapes in origin89's `docs/catalog/`: `ve-direct.md`, `can-bms.md`,
+`modbus-rs485.md` and `lan-http.md`; they are no longer hypothetical future sites.
 
 **The correction to one catalogue sentence matters.** Distinct configured
 channels can carry four values with the same `MetricKind`, so the current bytes do

@@ -1185,8 +1185,8 @@ a counter an attacker can set to `2^64 − 1`, after which every write that clie
 ever makes fails as stale and recovery is a four-hour drive.
 
 **P-066** — A physical act at the controller MUST gate enrolment: the pushbutton
-on a board that has one, otherwise the selector gesture CONTROLLER-V1 defines
-under *Auto / off / manual*. No message opens the window. Knowing the printed
+on a board that has one, otherwise the selector gesture the controller's design
+defines under *Auto / off / manual* ([CONTROLLER-V1](https://github.com/origin89hq/origin89/blob/main/docs/CONTROLLER-V1.md)). No message opens the window. Knowing the printed
 secret is not by itself sufficient. The window is 120 seconds. A `Pair`
 arriving with no window open MUST be answered with `Pair 0x8B` outcome 2
 `window_closed` and `client_id = 0`, carrying the MAC above — not with an

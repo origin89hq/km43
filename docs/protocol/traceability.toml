@@ -1147,8 +1147,9 @@ id = "P-182"
 each = ["quiet_pair", "clearing_at_dawn", "one_event_and_not_one_per_device", "still_owes"]
 reason = """
 Four things with one number, and they are bounded in three different tables by \
-three different pieces of code: the validity sweep in `store.rs`, the concern \
-sweep in `concerns.rs`, and the presence sweep in `presence.rs`. A test for one \
+three different pieces of code: the validity sweep in the controller's \
+`store.rs`, the concern sweep in `concerns.rs`, and the presence sweep in the \
+controller's `presence.rs`. A test for one \
 leaves the other two looking checked, which is exactly how this rule sat \
 unpromoted -- it was written whole and buildable a third at a time. The fourth \
 clause is the carry-over, and it is the one a `const_assert!` over four \
