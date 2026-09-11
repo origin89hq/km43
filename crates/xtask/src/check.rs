@@ -1360,7 +1360,7 @@ pub fn no_number_is_allocated_twice(registry: &crate::registry::Registry) -> Res
 #[cfg(test)]
 mod crosswalk {
     use super::{crosswalk_findings, repo_root};
-    use crate::registry::{Carried, Registry};
+    use crate::registry::Registry;
 
     fn loaded() -> (Registry, Vec<String>) {
         let root = repo_root().expect("a repo to read the registry from");
@@ -1388,13 +1388,16 @@ mod crosswalk {
     #[test]
     fn a_word_outside_the_pinned_vocabulary_is_refused() {
         let (mut reg, words) = loaded();
-        reg.crosswalk.carried.push(Carried {
-            name: "cabin-mood".to_owned(),
-            kind: 0x0101,
-            role: Some(0x0015),
-            point: None,
-            domain: 1,
-        });
+        // A row the registry already resolved, renamed: the fixture holds no wire
+        // number of its own.
+        let mut renamed = reg
+            .crosswalk
+            .carried
+            .first()
+            .cloned()
+            .expect("a carried row");
+        renamed.name = "cabin-mood".to_owned();
+        reg.crosswalk.carried.push(renamed);
         let said = crosswalk_findings(&reg, &words).join("\n");
         assert!(
             said.contains("`cabin-mood` is carried") && said.contains("no such word"),

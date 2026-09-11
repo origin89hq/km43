@@ -64,11 +64,12 @@ pub fn run(root: &Path, accept: bool) -> Result<()> {
         .parent()
         .context("the registry path has no directory")?;
     let pinned_path = root.join(dir).join(&dataset.vocabulary_file);
+    // What identifies the bytes: where they were fetched and what the index said of
+    // them. No date, which would make the line depend on the day somebody ran this.
     let provenance = |digest: &str| {
         format!(
-            "fetched from {} on {}, listed by the index as sha256 {digest}",
-            dataset.vocabulary_url,
-            today()
+            "fetched from {}, listed by the index as sha256 {digest}",
+            dataset.vocabulary_url
         )
     };
     if digest == dataset.vocabulary_sha256 {
@@ -114,26 +115,19 @@ pub fn run(root: &Path, accept: bool) -> Result<()> {
         return Ok(());
     }
 
-    std::fs::write(&pinned_path, &bytes)?;
+    // The registry edit is prepared before either file is written: a `protocol.toml`
+    // that `move_pin` cannot rewrite must leave the pinned copy as it was, not pair
+    // new bytes with the old hash and fail the gate.
     let toml_path = root.join(Registry::PATH);
     let source = std::fs::read_to_string(&toml_path)?;
     let moved = move_pin(&source, &digest, &provenance(&digest))?;
+    std::fs::write(&pinned_path, &bytes)?;
     std::fs::write(&toml_path, moved)?;
     println!(
         "\npin moved to {digest}; run `just registry` and `just check`, and read the crosswalk \
          diff before committing"
     );
     Ok(())
-}
-
-/// Today in UTC, for the provenance line; a clock this cannot read is said so.
-fn today() -> String {
-    Command::new("date")
-        .args(["-u", "+%Y-%m-%d"])
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map_or_else(|| "an unrecorded date".to_owned(), |s| s.trim().to_owned())
 }
 
 /// The index beside the published file: `/v1/vocabulary.json` is listed by `/manifest.json`.

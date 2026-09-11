@@ -223,7 +223,7 @@ impl Codegen {
             let _ = writeln!(
                 t,
                 "| `{}` | `0x{:04X}` {kind} | {} | {} | {} |",
-                c.name,
+                cell(&c.name),
                 c.kind,
                 named("component_role", c.role),
                 named("measurement_point", c.point),
@@ -231,7 +231,12 @@ impl Codegen {
             );
         }
         for (name, why) in &self.registry.crosswalk.absent {
-            let _ = writeln!(t, "| `{name}` | *not carried: {why}* | — | — | — |");
+            let _ = writeln!(
+                t,
+                "| `{}` | *not carried: {}* | — | — | — |",
+                cell(name),
+                cell(why)
+            );
         }
         t
     }
@@ -444,6 +449,15 @@ impl Codegen {
         }
         t
     }
+}
+
+/// Text as one Markdown table cell: a pipe would end the cell and a newline the
+/// row, and a reason is free text somebody wrote in `protocol.toml`.
+fn cell(text: &str) -> String {
+    text.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .replace('|', "\\|")
 }
 
 /// The REGISTRY.md heading a space's generated table is spliced under.
