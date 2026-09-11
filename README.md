@@ -40,9 +40,9 @@ change has to keep.
 
 ## Consumers
 
-The controller, its firmware and the docs site in origin89 pin a version of
-this repository. A change here reaches a controller when origin89 moves its
-pin, not before.
+A consumer pins a version of this repository, and a change here reaches it
+when the consumer moves its pin, not before. The controller in origin89 still
+builds from its own copy of the crate until it is rewritten against this one.
 
 ## License
 

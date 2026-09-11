@@ -976,11 +976,12 @@
 # failure this file exists against.
 #
 # The rule that the count only rises when the specification gains a rule
-# holds one repository over. origin89 keeps its own copy of this ratchet over
-# the same specification, walking this repository beside its own crates, and
-# the 33 lives there. What this number now says is what the wire crate's own
-# tests stand behind, and it comes down for the same two reasons it always
-# did: a test written here, or a rule that turns out to be the wire's.
+# holds one repository over. origin89 keeps the controller's tests, its own
+# copy of this ratchet and the 33, and when it is rebuilt against this
+# repository its count walks this tree beside its own crates. What this number
+# now says is what the wire crate's own tests stand behind, and it comes down
+# for the same two reasons it always did: a test written here, or a rule that
+# turns out to be the wire's.
 #
 # The `[[clauses]]` entries below whose fragments no test here names stay.
 # They say what a test must be called to stand behind a rule that says two
