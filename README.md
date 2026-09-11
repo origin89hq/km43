@@ -1,4 +1,4 @@
-![KM43 — a green kilometre marker beside a misty forest lake, with Buddy canoeing in the distance](.github/social-preview.jpg)
+![KM43 — a green kilometre marker beside a misty forest lake, with Buddy canoeing in the distance](https://raw.githubusercontent.com/origin89hq/brand/6d54a262123b170d27b2ba6e94a8f227f1f49ddf/situations/scenes/km43-canoe/km43-social.jpg)
 
 # KM43
 
