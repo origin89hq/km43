@@ -6,6 +6,7 @@ name: check
 
 on:
   push:
+    branches: [main]
   pull_request:
   # A release PR opened with the default token triggers nothing on its own;
   # this is how it gets checked before it merges.
