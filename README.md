@@ -1,7 +1,4 @@
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/origin89hq/brand/main/logos/origin89-horizontal-white.svg">
-  <img src="https://raw.githubusercontent.com/origin89hq/brand/main/logos/origin89-horizontal-blue.svg" alt="Origin89" width="320">
-</picture>
+![KM43 — a green kilometre marker beside a misty forest lake, with Buddy canoeing in the distance](https://raw.githubusercontent.com/origin89hq/brand/6d54a262123b170d27b2ba6e94a8f227f1f49ddf/situations/scenes/km43-canoe/km43-social.jpg)
 
 # KM43
 
@@ -52,3 +49,6 @@ Code is licensed under either [MIT](LICENSE-MIT) or
 documents under `docs/` are Origin89's original technical documentation; their
 public-release terms are still to be confirmed and are not implied by the code
 license.
+
+The banner and social preview are Origin89 artwork, covered by the
+[brand-use terms](https://github.com/origin89hq/brand/blob/main/LICENSE.md).
