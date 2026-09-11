@@ -23,9 +23,12 @@ Follow the [Origin89 release standard](https://github.com/origin89hq/engineering
   releasing it is a PR that moves that line and the `Cargo.lock` entry with
   it. On every push to `main` the `crate` job compares that version with the
   crates.io index and, when it is not there yet, runs the Rust tests and the
-  specification gate, publishes with a token from trusted publishing, and
-  creates a `km43-v<version>` release. A push whose version is already
-  published does nothing, so merging an unrelated PR cannot publish twice.
+  specification gate and publishes with a token from trusted publishing. It
+  then creates the `km43-v<version>` release if none exists, whether or not
+  this run did the publishing, so a job that failed between the two can be
+  rerun. A push whose version is already published and released does
+  nothing, so merging an unrelated PR cannot publish twice. An index that
+  cannot be read fails the job rather than reading as an unpublished version.
   The gate runs `cargo package` dry to show what the tarball would carry.
 
 Contributors run `pnpm changeset` and include the note in their PR.
