@@ -17,9 +17,11 @@
     "src"
   ],
   "scripts": {
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "tsc -p tsconfig.test.json && node --test .test-out/test/*.test.js"
   },
   "devDependencies": {
+    "@types/node": "22.20.2",
     "typescript": "7.0.2"
   }
 }

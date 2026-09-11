@@ -27,9 +27,11 @@ typecheck:
 # doctests, one compiler run each; they are the type-state guards.
 test-fast:
     cargo test --locked --workspace --lib --tests
+    pnpm run test
 
 test:
     cargo test --locked --workspace
+    pnpm run test
 
 build:
     cargo build --locked --workspace

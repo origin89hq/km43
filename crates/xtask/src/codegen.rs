@@ -203,17 +203,12 @@ impl Codegen {
                 },
             )
         };
-        let domain = |value: Option<u8>| -> String {
-            value.map_or_else(
-                || "any".to_owned(),
-                |v| {
-                    self.registry
-                        .enums
-                        .get("signal_domain")
-                        .and_then(|rows| rows.iter().find(|r| r.value == v))
-                        .map_or_else(|| v.to_string(), |r| r.name.clone())
-                },
-            )
+        let domain = |value: u8| -> String {
+            self.registry
+                .enums
+                .get("signal_domain")
+                .and_then(|rows| rows.iter().find(|r| r.value == value))
+                .map_or_else(|| value.to_string(), |r| r.name.clone())
         };
         let mut t = String::from(
             "| Dataset word | Kind | Role | Point | Domain |\n|---|---|---|---|---|\n",

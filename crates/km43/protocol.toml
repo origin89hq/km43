@@ -2739,11 +2739,9 @@ direction = "controller-to-comms"
 # listed with why, so "not translatable" reads differently from "forgotten".
 #
 # A lookup takes the first row that matches, and rows are handed over most
-# specific first: the role weighs most, then the point, then the domain, so a
-# row naming both role and point comes before one naming the role, which comes
-# before one naming only the point, and a row naming only the domain comes
-# last of the constrained rows. A battery bank's cell temperature is the bank's
-# row's word even when a cell row exists.
+# specific first: a row naming both role and point comes before one naming the
+# role, which comes before one naming only the point. A battery bank's cell
+# temperature is the bank's row's word even when a cell row exists.
 #
 # `vocabulary` pins the dataset's own list by hash. A row naming a word outside
 # it, or a word in it that no row accounts for, fails `cargo xtask check`.
@@ -2889,7 +2887,9 @@ kind = "AC power"
 name = "ac-frequency"
 kind = "AC frequency"
 
-# A counter's word depends on its window, which the signal's domain names: the
+# A row that names no domain carries `live`, the reading as it is now, and
+# nothing else: a moving limit or a period counter of the same kind has no word
+# unless a row names its domain. A counter's word depends on its window: the
 # lifetime total is the dataset's total, today's is its today figure, and a
 # yesterday or since-reset counter has no dataset word at all.
 
@@ -2912,6 +2912,7 @@ kind = "generator state (enum, see below)"
 [[dataset_metrics]]
 name = "generator-run-hours"
 kind = "generator run hours"
+domain = "lifetime"
 
 [[dataset_metrics]]
 name = "tank-level"

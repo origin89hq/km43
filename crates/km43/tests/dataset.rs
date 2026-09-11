@@ -11,7 +11,11 @@ use km43::{
 #[test]
 fn a_bank_voltage_is_the_dataset_battery_voltage() {
     assert_eq!(
-        MetricKind::DC_VOLTAGE.dataset_name(Some(ComponentRole::BATTERY_BANK), None, None),
+        MetricKind::DC_VOLTAGE.dataset_name(
+            SignalDomain::Live,
+            Some(ComponentRole::BATTERY_BANK),
+            None
+        ),
         Some("battery-voltage")
     );
 }
@@ -19,7 +23,11 @@ fn a_bank_voltage_is_the_dataset_battery_voltage() {
 #[test]
 fn the_same_kind_at_a_tracker_is_pv_voltage() {
     assert_eq!(
-        MetricKind::DC_VOLTAGE.dataset_name(Some(ComponentRole::MPPT_TRACKER), None, None),
+        MetricKind::DC_VOLTAGE.dataset_name(
+            SignalDomain::Live,
+            Some(ComponentRole::MPPT_TRACKER),
+            None
+        ),
         Some("pv-voltage")
     );
 }
@@ -28,15 +36,15 @@ fn the_same_kind_at_a_tracker_is_pv_voltage() {
 fn a_cell_temperature_is_the_battery_s_and_a_heater_s_is_plain() {
     assert_eq!(
         MetricKind::TEMPERATURE.dataset_name(
+            SignalDomain::Live,
             Some(ComponentRole::CELL),
-            Some(MeasurementPoint::CELL),
-            None
+            Some(MeasurementPoint::CELL)
         ),
         Some("battery-temperature"),
         "the specific row wins over the plain one"
     );
     assert_eq!(
-        MetricKind::TEMPERATURE.dataset_name(Some(ComponentRole::HEATER), None, None),
+        MetricKind::TEMPERATURE.dataset_name(SignalDomain::Live, Some(ComponentRole::HEATER), None),
         Some("temperature")
     );
 }
@@ -44,11 +52,11 @@ fn a_cell_temperature_is_the_battery_s_and_a_heater_s_is_plain() {
 #[test]
 fn a_kind_with_no_word_and_a_place_no_row_names_answer_none() {
     assert_eq!(
-        MetricKind::LOG_RING_UTILISATION.dataset_name(None, None, None),
+        MetricKind::LOG_RING_UTILISATION.dataset_name(SignalDomain::Live, None, None),
         None
     );
     assert_eq!(
-        MetricKind::DC_VOLTAGE.dataset_name(Some(ComponentRole::HEATER), None, None),
+        MetricKind::DC_VOLTAGE.dataset_name(SignalDomain::Live, Some(ComponentRole::HEATER), None),
         None,
         "a heater's DC voltage is a reading with no dataset word, not a battery's"
     );
@@ -70,9 +78,7 @@ fn a_word_the_protocol_cannot_carry_says_why() {
 #[test]
 fn rows_are_most_specific_first() {
     let specificity = |m: &km43::DatasetMetric| {
-        usize::from(m.role.is_some()) * 4
-            + usize::from(m.point.is_some()) * 2
-            + usize::from(m.domain.is_some())
+        usize::from(m.role.is_some()) * 2 + usize::from(m.point.is_some())
     };
     let order: Vec<usize> = DATASET_METRICS.iter().map(specificity).collect();
     let mut sorted = order.clone();
@@ -86,21 +92,42 @@ fn rows_are_most_specific_first() {
 #[test]
 fn a_counter_s_word_depends_on_its_window() {
     assert_eq!(
-        MetricKind::AC_ENERGY.dataset_name(None, None, Some(SignalDomain::Lifetime)),
+        MetricKind::AC_ENERGY.dataset_name(SignalDomain::Lifetime, None, None),
         Some("ac-energy-total")
     );
     assert_eq!(
-        MetricKind::AC_ENERGY.dataset_name(None, None, Some(SignalDomain::Today)),
+        MetricKind::AC_ENERGY.dataset_name(SignalDomain::Today, None, None),
         Some("ac-energy-today")
     );
     assert_eq!(
-        MetricKind::AC_ENERGY.dataset_name(None, None, Some(SignalDomain::Yesterday)),
+        MetricKind::AC_ENERGY.dataset_name(SignalDomain::Yesterday, None, None),
         None,
         "yesterday's energy is a period counter with no dataset word"
     );
     assert_eq!(
-        MetricKind::AC_ENERGY.dataset_name(None, None, None),
+        MetricKind::AC_ENERGY.dataset_name(SignalDomain::Live, None, None),
         None,
-        "a counter with no stated window is not the lifetime total"
+        "a counter is never the live reading"
+    );
+}
+
+#[test]
+fn a_limit_is_not_the_live_reading() {
+    assert_eq!(
+        MetricKind::DC_CURRENT.dataset_name(
+            SignalDomain::Live,
+            Some(ComponentRole::BATTERY_BANK),
+            None
+        ),
+        Some("battery-current")
+    );
+    assert_eq!(
+        MetricKind::DC_CURRENT.dataset_name(
+            SignalDomain::LimitUpper,
+            Some(ComponentRole::BATTERY_BANK),
+            None
+        ),
+        None,
+        "a charge-current ceiling is a limit, not the current"
     );
 }

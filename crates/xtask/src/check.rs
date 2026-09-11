@@ -1248,9 +1248,14 @@ pub fn crosswalk_findings(registry: &crate::registry::Registry, words: &[String]
         }
     }
     for name in &internal {
-        if !registry.metrics.iter().any(|m| m.name == *name) {
+        if !registry
+            .metrics
+            .iter()
+            .any(|m| m.name == *name && m.status == Status::Live)
+        {
             wrong.push(format!(
-                "dataset.internal names `{name}`, which is not a metric"
+                "dataset.internal names `{name}`, which is not a live metric; a declaration \
+                 outlives the metric it excuses"
             ));
         }
     }
@@ -1388,13 +1393,28 @@ mod crosswalk {
             kind: 0x0101,
             role: Some(0x0015),
             point: None,
-            domain: None,
+            domain: 1,
         });
         let said = crosswalk_findings(&reg, &words).join("\n");
         assert!(
             said.contains("`cabin-mood` is carried") && said.contains("no such word"),
             "{said}"
         );
+    }
+
+    /// A metric retired after it was declared internal: the declaration is stale
+    /// and must say so rather than keep the check green.
+    #[test]
+    fn a_retired_metric_cannot_stay_declared_internal() {
+        let (mut reg, words) = loaded();
+        let gone = reg
+            .metrics
+            .iter_mut()
+            .find(|m| m.name == "log ring utilisation")
+            .expect("the log ring metric");
+        gone.status = crate::registry::Status::Retired;
+        let said = crosswalk_findings(&reg, &words).join("\n");
+        assert!(said.contains("not a live metric"), "{said}");
     }
 
     #[test]

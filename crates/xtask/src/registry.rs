@@ -272,8 +272,9 @@ pub struct DatasetMetric {
     pub kind: Option<String>,
     pub role: Option<String>,
     pub point: Option<String>,
-    /// The signal domain the word is true for: `AC energy` is `ac-energy-total`
-    /// only over `lifetime`, and `ac-energy-today` over `today`.
+    /// The signal domain the word is true for. Absent means `live`, the reading
+    /// as it is now; a counter names its window, so `AC energy` is
+    /// `ac-energy-total` only over `lifetime` and `ac-energy-today` over `today`.
     pub domain: Option<String>,
     pub absent: Option<String>,
 }
@@ -285,7 +286,9 @@ pub struct Carried {
     pub kind: u16,
     pub role: Option<u16>,
     pub point: Option<u16>,
-    pub domain: Option<u8>,
+    /// Never open: a row that named no domain carries `live`, so a limit or a
+    /// yesterday counter cannot borrow an instantaneous reading's word.
+    pub domain: u8,
 }
 
 /// The crosswalk, resolved: what is carried, most specific row first, and what
@@ -583,11 +586,7 @@ impl Registry {
                         .as_deref()
                         .map(|p| self.place_number("measurement_point", p))
                         .transpose()?;
-                    let domain = row
-                        .domain
-                        .as_deref()
-                        .map(|d| self.domain_number(d))
-                        .transpose()?;
+                    let domain = self.domain_number(row.domain.as_deref().unwrap_or("live"))?;
                     if !places.insert((kind, role, point, domain)) {
                         bail!(
                             "dataset word {:?} reaches metric {kind_name:?} at a place another \
@@ -694,19 +693,11 @@ impl Registry {
     /// total when a role-only row and a point-only row both match one reading.
     #[must_use]
     pub fn specificity(row: &Carried) -> u8 {
-        match (
-            row.role.is_some(),
-            row.point.is_some(),
-            row.domain.is_some(),
-        ) {
-            (true, true, true) => 7,
-            (true, true, false) => 6,
-            (true, false, true) => 5,
-            (true, false, false) => 4,
-            (false, true, true) => 3,
-            (false, true, false) => 2,
-            (false, false, true) => 1,
-            (false, false, false) => 0,
+        match (row.role.is_some(), row.point.is_some()) {
+            (true, true) => 3,
+            (true, false) => 2,
+            (false, true) => 1,
+            (false, false) => 0,
         }
     }
 
@@ -1032,20 +1023,31 @@ mod crosswalk {
             .find(|c| c.name == "ac-energy-total")
             .expect("ac-energy-total");
         assert_eq!(total.kind, energy);
-        assert_eq!(total.domain, Some(domain(&reg, "lifetime")));
+        assert_eq!(total.domain, domain(&reg, "lifetime"));
         let today = reg
             .crosswalk
             .carried
             .iter()
             .find(|c| c.name == "ac-energy-today")
             .expect("ac-energy-today");
-        assert_eq!(today.domain, Some(domain(&reg, "today")));
+        assert_eq!(today.domain, domain(&reg, "today"));
+        let live = domain(&reg, "live");
+        let bank_voltage = reg
+            .crosswalk
+            .carried
+            .iter()
+            .find(|c| c.name == "battery-voltage")
+            .expect("battery-voltage");
+        assert_eq!(
+            bank_voltage.domain, live,
+            "a row naming no domain is the live reading"
+        );
         assert!(
             !reg.crosswalk
                 .carried
                 .iter()
-                .any(|c| c.kind == energy && c.domain.is_none()),
-            "no AC energy row is left open to every window"
+                .any(|c| c.kind == energy && c.domain == live),
+            "a counter is never the live reading"
         );
 
         let mut reg = loaded();

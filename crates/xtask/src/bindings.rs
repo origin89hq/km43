@@ -240,27 +240,25 @@ impl Bindings {
         };
         let mut o = String::new();
         o.push_str(
-            "\n/// The public equipment dataset's word for a reading: a metric kind at a\n\
-             /// place. A `None` place matches any. Rows are most specific first, so the\n\
-             /// first match is the one to take.\n\
+            "\n/// The public equipment dataset's word for a reading: a metric kind over a\n\
+             /// signal domain, at a place. A `None` place matches any; the domain never\n\
+             /// does, so a limit or a period counter cannot borrow a live reading's word.\n\
+             /// Rows are most specific first, so the first match is the one to take.\n\
              #[derive(Debug, Clone, Copy, PartialEq, Eq)]\n\
              pub struct DatasetMetric {\n    \
                  pub kind: MetricKind,\n    \
+                 pub domain: SignalDomain,\n    \
                  pub role: Option<ComponentRole>,\n    \
                  pub point: Option<MeasurementPoint>,\n    \
-                 pub domain: Option<SignalDomain>,\n    \
                  pub name: &'static str,\n\
              }\n\n\
              pub const DATASET_METRICS: &[DatasetMetric] = &[\n",
         );
         for c in &self.registry.crosswalk.carried {
-            let domain = c.domain.map_or_else(
-                || "None".to_owned(),
-                |d| format!("Some(SignalDomain::{})", variant(&self.domain_name(d))),
-            );
+            let domain = format!("SignalDomain::{}", variant(&self.domain_name(c.domain)));
             let _ = writeln!(
                 o,
-                "    DatasetMetric {{\n        kind: MetricKind({:#06x}),\n        role: {},\n        point: {},\n        domain: {domain},\n        name: {:?},\n    }},",
+                "    DatasetMetric {{\n        kind: MetricKind({:#06x}),\n        domain: {domain},\n        role: {},\n        point: {},\n        name: {:?},\n    }},",
                 c.kind,
                 place("ComponentRole", c.role),
                 place("MeasurementPoint", c.point),
@@ -287,21 +285,22 @@ impl Bindings {
         }
         o.push_str(
             "];\n\nimpl MetricKind {\n    \
-                 /// The dataset's word for this kind at a place, or `None` when it has none.\n    \
+                 /// The dataset's word for this kind over a domain at a place, or `None`\n    \
+                 /// when it has none.\n    \
                  #[must_use]\n    \
                  pub fn dataset_name(\n        \
                      self,\n        \
+                     domain: SignalDomain,\n        \
                      role: Option<ComponentRole>,\n        \
-                     point: Option<MeasurementPoint>,\n        \
-                     domain: Option<SignalDomain>,\n    \
+                     point: Option<MeasurementPoint>,\n    \
                  ) -> Option<&'static str> {\n        \
                      DATASET_METRICS\n            \
                          .iter()\n            \
                          .find(|m| {\n                \
                              m.kind == self\n                    \
+                                 && m.domain == domain\n                    \
                                  && m.role.is_none_or(|r| Some(r) == role)\n                    \
-                                 && m.point.is_none_or(|p| Some(p) == point)\n                    \
-                                 && m.domain.is_none_or(|d| Some(d) == domain)\n            \
+                                 && m.point.is_none_or(|p| Some(p) == point)\n            \
                          })\n            \
                          .map(|m| m.name)\n    \
                  }\n\
@@ -808,27 +807,25 @@ impl Bindings {
     fn ts_dataset(&self) -> String {
         let mut o = String::new();
         o.push_str(
-            "\n// The public equipment dataset's word for a reading: a metric kind at a\n\
-             // place. An undefined place matches any; rows are most specific first.\n\
+            "\n// The public equipment dataset's word for a reading: a metric kind over a\n\
+             // signal domain, at a place. An undefined place matches any; the domain never\n\
+             // does. Rows are most specific first.\n\
              export interface DatasetMetric {\n  \
                  readonly kind: number;\n  \
+                 readonly domain: number;\n  \
                  readonly role?: number;\n  \
                  readonly point?: number;\n  \
-                 readonly domain?: number;\n  \
                  readonly name: string;\n\
              }\n\n\
              export const datasetMetrics: readonly DatasetMetric[] = [\n",
         );
         for c in &self.registry.crosswalk.carried {
-            let mut row = format!("  {{ kind: {:#06x}", c.kind);
+            let mut row = format!("  {{ kind: {:#06x}, domain: {:#04x}", c.kind, c.domain);
             if let Some(role) = c.role {
                 let _ = write!(row, ", role: {role:#06x}");
             }
             if let Some(point) = c.point {
                 let _ = write!(row, ", point: {point:#06x}");
-            }
-            if let Some(domain) = c.domain {
-                let _ = write!(row, ", domain: {domain:#04x}");
             }
             let _ = writeln!(o, "{row}, name: {} }},", js(&c.name));
         }
@@ -843,16 +840,16 @@ impl Bindings {
             "};\n\n\
              export function datasetName(\n  \
                  kind: number,\n  \
+                 domain: number,\n  \
                  role?: number,\n  \
-                 point?: number,\n  \
-                 domain?: number,\n\
+                 point?: number,\n\
              ): string | undefined {\n  \
                  return datasetMetrics.find(\n    \
                      (m) =>\n      \
                          m.kind === kind &&\n      \
+                         m.domain === domain &&\n      \
                          (m.role === undefined || m.role === role) &&\n      \
-                         (m.point === undefined || m.point === point) &&\n      \
-                         (m.domain === undefined || m.domain === domain),\n  \
+                         (m.point === undefined || m.point === point),\n  \
                  )?.name;\n\
              }\n",
         );
