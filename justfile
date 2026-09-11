@@ -35,6 +35,7 @@ test:
 
 build:
     cargo build --locked --workspace
+    pnpm run build
 
 # Rustdoc under deny-warnings: an intra-doc link to a constant that was renamed
 # or made private is a broken reference nothing else in the gate reads.

@@ -1,5 +1,8 @@
 target/
 node_modules/
+dist/
+# Copied in by the package's prepack from the repository root, the one source.
+/packages/km43/LICENSE-*
 .DS_Store
 
 /.origin89/engineering/
