@@ -61,9 +61,6 @@ impl Doc {
         }
     }
 
-    /// The house format is `**P-021**` in bold at the head of the paragraph, so
-    /// that is what is counted. A number mentioned in running prose is a
-    /// cross-reference, not a second requirement.
     /// How many separate obligations each requirement states.
     ///
     /// Counted as `MUST`/`SHALL` occurrences from the bold id to the end of its
@@ -94,6 +91,9 @@ impl Doc {
         out
     }
 
+    /// The house format is `**P-021**` in bold at the head of the paragraph, so
+    /// that is what is counted. A number mentioned in running prose is a
+    /// cross-reference, not a second requirement.
     fn ids_in(self, text: &str) -> BTreeSet<ReqId> {
         let needle = format!("**{}-", self.letter());
         text.match_indices(&needle)
@@ -820,7 +820,7 @@ impl Traceability {
     ///
     /// A warning the audit round reads, never a build failure: one test behind a
     /// receiver behaviour usually means somebody wrote the happy path and
-    /// stopped, and `.claude/rules/testing.md` asks for a normal, an edge and a
+    /// stopped, and the house rule asks for a normal, an edge and a
     /// rejection. It cannot tell a rule that genuinely needs one test from a rule
     /// somebody got bored of, which is exactly why it warns rather than refuses.
     fn cited_once(&self) -> Vec<ReqId> {
@@ -1184,7 +1184,6 @@ mod tests {
         assert!(s.citations().is_empty());
     }
 
-    /// A hundred and eighty uncovered numbers one to a line is a report nobody
     /// A requirement standing on two citations is not thin, and one standing on
     /// a single citation is. Without this, the warning could name everything or
     /// nothing and the audit round would read it either way.
@@ -1211,6 +1210,7 @@ mod tests {
         );
     }
 
+    /// A hundred and eighty uncovered numbers one to a line is a report nobody
     /// reads, and a report nobody reads is the same instrument as no report.
     #[test]
     fn the_uncovered_list_wraps_rather_than_running_down_the_screen() {
@@ -1305,7 +1305,7 @@ mod tests {
     fn named(id: &str, name: &str) -> Citation {
         Citation {
             id: id.parse().expect("a test id"),
-            site: "crates/o89-core/src/store.rs:1".to_owned(),
+            site: "crates/km43/src/frame.rs:1".to_owned(),
             name: name.to_owned(),
             state: State::Counts,
         }

@@ -45,7 +45,8 @@ Finish authorized fixes instead of replacing them with backlog issues.
 while working. `just registry` and `just vectors` after a registry or generator
 change; commit the regenerated files with the change. `cargo xtask check`
 alone runs the specification gate, including the cross-compile for
-`thumbv6m-none-eabi`.
+`thumbv6m-none-eabi` and `riscv32imac-unknown-none-elf`. `just msrv-check`
+builds with the compiler `rust-version` names.
 
 ## Rules that are not preferences
 

@@ -226,7 +226,7 @@ impl Bindings {
         for m in metrics {
             let _ = writeln!(o, "    ({:#06x}, \"{}\", {}),", m.kind, m.unit, m.scale);
         }
-        o.push_str("];\n\nimpl MetricKind {\n    #[must_use]\n    pub fn unit_and_scale(self) -> Option<(&'static str, i8)> {\n        METRIC_UNITS\n            .binary_search_by_key(&self.0, |&(k, _, _)| k)\n            .ok()\n            .map(|i| {\n                let (_, u, s) = METRIC_UNITS[i];\n                (u, s)\n            })\n    }\n}\n");
+        o.push_str("];\n\nimpl MetricKind {\n    #[must_use]\n    pub fn unit_and_scale(self) -> Option<(&'static str, i8)> {\n        METRIC_UNITS\n            .binary_search_by_key(&self.0, |&(k, _, _)| k)\n            .ok()\n            .and_then(|i| METRIC_UNITS.get(i))\n            .map(|&(_, u, s)| (u, s))\n    }\n}\n");
         o
     }
 
@@ -235,7 +235,7 @@ impl Bindings {
     /// The join is by name — `enum_space` "generator state" against
     /// `[[enums.generator_state]]` — and it is done here, once, instead of in
     /// every reader. A space with no member table gets **no row**, which is what
-    /// lets [`EnumSpace::members`] answer `None` and a caller tell *this set
+    /// lets the generated `EnumSpace::members` answer `None` and a caller tell *this set
     /// names nothing yet* from *that value is not in it*. The two need telling
     /// apart: the first is a commissioning error and the second is a device
     /// running firmware newer than this build.
@@ -388,7 +388,7 @@ impl Bindings {
                  pub fn needs_a_mac(self) -> bool {\n        \
                      ERROR_NEEDS_A_MAC\n            \
                          .binary_search_by_key(&(self as u16), |&(c, _)| c)\n            \
-                         .is_ok_and(|i| ERROR_NEEDS_A_MAC[i].1)\n    \
+                         .ok()\n            .and_then(|i| ERROR_NEEDS_A_MAC.get(i))\n            .is_some_and(|&(_, m)| m)\n    \
                  }\n\
              }\n\n",
         );

@@ -164,7 +164,7 @@ const EVENT_RECORD_MAP_HEADER_BYTES: usize = 1;
 /// The widest `body` an `Event 0x04` can carry — what a payload holds once the envelope, the
 /// wrapper and the record's own three fields are paid for.
 ///
-/// An `Event` is `0x04`, which is one CBOR byte, so [`RESPONSE_TYPE_EXTRA_BYTE`] does not apply
+/// An `Event` is `0x04`, which is one CBOR byte, so `RESPONSE_TYPE_EXTRA_BYTE` does not apply
 /// here. It still comes to 965: the byte the old pair double-counted is exactly the record's map
 /// header, so the answer is unchanged and is now exact rather than lucky.
 pub const MAX_EVENT_BODY: usize =

@@ -1,3 +1,6 @@
+# The compiler `rust-version` names, read from the manifest so it is pinned once.
+msrv := `sed -nE 's/^rust-version = "([0-9.]+)"/\1/p' Cargo.toml`
+
 default:
     @just --list --unsorted
 
@@ -31,6 +34,11 @@ test:
 build:
     cargo build --locked --workspace
 
+# Rustdoc under deny-warnings: an intra-doc link to a constant that was renamed
+# or made private is a broken reference nothing else in the gate reads.
+doc:
+    RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --no-deps
+
 # The specification gate: vectors, registry, bindings, traceability, and the
 # cross-compile of the crate for the target. Read-only.
 spec:
@@ -45,4 +53,10 @@ registry:
 vectors:
     cargo xtask vectors
 
-check: fmt-check lint typecheck test build spec
+# Consumers may still build with the compiler `rust-version` names. Not part of
+# `check` because it needs a second toolchain installed: `rustup toolchain
+# install {{msrv}} --profile minimal`.
+msrv-check:
+    cargo +{{msrv}} check --locked --workspace
+
+check: fmt-check lint typecheck test build doc spec

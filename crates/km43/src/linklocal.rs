@@ -571,7 +571,7 @@ pub struct ClientUp<'a> {
 
 impl<'a> ClientUp<'a> {
     /// # Errors
-    /// A `conn` of 0, a `peer` past [`MAX_STRING`], or a `dst` too small.
+    /// A `conn` of 0, a `peer` past [`MAX_STRING`](crate::MAX_STRING), or a `dst` too small.
     pub fn write(&self, header: LinkHeader, dst: &mut [u8]) -> Result<usize, LinkError> {
         if self.conn == 0 {
             return Err(LinkError::NoSuchConnection);
