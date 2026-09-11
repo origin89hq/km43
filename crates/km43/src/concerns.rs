@@ -49,6 +49,7 @@ impl ElementAt {
     }
 
     #[must_use]
+    /// The 1-based position.
     pub const fn get(self) -> u8 {
         self.0
     }
@@ -99,6 +100,7 @@ impl Part {
     }
 
     #[must_use]
+    /// The device, whether or not a component narrows it.
     pub const fn dev(self) -> Id {
         self.dev
     }
@@ -110,6 +112,7 @@ impl Part {
     }
 
     #[must_use]
+    /// Whether this names the device itself and no component of it.
     pub const fn is_device(self) -> bool {
         self.cmp == 0
     }
@@ -133,6 +136,7 @@ pub enum Subject {
 
 impl Subject {
     #[must_use]
+    /// The part, with the signal and the element dropped.
     pub const fn part(self) -> Part {
         match self {
             Self::Part(part) | Self::Signal(part, _) | Self::Element(part, _, _) => part,
@@ -390,11 +394,14 @@ impl Concern {
 /// out of balance in February.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ConcernRaised {
+    /// Key 1, the revision the concern was raised under.
     pub rev: u32,
+    /// Key 2, the row exactly as a page would carry it.
     pub concern: Concern,
 }
 
 impl ConcernRaised {
+    /// Write the body, carrying the row's own encoding.
     pub fn encode(&self, dst: &mut [u8]) -> Result<usize, ConcernsError> {
         let mut cbor = CborWriter::new(dst);
         cbor.map(2)?;
@@ -405,6 +412,7 @@ impl ConcernRaised {
         Ok(cbor.finish()?)
     }
 
+    /// Read one back, through the row's own decoder.
     pub fn decode(payload: &[u8]) -> Result<Self, ConcernsError> {
         let mut body = CborReader::new(payload);
         let pairs = body.map()?;
@@ -434,12 +442,15 @@ impl ConcernRaised {
 /// where a record was dropped are the same two frames.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ConcernChanged {
+    /// Key 1, the revision at the change.
     pub rev: u32,
+    /// Key 2, the concern that moved.
     pub cid: Id,
     /// Carried for the client that never saw the raise. *Concern 12 is over* is
     /// unrenderable; *the pack's under-temperature protection is over* is a
     /// sentence, and it costs six bytes.
     pub dev: Id,
+    /// Key 4, echoed for the same reason `dev` is.
     pub cond: Condition,
     /// The state it moved to. `5 cleared` is the row leaving the table (P-180).
     pub state: ConcernState,
@@ -448,6 +459,7 @@ pub struct ConcernChanged {
 }
 
 impl ConcernChanged {
+    /// Write the body into `dst`, refusing a change to the state it was already in.
     pub fn encode(&self, dst: &mut [u8]) -> Result<usize, ConcernsError> {
         let mut cbor = CborWriter::new(dst);
         cbor.map(6)?;
@@ -466,6 +478,7 @@ impl ConcernChanged {
         Ok(cbor.finish()?)
     }
 
+    /// Read one back, refusing a change to the state it was already in.
     pub fn decode(payload: &[u8]) -> Result<Self, ConcernsError> {
         let mut body = CborReader::new(payload);
         let pairs = body.map()?;
@@ -569,6 +582,7 @@ impl Default for ConcernsPage {
 
 impl ConcernsPage {
     #[must_use]
+    /// An empty page.
     pub const fn new() -> Self {
         Self {
             scratch: [0u8; MAX_CONCERN_PAGE_BYTES],
@@ -609,6 +623,7 @@ impl ConcernsPage {
     }
 
     #[must_use]
+    /// Rows taken so far.
     pub const fn rows(&self) -> usize {
         self.rows
     }
@@ -620,6 +635,7 @@ impl ConcernsPage {
     }
 
     #[must_use]
+    /// No row yet, which is a legal page: outcome 1 with nothing wrong.
     pub const fn is_empty(&self) -> bool {
         self.rows == 0
     }
@@ -651,6 +667,7 @@ impl ConcernsPage {
 /// A `ReadConcerns 0x0F`: which revision the client holds, and where to resume.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReadConcerns {
+    /// Key 1, the revision the client holds.
     pub rev: u32,
     /// The `cid` to resume at, inclusive. 0 means from the beginning, and is the
     /// one place 0 is legal here because it is a cursor and not an id.
@@ -659,10 +676,12 @@ pub struct ReadConcerns {
 
 impl ReadConcerns {
     #[must_use]
+    /// A request to walk from `from` at `rev`.
     pub const fn new(rev: u32, from: u16) -> Self {
         Self { rev, from }
     }
 
+    /// Write the body into `dst`. A destination too small is refused with nothing written to it.
     pub fn encode(&self, dst: &mut [u8]) -> Result<usize, ConcernsError> {
         let mut cbor = CborWriter::new(dst);
         cbor.map(2)?;
@@ -673,6 +692,7 @@ impl ReadConcerns {
         Ok(cbor.finish()?)
     }
 
+    /// Read one back. A missing `rev` or `from` is refused, never defaulted: a `from` read as 0 would restart a walk the client meant to continue.
     pub fn decode(payload: &[u8]) -> Result<Self, ConcernsError> {
         let mut body = CborReader::new(payload);
         let pairs = body.map()?;
@@ -698,6 +718,7 @@ impl ReadConcerns {
 /// derived one prints all of it.
 #[derive(Clone, Copy)]
 pub struct ConcernsBody<'a> {
+    /// Key 1, the revision the rows are of.
     pub rev: u32,
     /// Key 2, and the pin a walk is held against (P-210).
     pub seq: u64,
@@ -707,6 +728,7 @@ pub struct ConcernsBody<'a> {
     /// 65,535 concerns needs a bigger table either way, and a count that wrapped
     /// would say it had refused almost none.
     pub refused: u16,
+    /// Key 7. Anything but `Ok` carries no rows and no cursor (P-199).
     pub outcome: ConcernsOutcome,
     /// Present only on outcome 1. Every other outcome answered nothing (P-199).
     pub page: Option<&'a ConcernsPage>,
@@ -752,11 +774,17 @@ impl ConcernsBody<'_> {
 /// What a client reads out of a `Concerns 0x8F` before it looks at the rows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ConcernsHeader {
+    /// Key 1, the revision the page is of.
     pub rev: u32,
+    /// Key 2, the pin the walk is held against.
     pub seq: u64,
+    /// Key 4, the `cid` to resume at; 0 when the walk is over.
     pub next: u16,
+    /// Key 5, every row the walk returns, the cleared ones included.
     pub total: u16,
+    /// Key 6, how many concerns the table refused.
     pub refused: u16,
+    /// Key 7. Anything but `Ok` answered nothing, and rows or a cursor beside it are refused.
     pub outcome: ConcernsOutcome,
     /// How many rows key 3 carried. Compared against `total` and `next`, this is
     /// how a client tells a short page from a torn one.

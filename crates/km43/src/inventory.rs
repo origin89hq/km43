@@ -229,6 +229,7 @@ impl CmdList {
     }
 
     #[must_use]
+    /// The command kinds, in the order the row gave them.
     pub fn as_slice(&self) -> &[u16] {
         self.items.get(..usize::from(self.len)).unwrap_or(&[])
     }
@@ -659,6 +660,7 @@ impl<'a> Row<'a> {
     }
 
     #[must_use]
+    /// Which table this row belongs to.
     pub const fn kind(&self) -> RowKind {
         self.kind
     }
@@ -802,6 +804,7 @@ impl ElementLabels {
     }
 
     #[must_use]
+    /// How many elements the row declares.
     pub const fn elements(self) -> u8 {
         self.elements
     }
@@ -859,6 +862,7 @@ impl Default for RowSlots<'_> {
 
 impl<'a> RowSlots<'a> {
     #[must_use]
+    /// Empty slots to decode a row's values into.
     pub const fn new() -> Self {
         Self {
             values: [Value::Absent; MAX_ROW_KEYS],
@@ -966,6 +970,7 @@ pub struct Page {
 
 impl Page {
     #[must_use]
+    /// An empty page of one kind.
     pub const fn new(kind: RowKind) -> Self {
         Self {
             kind,
@@ -1015,21 +1020,25 @@ impl Page {
     }
 
     #[must_use]
+    /// Which table the page carries rows of.
     pub const fn kind(&self) -> RowKind {
         self.kind
     }
 
     #[must_use]
+    /// Rows taken so far.
     pub const fn rows(&self) -> usize {
         self.rows
     }
 
     #[must_use]
+    /// Bytes the rows occupy.
     pub const fn len(&self) -> usize {
         self.used
     }
 
     #[must_use]
+    /// No row yet.
     pub const fn is_empty(&self) -> bool {
         self.rows == 0
     }
@@ -1225,14 +1234,18 @@ impl InventoryOutcome {
 /// The body of `ReadInventory 0x0D`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReadInventory {
+    /// Key 1, the revision the client holds.
     pub rev: u32,
+    /// Key 2, the kind as `RowKind::number` gives it; one nobody allocates is outcome 3, not a refusal.
     pub what: u8,
+    /// Key 3, the id to resume at, inclusive; 0 means from the beginning.
     pub from: u16,
     /// `what = 5` only. Absent means every device's parameters.
     pub dev: Option<u16>,
 }
 
 impl ReadInventory {
+    /// Write the body into `dst`. `dev` goes out only when present, so a request for every device's parameters carries no key 4.
     pub fn encode(self, dst: &mut [u8]) -> Result<usize, InventoryError> {
         let mut cbor = CborWriter::new(dst);
         cbor.map(if self.dev.is_some() { 4 } else { 3 })?;
@@ -1295,9 +1308,13 @@ fn once<T>(slot: &mut Option<T>, key: ReadInventoryKey, value: T) -> Result<(), 
 /// over the bytes as they appear in a page, and a body that rebuilt them would
 /// be hashing a second opinion.
 pub struct InventoryBody<'a> {
+    /// Key 1, the revision the rows are of; a client compares it against the one it asked with.
     pub rev: u32,
+    /// Key 2, echoed so the response is self-describing.
     pub what: u8,
+    /// Key 6. Anything but `Ok` means the page carries no rows and no digest (P-190).
     pub outcome: InventoryOutcome,
+    /// Key 5, rows of this kind at `rev`.
     pub total: u16,
     /// Present only on outcome 1 — every other outcome answers nothing (P-190).
     pub page: Option<&'a Page>,
@@ -1360,12 +1377,19 @@ impl InventoryBody<'_> {
 /// the half of P-173 that lives on this side of the wire.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InventoryHeader {
+    /// Key 1, the revision the page is of. Differing from the request's, the walk is torn (P-152).
     pub rev: u32,
+    /// Key 2, the kind echoed back, so a page can be matched to the request it answers.
     pub what: u8,
+    /// Key 6. Anything but `Ok` answered nothing, and rows or a digest beside it are refused.
     pub outcome: InventoryOutcome,
+    /// Key 4, the id to pass back as `from`; 0 when this page ends the kind.
     pub next: u16,
+    /// Key 5, rows of this kind at `rev`, or of this `dev` when the request named one.
     pub total: u16,
+    /// How many rows key 3 carried.
     pub rows: usize,
+    /// Key 7, on the last page of a complete walk and nowhere else (P-190).
     pub digest: Option<[u8; 8]>,
 }
 

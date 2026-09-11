@@ -33,8 +33,11 @@ use crate::readings::{QualityError, SignalQuality};
 /// it was last sent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VChange {
+    /// Key 1, the signal that moved.
     pub sig: Id,
+    /// Key 2, the quality it moved to.
     pub q: SignalQuality,
+    /// Key 3, the quality last announced for it, which is what the client holds.
     pub prev: SignalQuality,
 }
 
@@ -78,8 +81,12 @@ impl VChange {
 /// One device's presence moving, inside an `0x0902`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PChange {
+    /// Key 1, the device that moved.
     pub dev: Id,
+    /// Key 2, the presence it moved to.
     pub presence: Presence,
+    /// Key 3, the presence it moved from. Unlike `VChange` key 3 this is the
+    /// last value **held**, not the last announced (P-212).
     pub prev: Presence,
 }
 
@@ -205,12 +212,14 @@ impl<const ROWS: usize, const WIDTH: usize> Sweep<ROWS, WIDTH> {
 ///
 /// No `Debug`: it is most of an event body of packed entries.
 pub struct ValidityChanged {
+    /// Key 1, the topology revision the sweep was taken at.
     pub rev: u32,
     entries: Sweep<MAX_VALIDITY_SWEEP, VCHANGE_MAX_BYTES>,
 }
 
 impl ValidityChanged {
     #[must_use]
+    /// An empty sweep at `rev`.
     pub const fn new(rev: u32) -> Self {
         Self {
             rev,
@@ -227,11 +236,13 @@ impl ValidityChanged {
     }
 
     #[must_use]
+    /// Entries taken so far.
     pub const fn len(&self) -> usize {
         self.entries.rows
     }
 
     #[must_use]
+    /// No entry yet, which `encode` refuses rather than writes (P-212).
     pub const fn is_empty(&self) -> bool {
         self.entries.rows == 0
     }
@@ -271,12 +282,14 @@ impl ValidityChanged {
 
 /// An `0x0902 device presence changed` body under construction.
 pub struct PresenceChanged {
+    /// Key 1, the topology revision the sweep was taken at.
     pub rev: u32,
     entries: Sweep<MAX_PRESENCE_SWEEP, PCHANGE_MAX_BYTES>,
 }
 
 impl PresenceChanged {
     #[must_use]
+    /// An empty sweep at `rev`.
     pub const fn new(rev: u32) -> Self {
         Self {
             rev,
@@ -284,6 +297,8 @@ impl PresenceChanged {
         }
     }
 
+    /// Take one entry. `Ok(false)` means the sweep is full and the entry was not taken; a
+    /// change to the presence the device already had is refused.
     pub fn push(&mut self, change: &PChange) -> Result<bool, ChangeError> {
         if change.presence == change.prev {
             return Err(ChangeError::WentNowhere);
@@ -292,11 +307,13 @@ impl PresenceChanged {
     }
 
     #[must_use]
+    /// Entries taken so far.
     pub const fn len(&self) -> usize {
         self.entries.rows
     }
 
     #[must_use]
+    /// No entry yet, which `encode` refuses rather than writes (P-212).
     pub const fn is_empty(&self) -> bool {
         self.entries.rows == 0
     }
@@ -310,6 +327,7 @@ impl PresenceChanged {
         PChanges { body, left }
     }
 
+    /// Write the body, refusing an empty sweep.
     pub fn encode(&self, dst: &mut [u8]) -> Result<usize, ChangeError> {
         if self.is_empty() {
             return Err(ChangeError::NothingChanged);
@@ -323,6 +341,7 @@ impl PresenceChanged {
         Ok(cbor.finish()?)
     }
 
+    /// Read `rev` and an iterator over the entries, after walking the body to its end.
     pub fn decode(payload: &[u8]) -> Result<(u32, PChanges<'_>), ChangeError> {
         let (rev, body, left) = sweep(payload)?;
         Ok((rev, PChanges { body, left }))
@@ -414,14 +433,17 @@ impl Iterator for PChanges<'_> {
 pub struct TopologyChanged {
     /// The revision this moved **to**.
     pub rev: u32,
+    /// Key 2, why the revision moved.
     pub reason: TopologyChangeReason,
     /// Descriptor rows added and removed, of every kind. At `1 boot` these are
     /// what the tables hold rather than a delta from nothing (P-213).
     pub added: u16,
+    /// Key 4, the other half of the count above.
     pub removed: u16,
 }
 
 impl TopologyChanged {
+    /// Write the body into `dst`. A destination too small is refused with nothing written to it.
     pub fn encode(&self, dst: &mut [u8]) -> Result<usize, ChangeError> {
         let mut cbor = CborWriter::new(dst);
         cbor.map(4)?;
@@ -436,6 +458,7 @@ impl TopologyChanged {
         Ok(cbor.finish()?)
     }
 
+    /// Read one back, refusing a missing key or a reason this version does not allocate.
     pub fn decode(payload: &[u8]) -> Result<Self, ChangeError> {
         let mut body = CborReader::new(payload);
         let pairs = body.map()?;

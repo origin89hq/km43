@@ -31,6 +31,7 @@ impl Id {
     }
 
     #[must_use]
+    /// The number, never 0.
     pub const fn get(self) -> u16 {
         self.0
     }

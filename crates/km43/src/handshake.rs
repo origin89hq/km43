@@ -576,20 +576,30 @@ impl fmt::Display for BodyKey {
 /// topology design has — so it refetches and says so out loud.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Topology {
+    /// The topology revision the digest and the caps are of.
     pub rev: u32,
     /// The leftmost eight bytes of P-148's hash.
     pub digest: [u8; 8],
+    /// The cap on bus rows (P-005).
     pub buses: u8,
+    /// The cap on device rows.
     pub devices: u16,
+    /// The cap on component rows.
     pub components: u16,
+    /// The cap on signal rows.
     pub signals: u16,
     /// A shared pool. It implies nothing about `signals`, which is why it is
     /// reported rather than inferred.
     pub series_elements: u16,
+    /// The cap on parameter rows.
     pub params: u16,
+    /// The cap on concern rows.
     pub concerns: u16,
+    /// The cap on selectors in one `ReadSignals`.
     pub selectors: u8,
+    /// The cap on signals with history.
     pub history_signals: u16,
+    /// The cap on nesting in the component tree.
     pub topology_depth: u8,
 }
 

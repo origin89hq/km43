@@ -75,6 +75,7 @@ impl SignalQuality {
     }
 
     #[must_use]
+    /// The wire byte: validity in the high nibble, provenance in the low.
     pub const fn byte(self) -> u8 {
         self.0
     }
@@ -100,6 +101,7 @@ impl SignalQuality {
     }
 
     #[must_use]
+    /// The validity half.
     pub const fn validity_of(self) -> Validity {
         match self.0 >> 4 {
             0x2 => Validity::Stale,
@@ -150,10 +152,12 @@ impl SignalQuality {
 /// A scalar reading: one signal, and a value only if there is one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Sample {
+    /// Key 1, the signal.
     pub sig: Id,
     /// Present exactly when `q` says so, which is what `new` will not let a
     /// caller get wrong.
     value: Option<i32>,
+    /// Key 3, and what decides whether keys 2 and 4 are present.
     pub q: SignalQuality,
     /// Seconds on P-004's tick. REQUIRED when validity is `stale`.
     age: Option<u32>,
@@ -188,11 +192,13 @@ impl Sample {
     }
 
     #[must_use]
+    /// Key 2, present exactly when `q` carries a value.
     pub const fn value(&self) -> Option<i32> {
         self.value
     }
 
     #[must_use]
+    /// Key 4, present exactly when the reading is stale.
     pub const fn age(&self) -> Option<u32> {
         self.age
     }
@@ -260,6 +266,7 @@ impl Sample {
 /// to a plausible voltage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Series<'a> {
+    /// Key 1, the signal.
     pub sig: Id,
     q: &'a [SignalQuality],
     values: &'a [i32],
@@ -307,11 +314,13 @@ impl<'a> Series<'a> {
     }
 
     #[must_use]
+    /// Elements in the series.
     pub const fn len(&self) -> usize {
         self.q.len()
     }
 
     #[must_use]
+    /// Never, once built: a series is two elements or more.
     pub const fn is_empty(&self) -> bool {
         self.q.is_empty()
     }
@@ -452,6 +461,7 @@ impl Sel {
     }
 
     #[must_use]
+    /// The id, whichever of the three things it names.
     pub const fn id(self) -> Id {
         match self {
             Self::Dev(id) | Self::Cmp(id) | Self::Sig(id) => id,
@@ -488,6 +498,7 @@ impl Sel {
 /// answers a question nobody asked, and `total` would agree with it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReadSignals {
+    /// Key 1, the revision the client holds.
     pub rev: u32,
     /// The `sig` to resume at, inclusive. 0 means from the beginning, and is the
     /// one place 0 is legal here because it is a cursor and not an id.
@@ -525,10 +536,12 @@ impl ReadSignals {
     }
 
     #[must_use]
+    /// No selector, so every signal from `from` onwards.
     pub const fn is_everything(&self) -> bool {
         self.used == 0
     }
 
+    /// Write the body into `dst`; selectors go out in the order they were added.
     pub fn encode(&self, dst: &mut [u8]) -> Result<usize, ReadingsError> {
         let mut cbor = CborWriter::new(dst);
         cbor.map(if self.is_everything() { 2 } else { 3 })?;
@@ -546,6 +559,7 @@ impl ReadSignals {
         Ok(cbor.finish()?)
     }
 
+    /// Read one back, refusing more selectors than the cap.
     pub fn decode(payload: &[u8]) -> Result<Self, ReadingsError> {
         let mut body = CborReader::new(payload);
         let pairs = body.map()?;
@@ -649,6 +663,7 @@ impl Default for ReadingsPage {
 
 impl ReadingsPage {
     #[must_use]
+    /// An empty page.
     pub const fn new() -> Self {
         Self {
             scratch: [0u8; MAX_READINGS_BYTES],
@@ -729,21 +744,25 @@ impl ReadingsPage {
     }
 
     #[must_use]
+    /// Scalar readings taken.
     pub const fn samples(&self) -> usize {
         self.samples
     }
 
     #[must_use]
+    /// Series taken.
     pub const fn series(&self) -> usize {
         self.series
     }
 
     #[must_use]
+    /// Bytes the rows occupy.
     pub const fn len(&self) -> usize {
         self.used
     }
 
     #[must_use]
+    /// No row yet.
     pub const fn is_empty(&self) -> bool {
         self.samples == 0 && self.series == 0
     }
@@ -790,12 +809,16 @@ impl ReadingsPage {
 /// one prints all of it.
 #[derive(Clone, Copy)]
 pub struct ReadingsBody<'a> {
+    /// Key 1, the log position the page is current as of.
     pub seq: u64,
+    /// Key 2, the topology revision the signals are read against.
     pub rev: u32,
     /// Omitted when the clock has never been set. Never a zero — a zero here is
     /// 1970 and reads as a timestamp.
     pub at: Option<u64>,
+    /// Key 8. Anything but `Ok` carries no rows and no cursor (P-199).
     pub outcome: ReadingsOutcome,
+    /// Key 7, the signals the selection resolves to.
     pub total: u16,
     /// Present only on outcome 1. Every other outcome answered nothing (P-199).
     pub page: Option<&'a ReadingsPage>,
@@ -849,13 +872,21 @@ impl ReadingsBody<'_> {
 /// What a client reads out of a `Readings 0x8E`, before it looks at the rows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReadingsHeader {
+    /// Key 1, the log position the readings are current as of.
     pub seq: u64,
+    /// Key 2, the topology revision they were read against.
     pub rev: u32,
+    /// Key 3, absent while the clock has never been set.
     pub at: Option<u64>,
+    /// Key 8. Anything but `Ok` answered nothing, and rows or a cursor beside it are refused.
     pub outcome: ReadingsOutcome,
+    /// Key 6, the `sig` to resume at; 0 when the selection is complete.
     pub next: u16,
+    /// Key 7, how many signals the selection resolves to, across every page.
     pub total: u16,
+    /// How many rows key 4 carried.
     pub samples: usize,
+    /// How many rows key 5 carried.
     pub series: usize,
 }
 
