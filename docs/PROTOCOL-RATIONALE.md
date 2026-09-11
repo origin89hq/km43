@@ -130,7 +130,7 @@ compromised, and the interesting question is what that buys an attacker.
   closed, every client sent back to reconnect and catch up by `ReadLog`,
   repeatably, without forging a byte or dropping a frame.
 
-  This is not the first bullet in other words. A dropped frame loses a message; a
+  This is a different failure from the first bullet. A dropped frame loses a message; a
   deasserted CTS drives a controller state transition, on demand, from outside.
   The outcome is still acceptable — nobody is left believing they are live and
   current, which is the property P-098 exists for — but the other five are on
