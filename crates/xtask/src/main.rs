@@ -21,6 +21,7 @@ mod registry;
 mod rows;
 mod traceability;
 mod vectors;
+mod vocabulary;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -41,6 +42,13 @@ enum Cmd {
     Registry,
     /// Regenerate the test vectors.
     Vectors,
+    /// Fetch the dataset's published vocabulary, show which words moved, and
+    /// move the pin with --accept. The gate never fetches; this does, on request.
+    Vocabulary {
+        /// Write the new copy and move the pin in protocol.toml.
+        #[arg(long)]
+        accept: bool,
+    },
     /// Every consistency check. This is the one CI runs.
     Check {
         /// Report what is wrong without failing, for use while editing.
@@ -64,6 +72,7 @@ fn main() -> Result<()> {
             println!("\nwrote {}", path.display());
             Ok(())
         }
+        Cmd::Vocabulary { accept } => vocabulary::run(&check::repo_root()?, accept),
         Cmd::Check { dry_run } => check::run(dry_run),
     }
 }

@@ -181,7 +181,64 @@ impl Codegen {
             heading: "## Client capability mask".to_owned(),
             table: self.client_capability(),
         });
+        out.push(Section {
+            heading: "## Dataset metrics".to_owned(),
+            table: self.dataset_metrics(),
+        });
         out
+    }
+
+    /// The crosswalk as a reader looks it up: by the dataset's word, with the
+    /// place spelled out and *any* where a row leaves it open.
+    fn dataset_metrics(&self) -> String {
+        let named = |space: &str, number: Option<u16>| -> String {
+            number.map_or_else(
+                || "any".to_owned(),
+                |n| {
+                    self.registry
+                        .open_registries
+                        .get(space)
+                        .and_then(|rows| rows.iter().find(|r| r.number == Some(n)))
+                        .map_or_else(|| format!("`0x{n:04X}`"), |r| r.name.clone())
+                },
+            )
+        };
+        let domain = |value: u8| -> String {
+            self.registry
+                .enums
+                .get("signal_domain")
+                .and_then(|rows| rows.iter().find(|r| r.value == value))
+                .map_or_else(|| value.to_string(), |r| r.name.clone())
+        };
+        let mut t = String::from(
+            "| Dataset word | Kind | Role | Point | Domain |\n|---|---|---|---|---|\n",
+        );
+        for c in &self.registry.crosswalk.carried {
+            let kind = self
+                .registry
+                .metrics
+                .iter()
+                .find(|m| m.kind == c.kind)
+                .map_or_else(String::new, |m| m.name.clone());
+            let _ = writeln!(
+                t,
+                "| `{}` | `0x{:04X}` {kind} | {} | {} | {} |",
+                cell(&c.name),
+                c.kind,
+                named("component_role", c.role),
+                named("measurement_point", c.point),
+                domain(c.domain)
+            );
+        }
+        for (name, why) in &self.registry.crosswalk.absent {
+            let _ = writeln!(
+                t,
+                "| `{}` | *not carried: {}* | — | — | — |",
+                cell(name),
+                cell(why)
+            );
+        }
+        t
     }
 
     fn link_errors(&self) -> String {
@@ -392,6 +449,15 @@ impl Codegen {
         }
         t
     }
+}
+
+/// Text as one Markdown table cell: a pipe would end the cell and a newline the
+/// row, and a reason is free text somebody wrote in `protocol.toml`.
+fn cell(text: &str) -> String {
+    text.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .replace('|', "\\|")
 }
 
 /// The REGISTRY.md heading a space's generated table is spliced under.

@@ -3,7 +3,7 @@
 //! Every other form — the markdown table, the Rust constants, the TypeScript
 //! constants — is generated from it, so two of them cannot disagree.
 
-use anyhow::{Result, bail};
+use anyhow::{Context as _, Result, bail};
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -220,10 +220,89 @@ pub struct Registry {
     pub link_outcomes: BTreeMap<String, Vec<Outcome>>,
     #[serde(default)]
     pub link_enums: BTreeMap<String, Vec<Outcome>>,
+    /// The public equipment dataset's reading vocabulary, pinned beside the
+    /// registry so a crosswalk row cannot name a word it does not have.
+    #[serde(default)]
+    pub dataset: Option<Dataset>,
+    /// The one translation from a metric at a place to the dataset's word for
+    /// it, as written. [`Self::crosswalk`] is the same rows resolved.
+    #[serde(default)]
+    pub dataset_metrics: Vec<DatasetMetric>,
+    /// [`Self::dataset_metrics`] with every name resolved to the number it
+    /// allocates, filled at load so a generator reads rows that already passed.
+    #[serde(skip)]
+    pub crosswalk: Crosswalk,
     /// What the source read as, so the generated files can say which revision
     /// of the registry they came from.
     #[serde(skip)]
     pub digest: Digest,
+}
+
+/// Where the public equipment dataset's vocabulary was pinned from, and the
+/// live metric kinds it has no word for.
+///
+/// Unknown keys are refused here and on [`DatasetMetric`]: a misspelt `role`
+/// would otherwise read as no role, which means *any* role, and a word meant
+/// for a bank would silently apply to every component.
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Dataset {
+    /// Where the dataset serves the file. Not necessarily where the pinned bytes
+    /// came from: that is [`Self::vocabulary_provenance`], as it happened.
+    pub vocabulary_url: String,
+    /// The pinned copy, beside `protocol.toml`.
+    pub vocabulary_file: String,
+    pub vocabulary_sha256: String,
+    /// How the pinned bytes were obtained — fetched from the URL on a date, or
+    /// built from a named change before it was published — so an audit reads
+    /// what was done and not what the URL implies.
+    pub vocabulary_provenance: String,
+    /// Live metric kinds, by name, that are the controller's own business: a
+    /// client reads them and an equipment database has no column for them.
+    #[serde(default)]
+    pub internal: Vec<String>,
+}
+
+/// One row of the crosswalk as written: a dataset word, and either the metric
+/// at a place that carries it or the reason none does.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DatasetMetric {
+    pub name: String,
+    pub kind: Option<String>,
+    pub role: Option<String>,
+    pub point: Option<String>,
+    /// The signal domain the word is true for. Absent means `live`, the reading
+    /// as it is now; a counter names its window, so `AC energy` is
+    /// `ac-energy-total` only over `lifetime` and `ac-energy-today` over `today`.
+    pub domain: Option<String>,
+    pub absent: Option<String>,
+}
+
+/// A crosswalk row with its names resolved to the numbers they allocate.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Carried {
+    pub name: String,
+    pub kind: u16,
+    pub role: Option<u16>,
+    pub point: Option<u16>,
+    /// Never open: a row that named no domain carries `live`, so a limit or a
+    /// yesterday counter cannot borrow an instantaneous reading's word.
+    pub domain: u8,
+}
+
+/// The crosswalk, resolved: what is carried, most specific row first, and what
+/// is not and why.
+#[derive(Clone, Debug, Default)]
+pub struct Crosswalk {
+    pub carried: Vec<Carried>,
+    pub absent: Vec<(String, String)>,
+}
+
+/// The one field of the dataset's `vocabulary.json` the crosswalk is checked against.
+#[derive(Deserialize)]
+struct Vocabulary {
+    metrics: Vec<String>,
 }
 
 /// A fingerprint of the registry source, carried into everything generated from
@@ -474,7 +553,186 @@ impl Registry {
         let mut reg: Self = toml::from_str(&source)?;
         reg.digest = Digest::of(&source);
         reg.validate()?;
+        reg.crosswalk = reg.resolve_crosswalk()?;
         Ok(reg)
+    }
+
+    /// The crosswalk with every name resolved, most specific row first.
+    ///
+    /// Refuses a row that both names a kind and says the word is absent, one that
+    /// does neither, a name no table allocates, and two rows that reach the same
+    /// place — which would make a word depend on the order somebody typed them.
+    pub fn resolve_crosswalk(&self) -> Result<Crosswalk> {
+        let mut carried = Vec::new();
+        let mut absent = Vec::new();
+        let mut places = BTreeSet::new();
+        for row in &self.dataset_metrics {
+            match (&row.kind, &row.absent) {
+                (Some(kind_name), None) => {
+                    let kind = self.metric_number(kind_name).with_context(|| {
+                        format!(
+                            "dataset word {:?} names metric {kind_name:?}, which is not an \
+                             allocated metric",
+                            row.name
+                        )
+                    })?;
+                    let role = row
+                        .role
+                        .as_deref()
+                        .map(|r| self.place_number("component_role", r))
+                        .transpose()?;
+                    let point = row
+                        .point
+                        .as_deref()
+                        .map(|p| self.place_number("measurement_point", p))
+                        .transpose()?;
+                    let domain = self.domain_number(row.domain.as_deref().unwrap_or("live"))?;
+                    if !places.insert((kind, role, point, domain)) {
+                        bail!(
+                            "dataset word {:?} reaches metric {kind_name:?} at a place another \
+                             row already claims; one place carries one word",
+                            row.name
+                        );
+                    }
+                    carried.push(Carried {
+                        name: row.name.clone(),
+                        kind,
+                        role,
+                        point,
+                        domain,
+                    });
+                }
+                (None, Some(why)) => {
+                    if row.role.is_some() || row.point.is_some() || row.domain.is_some() {
+                        bail!(
+                            "dataset word {:?} is absent and names a place, which nothing can \
+                             be at",
+                            row.name
+                        );
+                    }
+                    // The reason is the whole point of an absent row: without one the row
+                    // reads as forgotten, which is what it exists to rule out.
+                    if why.trim().is_empty() {
+                        bail!(
+                            "dataset word {:?} is absent with no reason; say why the protocol \
+                             cannot carry it",
+                            row.name
+                        );
+                    }
+                    absent.push((row.name.clone(), why.clone()));
+                }
+                (Some(_), Some(_)) => bail!(
+                    "dataset word {:?} both names a kind and says it is absent",
+                    row.name
+                ),
+                (None, None) => bail!(
+                    "dataset word {:?} names no kind and gives no reason it is absent",
+                    row.name
+                ),
+            }
+        }
+
+        // Most specific first, then by kind and place, so the generated order is a
+        // property of the rows and not of the file. A role outranks a point: a row
+        // naming only the role sorts before one naming only the point, so a reading
+        // that matches both — a bank's cell temperature against a bank row and a
+        // cell row — takes the role's word every time rather than whichever tuple
+        // happened to sort first.
+        carried.sort_by_key(|c| {
+            (
+                std::cmp::Reverse(Self::specificity(c)),
+                c.kind,
+                c.role,
+                c.point,
+                c.domain,
+            )
+        });
+        absent.sort();
+        Ok(Crosswalk { carried, absent })
+    }
+
+    /// The number of a metric that is still allocated, by its name.
+    fn metric_number(&self, name: &str) -> Option<u16> {
+        self.metrics
+            .iter()
+            .filter(|m| !m.status.is_gone())
+            .find(|m| m.name == name)
+            .map(|m| m.kind)
+    }
+
+    /// The number of a row of an open space, by its name. A place that is
+    /// withdrawn or retired is not a place a row may name: the generated table
+    /// would otherwise keep assigning a word to a number the registry says is gone.
+    fn place_number(&self, space: &str, name: &str) -> Result<u16> {
+        self.open_registries
+            .get(space)
+            .and_then(|rows| {
+                rows.iter()
+                    .filter(|r| r.status.is_some_and(|s| !s.is_gone()))
+                    .find(|r| r.name == name)
+            })
+            .and_then(|r| r.number)
+            .with_context(|| format!("no allocated `{space}` row is named {name:?}"))
+    }
+
+    /// The value of a signal domain, by its name.
+    fn domain_number(&self, name: &str) -> Result<u8> {
+        self.enums
+            .get("signal_domain")
+            .and_then(|rows| {
+                rows.iter()
+                    .filter(|r| !r.status.is_gone())
+                    .find(|r| r.name == name)
+            })
+            .map(|r| r.value)
+            .with_context(|| format!("no allocated `signal_domain` is named {name:?}"))
+    }
+
+    /// How narrowly a row names its place: both role and point, the role, the
+    /// point, or neither. The role weighs more, which is what makes the order
+    /// total when a role-only row and a point-only row both match one reading.
+    #[must_use]
+    pub fn specificity(row: &Carried) -> u8 {
+        match (row.role.is_some(), row.point.is_some()) {
+            (true, true) => 3,
+            (true, false) => 2,
+            (false, true) => 1,
+            (false, false) => 0,
+        }
+    }
+
+    /// The dataset's metric words, read from the pinned copy and refused when its
+    /// bytes are not the ones the pin names.
+    pub fn vocabulary(&self, root: &std::path::Path) -> Result<Vec<String>> {
+        let dataset = self
+            .dataset
+            .as_ref()
+            .context("no [dataset] table pins the vocabulary")?;
+        let dir = std::path::Path::new(Self::PATH)
+            .parent()
+            .context("the registry path has no directory")?;
+        let path = root.join(dir).join(&dataset.vocabulary_file);
+        let bytes = std::fs::read(&path).with_context(|| format!("reading {}", path.display()))?;
+        let digest = <sha2::Sha256 as sha2::Digest>::digest(&bytes).iter().fold(
+            String::new(),
+            |mut hex, b| {
+                let _ = fmt::Write::write_fmt(&mut hex, format_args!("{b:02x}"));
+                hex
+            },
+        );
+        if digest != dataset.vocabulary_sha256 {
+            bail!(
+                "{} is sha256 {digest}; the pin says {} ({}; served at {}). Review the change \
+                 and move the pin",
+                path.display(),
+                dataset.vocabulary_sha256,
+                dataset.vocabulary_provenance,
+                dataset.vocabulary_url
+            );
+        }
+        let vocabulary: Vocabulary = serde_json::from_slice(&bytes)
+            .with_context(|| format!("{} is not the dataset's vocabulary", path.display()))?;
+        Ok(vocabulary.metrics)
     }
 
     /// Allocated numbers that no rule anywhere produces.
@@ -715,6 +973,319 @@ impl Registry {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod crosswalk {
+    use super::{DatasetMetric, Registry};
+
+    fn loaded() -> Registry {
+        let root = crate::check::repo_root().expect("a repo to read the registry from");
+        Registry::load(&root).expect("the registry parses")
+    }
+
+    fn row(
+        name: &str,
+        kind: Option<&str>,
+        role: Option<&str>,
+        absent: Option<&str>,
+    ) -> DatasetMetric {
+        DatasetMetric {
+            name: name.to_owned(),
+            kind: kind.map(str::to_owned),
+            role: role.map(str::to_owned),
+            point: None,
+            domain: None,
+            absent: absent.map(str::to_owned),
+        }
+    }
+
+    /// The value the registry allocates to a signal domain, read from the registry.
+    fn domain(reg: &Registry, name: &str) -> u8 {
+        reg.enums
+            .get("signal_domain")
+            .and_then(|rows| rows.iter().find(|r| r.name == name))
+            .map(|r| r.value)
+            .expect("an allocated domain")
+    }
+
+    /// A counter's word depends on its window: the lifetime AC energy is the
+    /// dataset's total, today's is its today figure, and yesterday's is nothing.
+    #[test]
+    fn a_domain_tells_a_total_from_a_day() {
+        let reg = loaded();
+        let energy = metric(&reg, "AC energy");
+        let total = reg
+            .crosswalk
+            .carried
+            .iter()
+            .find(|c| c.name == "ac-energy-total")
+            .expect("ac-energy-total");
+        assert_eq!(total.kind, energy);
+        assert_eq!(total.domain, domain(&reg, "lifetime"));
+        let today = reg
+            .crosswalk
+            .carried
+            .iter()
+            .find(|c| c.name == "ac-energy-today")
+            .expect("ac-energy-today");
+        assert_eq!(today.domain, domain(&reg, "today"));
+        let live = domain(&reg, "live");
+        let bank_voltage = reg
+            .crosswalk
+            .carried
+            .iter()
+            .find(|c| c.name == "battery-voltage")
+            .expect("battery-voltage");
+        assert_eq!(
+            bank_voltage.domain, live,
+            "a row naming no domain is the live reading"
+        );
+        assert!(
+            !reg.crosswalk
+                .carried
+                .iter()
+                .any(|c| c.kind == energy && c.domain == live),
+            "a counter is never the live reading"
+        );
+
+        let mut reg = loaded();
+        let mut bad = row("ac-energy-total", Some("AC energy"), None, None);
+        bad.domain = Some("fortnight".to_owned());
+        reg.dataset_metrics.push(bad);
+        let said = reg
+            .resolve_crosswalk()
+            .expect_err("fortnight is not a domain");
+        assert!(
+            said.to_string().contains("no allocated `signal_domain`"),
+            "{said}"
+        );
+    }
+
+    /// The number the registry allocates to a metric, read from the registry so
+    /// the test holds no second copy of an allocation.
+    fn metric(reg: &Registry, name: &str) -> u16 {
+        reg.metrics
+            .iter()
+            .find(|m| m.name == name)
+            .map(|m| m.kind)
+            .expect("an allocated metric")
+    }
+
+    /// The number the registry allocates to a row of an open space.
+    fn place(reg: &Registry, space: &str, name: &str) -> u16 {
+        reg.open_registries
+            .get(space)
+            .and_then(|rows| rows.iter().find(|r| r.name == name))
+            .and_then(|r| r.number)
+            .expect("an allocated row")
+    }
+
+    /// The row a consumer will ask for first: a bank's DC voltage is the
+    /// dataset's `battery-voltage`, resolved to the numbers the registry allocates.
+    #[test]
+    fn a_row_resolves_its_names_to_the_numbers_they_allocate() {
+        let reg = loaded();
+        let bank_role = place(&reg, "component_role", "battery bank");
+        let bank = reg
+            .crosswalk
+            .carried
+            .iter()
+            .find(|c| c.name == "battery-voltage" && c.role == Some(bank_role))
+            .expect("battery-voltage at the battery bank");
+        assert_eq!(bank.kind, metric(&reg, "DC voltage"));
+        assert_eq!(bank.point, None);
+    }
+
+    /// A misspelt constraint must not read as no constraint: `rol` is not `role`,
+    /// and a row with no role means any role.
+    #[test]
+    fn an_unknown_field_on_a_row_is_refused() {
+        let said = toml::from_str::<DatasetMetric>(
+            "name = \"battery-voltage\"\nkind = \"DC voltage\"\nrol = \"battery bank\"\n",
+        )
+        .expect_err("a misspelt key is refused, not ignored");
+        assert!(said.to_string().contains("rol"), "{said}");
+        assert!(
+            toml::from_str::<DatasetMetric>("name = \"tank-level\"\nkind = \"tank level\"\n")
+                .is_ok()
+        );
+    }
+
+    /// A lookup takes the first match, so the plain `temperature` row must come
+    /// after every row that names a place.
+    #[test]
+    fn rows_come_most_specific_first() {
+        let order: Vec<u8> = loaded()
+            .crosswalk
+            .carried
+            .iter()
+            .map(Registry::specificity)
+            .collect();
+        let mut sorted = order.clone();
+        sorted.sort_unstable_by(|a, b| b.cmp(a));
+        assert_eq!(order, sorted);
+    }
+
+    /// A bank's cell temperature matches a row naming the bank and a row naming
+    /// the cell. Both are one step specific; the role's row comes first, so the
+    /// word is decided by the rule and not by which tuple sorted first.
+    #[test]
+    fn a_role_outranks_a_point_when_both_match() {
+        let mut reg = loaded();
+        reg.dataset_metrics.push(DatasetMetric {
+            name: "temperature".to_owned(),
+            kind: Some("temperature".to_owned()),
+            role: None,
+            point: Some("cell".to_owned()),
+            domain: None,
+            absent: None,
+        });
+        let temperature = metric(&reg, "temperature");
+        let bank_role = place(&reg, "component_role", "battery bank");
+        let cell_point = place(&reg, "measurement_point", "cell");
+        let carried = reg
+            .resolve_crosswalk()
+            .expect("a point-only row is legal")
+            .carried;
+        let bank = carried
+            .iter()
+            .position(|c| c.kind == temperature && c.role == Some(bank_role) && c.point.is_none())
+            .expect("the bank's temperature row");
+        let cell = carried
+            .iter()
+            .position(|c| c.kind == temperature && c.role.is_none() && c.point == Some(cell_point))
+            .expect("the cell-point temperature row");
+        assert!(
+            bank < cell,
+            "the role's row must lead: bank at {bank}, cell at {cell}"
+        );
+    }
+
+    #[test]
+    fn a_row_that_is_both_carried_and_absent_is_refused() {
+        let mut reg = loaded();
+        reg.dataset_metrics
+            .push(row("pv-power", Some("DC power (signed)"), None, Some("no")));
+        let said = reg
+            .resolve_crosswalk()
+            .expect_err("a row cannot both name a kind and be absent");
+        assert!(said.to_string().contains("both names a kind"), "{said}");
+
+        let mut reg = loaded();
+        reg.dataset_metrics.push(row("pv-power", None, None, None));
+        let said = reg
+            .resolve_crosswalk()
+            .expect_err("a row must say one or the other");
+        assert!(said.to_string().contains("names no kind"), "{said}");
+    }
+
+    #[test]
+    fn a_name_no_table_allocates_is_refused() {
+        let mut reg = loaded();
+        reg.dataset_metrics.push(row(
+            "pv-power",
+            Some("DC power (signed)"),
+            Some("solar roof"),
+            None,
+        ));
+        let said = reg
+            .resolve_crosswalk()
+            .expect_err("solar roof is not a component role");
+        assert!(
+            said.to_string()
+                .contains("no allocated `component_role` row"),
+            "{said}"
+        );
+
+        let mut reg = loaded();
+        reg.dataset_metrics
+            .push(row("pv-power", Some("PV array power"), None, None));
+        let said = reg
+            .resolve_crosswalk()
+            .expect_err("PV array power is retired");
+        assert!(
+            said.to_string().contains("not an allocated metric"),
+            "{said}"
+        );
+    }
+
+    /// A place the registry has retired is not a place; the row that named it
+    /// must be refused rather than keep a word on a number nothing emits.
+    #[test]
+    fn a_retired_place_is_refused() {
+        let mut reg = loaded();
+        let roles = reg
+            .open_registries
+            .get_mut("component_role")
+            .expect("component roles");
+        let heater = roles
+            .iter_mut()
+            .find(|r| r.name == "heater")
+            .expect("a heater role");
+        heater.status = Some(super::Status::Retired);
+        reg.dataset_metrics.push(row(
+            "temperature",
+            Some("temperature"),
+            Some("heater"),
+            None,
+        ));
+        let said = reg.resolve_crosswalk().expect_err("heater is retired");
+        assert!(
+            said.to_string()
+                .contains("no allocated `component_role` row"),
+            "{said}"
+        );
+    }
+
+    /// An absent row with no reason is a forgotten mapping wearing an excuse.
+    #[test]
+    fn an_absent_row_must_say_why() {
+        for why in ["", "   "] {
+            let mut reg = loaded();
+            reg.dataset_metrics
+                .push(row("cabin-mood", None, None, Some(why)));
+            let said = reg
+                .resolve_crosswalk()
+                .expect_err("an empty reason is no reason");
+            assert!(said.to_string().contains("absent with no reason"), "{said}");
+        }
+    }
+
+    /// Two rows reaching the same place would make the word depend on the order
+    /// somebody typed them; the file as committed has none, and adding one fails.
+    #[test]
+    fn one_place_carries_one_word() {
+        let mut reg = loaded();
+        reg.dataset_metrics.push(row(
+            "load-voltage",
+            Some("DC voltage"),
+            Some("battery bank"),
+            None,
+        ));
+        let said = reg
+            .resolve_crosswalk()
+            .expect_err("the bank's DC voltage is already a word");
+        assert!(said.to_string().contains("already claims"), "{said}");
+    }
+
+    /// The pin is the whole point: a vocabulary whose bytes moved without the
+    /// pin moving is a list nobody reviewed.
+    #[test]
+    fn a_vocabulary_whose_bytes_are_not_the_pinned_ones_is_refused() {
+        let root = crate::check::repo_root().expect("a repo");
+        let reg = loaded();
+        assert!(
+            reg.vocabulary(&root)
+                .expect("the pinned copy reads")
+                .contains(&"pv-voltage".to_owned())
+        );
+
+        let mut moved = loaded();
+        moved.dataset.as_mut().expect("a pin").vocabulary_sha256 = "0".repeat(64);
+        let said = moved.vocabulary(&root).expect_err("the hash disagrees");
+        assert!(said.to_string().contains("the pin says"), "{said}");
     }
 }
 

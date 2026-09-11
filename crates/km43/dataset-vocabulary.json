@@ -1,0 +1,143 @@
+{
+  "metrics": [
+    "ac-apparent-power",
+    "ac-current",
+    "ac-energy-today",
+    "ac-energy-total",
+    "ac-frequency",
+    "ac-power",
+    "ac-power-factor",
+    "ac-voltage",
+    "battery-current",
+    "battery-power",
+    "battery-temperature",
+    "battery-voltage",
+    "charge-stage",
+    "consumed-amp-hours",
+    "cycle-count",
+    "generator-run-hours",
+    "generator-run-state",
+    "humidity",
+    "link-downlink",
+    "link-latency",
+    "link-online",
+    "link-signal-quality",
+    "link-uplink",
+    "load-current",
+    "load-power",
+    "load-voltage",
+    "pressure",
+    "pv-current",
+    "pv-energy-today",
+    "pv-energy-total",
+    "pv-irradiance",
+    "pv-power",
+    "pv-voltage",
+    "state-of-charge",
+    "state-of-health",
+    "switch-state",
+    "tank-level",
+    "tank-volume",
+    "temperature",
+    "time-to-go",
+    "uptime"
+  ],
+  "commands": [
+    "clear-fault",
+    "identify",
+    "reset-counter",
+    "set-charge-current-limit",
+    "set-switch",
+    "start-equalize",
+    "start-generator",
+    "stop-generator"
+  ],
+  "kinds": [
+    "charge-controller",
+    "inverter",
+    "inverter-charger",
+    "battery",
+    "bms",
+    "shunt-monitor",
+    "panel",
+    "generator",
+    "meter",
+    "dc-dc-converter",
+    "ac-charger",
+    "balance-of-system",
+    "pump",
+    "appliance",
+    "load",
+    "jump-starter",
+    "out-of-scope"
+  ],
+  "families": [
+    "modbus-rs485",
+    "modbus-tcp",
+    "ve-direct",
+    "can-bms",
+    "lan-http",
+    "local-io",
+    "other-serial",
+    "no-comms"
+  ],
+  "confidence": [
+    "vendor-doc",
+    "community-crosschecked",
+    "community-single",
+    "unverified"
+  ],
+  "driverStatus": [
+    "shipped",
+    "planned",
+    "possible",
+    "not-planned"
+  ],
+  "refuter": [
+    "checked",
+    "not-checked",
+    "unrecorded"
+  ],
+  "brandDecisions": [
+    "manufacturer",
+    "out-of-scope",
+    "unresolved"
+  ],
+  "rowTiers": [
+    "record",
+    "feed"
+  ],
+  "dialectModelTiers": [
+    "A",
+    "B",
+    "C",
+    "D"
+  ],
+  "propertyBasis": [
+    "reviewed",
+    "extracted",
+    "feed"
+  ],
+  "propertyGapReasons": [
+    "no-claim",
+    "unparsed",
+    "needs-conditions",
+    "conflict"
+  ],
+  "propertyStatus": [
+    "value",
+    "conflict"
+  ],
+  "propertyScopes": [
+    "per-input",
+    "total"
+  ],
+  "dialectKindDirections": [
+    "reports",
+    "accepts"
+  ],
+  "modelKeyVia": [
+    "name",
+    "alias"
+  ]
+}

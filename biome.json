@@ -1,13 +1,17 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.5.13/schema.json",
   "files": {
-    "includes": ["**", "!**/node_modules", "!**/target"]
+    "includes": ["**", "!**/node_modules", "!**/target", "!**/.test-out"]
   },
   "formatter": {
     "enabled": true,
     "indentStyle": "space",
     "indentWidth": 2,
-    "includes": ["**", "!packages/km43/src/generated.ts"]
+    "includes": [
+      "**",
+      "!packages/km43/src/generated.ts",
+      "!crates/km43/dataset-vocabulary.json"
+    ]
   },
   "linter": {
     "enabled": true,

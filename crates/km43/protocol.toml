@@ -2727,3 +2727,276 @@ request = 0x67
 response = 0xE7
 name = "CommsRelease"
 direction = "controller-to-comms"
+
+# ---------------------------------------------------------------------------
+# The public equipment dataset's names for readings.
+#
+# The dataset (origin89hq/offgrid-equipment) names a reading with one flat
+# word, `pv-voltage`; this registry names it as a quantity at a place, DC
+# voltage at an mppt tracker. The rows below are the one translation, so a
+# support list, a client, or an assistant setting a live reading against a
+# rated limit all agree on it. A dataset word the protocol cannot carry is
+# listed with why, so "not translatable" reads differently from "forgotten".
+#
+# A lookup takes the first row that matches, and rows are handed over most
+# specific first: a row naming both role and point comes before one naming the
+# role, which comes before one naming only the point. A battery bank's cell
+# temperature is the bank's row's word even when a cell row exists.
+#
+# `vocabulary` pins the dataset's own list by hash. A row naming a word outside
+# it, or a word in it that no row accounts for, fails `cargo xtask check`.
+# ---------------------------------------------------------------------------
+
+[dataset]
+vocabulary_url = "https://data.origin89.com/v1/vocabulary.json"
+vocabulary_file = "dataset-vocabulary.json"
+vocabulary_sha256 = "2a52198908bd63011d3a438787d81773b5bbd600b10c8145e55c945af2654749"
+# How the pinned bytes were obtained, as it happened: `just vocabulary --accept`
+# writes the fetch it verified against the dataset's index, and nothing else
+# writes this line.
+vocabulary_provenance = "fetched from https://data.origin89.com/v1/vocabulary.json, listed by the index as sha256 2a52198908bd63011d3a438787d81773b5bbd600b10c8145e55c945af2654749"
+# Live metric kinds that are the controller's own business and have no dataset
+# word: a client reads them, an equipment database has no column for them.
+internal = [
+  "tank sender current",
+  "generator starts since commissioning",
+  "run contact commanded (bool)",
+  "generator selector position (enum, see below)",
+  "last boot reason (enum)",
+  "log ring utilisation",
+]
+
+# DC electrical, by where the component sits.
+
+[[dataset_metrics]]
+name = "battery-voltage"
+kind = "DC voltage"
+role = "battery bank"
+
+[[dataset_metrics]]
+name = "battery-voltage"
+kind = "DC voltage"
+role = "battery pack"
+
+[[dataset_metrics]]
+name = "pv-voltage"
+kind = "DC voltage"
+role = "pv array"
+
+[[dataset_metrics]]
+name = "pv-voltage"
+kind = "DC voltage"
+role = "mppt tracker"
+
+[[dataset_metrics]]
+name = "load-voltage"
+kind = "DC voltage"
+role = "load output"
+
+[[dataset_metrics]]
+name = "battery-current"
+kind = "DC current (+ into the component)"
+role = "battery bank"
+
+[[dataset_metrics]]
+name = "battery-current"
+kind = "DC current (+ into the component)"
+role = "battery pack"
+
+[[dataset_metrics]]
+name = "pv-current"
+kind = "DC current (+ into the component)"
+role = "pv array"
+
+[[dataset_metrics]]
+name = "pv-current"
+kind = "DC current (+ into the component)"
+role = "mppt tracker"
+
+[[dataset_metrics]]
+name = "load-current"
+kind = "DC current (+ into the component)"
+role = "load output"
+
+[[dataset_metrics]]
+name = "battery-power"
+kind = "DC power (signed)"
+role = "battery bank"
+
+[[dataset_metrics]]
+name = "battery-power"
+kind = "DC power (signed)"
+role = "battery pack"
+
+[[dataset_metrics]]
+name = "pv-power"
+kind = "DC power (signed)"
+role = "pv array"
+
+[[dataset_metrics]]
+name = "pv-power"
+kind = "DC power (signed)"
+role = "mppt tracker"
+
+[[dataset_metrics]]
+name = "load-power"
+kind = "DC power (signed)"
+role = "load output"
+
+[[dataset_metrics]]
+name = "state-of-charge"
+kind = "state of charge"
+
+# Temperature: the bank's, wherever on it the probe sits, and the plain kind
+# for everything else. A more specific row wins over a less specific one.
+
+[[dataset_metrics]]
+name = "battery-temperature"
+kind = "temperature"
+role = "battery bank"
+
+[[dataset_metrics]]
+name = "battery-temperature"
+kind = "temperature"
+role = "battery pack"
+
+[[dataset_metrics]]
+name = "battery-temperature"
+kind = "temperature"
+role = "cell"
+
+[[dataset_metrics]]
+name = "temperature"
+kind = "temperature"
+
+# AC electrical.
+
+[[dataset_metrics]]
+name = "ac-voltage"
+kind = "AC voltage"
+
+[[dataset_metrics]]
+name = "ac-current"
+kind = "AC current"
+
+[[dataset_metrics]]
+name = "ac-power"
+kind = "AC power"
+
+[[dataset_metrics]]
+name = "ac-frequency"
+kind = "AC frequency"
+
+# A row that names no domain carries `live`, the reading as it is now, and
+# nothing else: a moving limit or a period counter of the same kind has no word
+# unless a row names its domain. A counter's word depends on its window: the
+# lifetime total is the dataset's total, today's is its today figure, and a
+# yesterday or since-reset counter has no dataset word at all.
+
+[[dataset_metrics]]
+name = "ac-energy-total"
+kind = "AC energy"
+domain = "lifetime"
+
+[[dataset_metrics]]
+name = "ac-energy-today"
+kind = "AC energy"
+domain = "today"
+
+# Generator, tank, controller.
+
+[[dataset_metrics]]
+name = "generator-run-state"
+kind = "generator state (enum, see below)"
+
+[[dataset_metrics]]
+name = "generator-run-hours"
+kind = "generator run hours"
+domain = "lifetime"
+
+[[dataset_metrics]]
+name = "tank-level"
+kind = "tank level"
+
+[[dataset_metrics]]
+name = "uptime"
+kind = "uptime since boot"
+domain = "since_reset"
+
+# Words the protocol cannot carry today, each with the reason.
+
+[[dataset_metrics]]
+name = "ac-apparent-power"
+absent = "no metric kind"
+
+[[dataset_metrics]]
+name = "ac-power-factor"
+absent = "no metric kind"
+
+[[dataset_metrics]]
+name = "pv-energy-today"
+absent = "no DC energy kind (#2)"
+
+[[dataset_metrics]]
+name = "pv-energy-total"
+absent = "no DC energy kind (#2)"
+
+[[dataset_metrics]]
+name = "consumed-amp-hours"
+absent = "no DC charge counter kind (#2)"
+
+[[dataset_metrics]]
+name = "charge-stage"
+absent = "the charge stage enum space has no members yet (#3)"
+
+[[dataset_metrics]]
+name = "cycle-count"
+absent = "no metric kind"
+
+[[dataset_metrics]]
+name = "state-of-health"
+absent = "no metric kind"
+
+[[dataset_metrics]]
+name = "time-to-go"
+absent = "no metric kind"
+
+[[dataset_metrics]]
+name = "humidity"
+absent = "no metric kind"
+
+[[dataset_metrics]]
+name = "pressure"
+absent = "no metric kind"
+
+[[dataset_metrics]]
+name = "pv-irradiance"
+absent = "no metric kind"
+
+[[dataset_metrics]]
+name = "tank-volume"
+absent = "the protocol carries a tank level in percent, never a volume"
+
+[[dataset_metrics]]
+name = "switch-state"
+absent = "the only switch metric is the generator run contact command, an echo of a command rather than a measured state"
+
+[[dataset_metrics]]
+name = "link-online"
+absent = "link state is presence and the comms link events, not a metric"
+
+[[dataset_metrics]]
+name = "link-signal-quality"
+absent = "no metric kind; the comms processor's radio is not a reading the controller carries"
+
+[[dataset_metrics]]
+name = "link-latency"
+absent = "no metric kind"
+
+[[dataset_metrics]]
+name = "link-uplink"
+absent = "no metric kind"
+
+[[dataset_metrics]]
+name = "link-downlink"
+absent = "no metric kind"

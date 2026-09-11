@@ -5,3 +5,4 @@ node_modules/
 /.origin89/engineering/
 /.agents/skills/origin89-*
 /.claude/skills/origin89-*
+.test-out/
