@@ -4,10 +4,15 @@
 # request a person reviews. It never pushes to main, and nothing merges on
 # its own.
 #
+# While that pull request is open, the run works on its branch and commits on
+# top: the branch is where a person carries or absents the rows that lost a
+# word, and a run that rebuilt it from main would throw that work away. The
+# branch is only ever created from main when no pull request is open.
+#
 # A pull request opened with the workflow's own token gets no `check` run of
 # its own (GitHub does not start workflows from that token), so the gate is
-# run here and its result written into the PR body. Rerunning `check` on the
-# PR after a push by a person gives it a run of its own.
+# run here and its result written into the PR body. A push by a person gives
+# the PR a run of its own.
 name: vocabulary
 
 on:
@@ -41,6 +46,25 @@ jobs:
         with:
           just-version: '1.58.0'
 
+      - name: Take the branch under review, or start one from main
+        id: branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          number="$(gh pr list --head bot/vocabulary --state open --json number --jq '.[0].number')"
+          if [ -n "$number" ]; then
+            git fetch origin bot/vocabulary
+            git checkout -B bot/vocabulary origin/bot/vocabulary
+            echo "pr=$number" >> "$GITHUB_OUTPUT"
+            echo "working on the branch of #$number"
+          else
+            git checkout -B bot/vocabulary
+            echo 'pr=' >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Compare the pin with what the dataset publishes
         id: compare
         run: |
@@ -58,8 +82,8 @@ jobs:
           cargo xtask vocabulary --accept
           just registry
 
-      # `continue-on-error`: a red gate is the finding, not a reason to stop
-      # before the pull request that shows it.
+      # A red gate is the finding, not a reason to stop before the pull
+      # request that shows it.
       - name: Run the gate
         id: gate
         if: steps.compare.outputs.moved == 'true'
@@ -71,26 +95,30 @@ jobs:
           fi
           tail -n 40 gate.txt
 
-      - name: Open or update the pull request
+      - name: Commit the move, and open or update the pull request
         if: steps.compare.outputs.moved == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           GATE: ${{ steps.gate.outputs.result }}
+          PR: ${{ steps.branch.outputs.pr }}
         run: |
           set -euo pipefail
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git checkout -B bot/vocabulary
           git add crates/km43/dataset-vocabulary.json crates/km43/protocol.toml \
             crates/km43/src/generated.rs packages/km43/src/generated.ts \
             docs/protocol/REGISTRY.md docs/protocol/MAP.md
           git commit -m 'chore: move the dataset vocabulary pin'
-          git push --force origin bot/vocabulary
+          if [ -n "$PR" ]; then
+            # On top of what is under review, never over it.
+            git push origin bot/vocabulary
+          else
+            # No pull request holds this branch; a stale leftover may.
+            git push --force origin bot/vocabulary
+          fi
 
           {
             echo '## Change'
             echo
-            echo 'The equipment dataset published a vocabulary that differs from the pinned one. `cargo xtask vocabulary --accept` moved the pin and `just registry` regenerated the bindings and `REGISTRY.md`; this is that diff, for a person to read. Opened by the `vocabulary` workflow, which never merges.'
+            echo 'The equipment dataset published a vocabulary that differs from the pinned one. `cargo xtask vocabulary --accept` moved the pin and `just registry` regenerated the bindings and `REGISTRY.md`; this is that diff, for a person to read. Opened by the `vocabulary` workflow, which never merges. While this pull request is open, later runs commit on top of this branch rather than replacing it, so edits made here survive.'
             echo
             echo '```'
             cat report.txt
@@ -111,10 +139,9 @@ jobs:
             echo "Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}. A pull request opened by the workflow's token gets no \`check\` run of its own; push to the branch or rerun \`check\` to give it one."
           } > body.md
 
-          number="$(gh pr list --head bot/vocabulary --state open --json number --jq '.[0].number')"
-          if [ -n "$number" ]; then
-            gh pr edit "$number" --body-file body.md
-            echo "updated #$number"
+          if [ -n "$PR" ]; then
+            gh pr edit "$PR" --body-file body.md
+            echo "updated #$PR"
           else
             gh pr create --base main --head bot/vocabulary \
               --title 'chore: move the dataset vocabulary pin' --body-file body.md
