@@ -983,10 +983,10 @@ mod tests {
         ));
     }
 
-    /// The twenty-two types P-053 does not sign, refused before a tag exists
-    /// rather than signed under a guess. `Snapshot` is the wrapper's (P-052),
-    /// `Hello` and `Pair` prove themselves from inside (P-057), and `Discover`
-    /// has no key at all (P-054).
+    /// The twenty-eight types P-053 does not sign, refused before a tag exists
+    /// rather than signed under a guess. The read-only requests and every
+    /// response are the wrapper's (P-052), `Hello` and `Pair` prove themselves
+    /// from inside (P-057), and `Discover` has no key at all (P-054).
     #[test]
     fn a_message_type_that_does_not_sign_cannot_be_signed_by_this_body() {
         let k = key(OURS);
@@ -995,6 +995,14 @@ mod tests {
             MessageType::DiscoverResponse,
             MessageType::Hello,
             MessageType::HelloResponse,
+            MessageType::Inventory,
+            MessageType::InventoryResponse,
+            MessageType::Readings,
+            MessageType::ReadingsResponse,
+            MessageType::Concerns,
+            MessageType::ConcernsResponse,
+            MessageType::History,
+            MessageType::HistoryResponse,
             MessageType::Subscribe,
             MessageType::SubscribeResponse,
             MessageType::EventResponse,

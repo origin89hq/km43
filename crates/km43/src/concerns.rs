@@ -521,21 +521,27 @@ pub enum ConcernsOutcome {
 }
 
 impl ConcernsOutcome {
-    const fn number(self) -> u8 {
+    /// The registry's allocation, through the generated enum, so a renumbered
+    /// outcome stops this compiling rather than becoming a second table that
+    /// agrees with the first until it does not.
+    const fn registered(self) -> crate::generated::Concerns {
         match self {
-            Self::Ok => 1,
-            Self::Superseded => 2,
-            Self::OutOfRange => 3,
+            Self::Ok => crate::generated::Concerns::Ok,
+            Self::Superseded => crate::generated::Concerns::Superseded,
+            Self::OutOfRange => crate::generated::Concerns::OutOfRange,
         }
     }
 
-    const fn of(number: u8) -> Option<Self> {
-        match number {
-            1 => Some(Self::Ok),
-            2 => Some(Self::Superseded),
-            3 => Some(Self::OutOfRange),
-            _ => None,
-        }
+    const fn number(self) -> u8 {
+        self.registered() as u8
+    }
+
+    fn of(number: u8) -> Option<Self> {
+        Some(match crate::generated::Concerns::try_from(number).ok()? {
+            crate::generated::Concerns::Ok => Self::Ok,
+            crate::generated::Concerns::Superseded => Self::Superseded,
+            crate::generated::Concerns::OutOfRange => Self::OutOfRange,
+        })
     }
 }
 
@@ -833,14 +839,26 @@ impl<'a> ConcernRows<'a> {
     pub fn of(payload: &'a [u8]) -> Result<Self, ConcernsError> {
         let mut body = CborReader::new(payload);
         let pairs = body.map()?;
+        let mut rows = None;
         for _ in 0..pairs {
-            if body.key()? == 3 {
-                let left = body.array()?;
-                return Ok(Self { body, left });
+            match body.key()? {
+                // Taken as bytes and walked to the end, so the body is proved
+                // well formed before a row is handed out. Returning at key 3
+                // left everything after the array unread.
+                3 => rows = Some(body.raw()?),
+                _ => body.skip()?,
             }
-            body.skip()?;
         }
-        Ok(Self { body, left: 0 })
+        body.finish()?;
+        let Some(rows) = rows else {
+            return Ok(Self {
+                body: CborReader::new(&[]),
+                left: 0,
+            });
+        };
+        let mut body = CborReader::new(rows);
+        let left = body.array()?;
+        Ok(Self { body, left })
     }
 }
 
@@ -1750,5 +1768,92 @@ mod tests {
                 missing.name()
             );
         }
+    }
+
+    /// Every strict prefix is refused, and only the whole body reads.
+    fn refused_at_every_cut<T: core::fmt::Debug>(
+        bytes: &[u8],
+        decode: impl Fn(&[u8]) -> Result<T, ConcernsError>,
+    ) {
+        for cut in 0..bytes.len() {
+            assert!(
+                decode(bytes.get(..cut).expect("a prefix")).is_err(),
+                "a prefix of {cut} bytes decoded"
+            );
+        }
+        assert!(
+            decode(bytes).is_ok(),
+            "the whole body must decode, or the loop proves nothing"
+        );
+    }
+
+    /// The four concern bodies with a decoder had a truncation test between
+    /// them only for the page's noise sweep. A resynchronising receiver hands
+    /// every one of these arbitrary prefixes.
+    #[test]
+    fn every_concern_body_cut_short_at_any_byte_is_refused() {
+        let mut out = [0u8; CONCERN_MAX_BYTES + 64];
+
+        let len = ReadConcerns::new(41, 0).encode(&mut out).expect("encodes");
+        refused_at_every_cut(out.get(..len).expect("the body"), ReadConcerns::decode);
+
+        let len = ConcernRaised {
+            rev: 41,
+            concern: widest(),
+        }
+        .encode(&mut out)
+        .expect("encodes");
+        refused_at_every_cut(out.get(..len).expect("the body"), ConcernRaised::decode);
+
+        let len = ConcernChanged {
+            rev: 41,
+            cid: id(12),
+            dev: id(3),
+            cond: Condition::UNDER_TEMPERATURE,
+            state: ConcernState::Cleared,
+            prev: ConcernState::LatchedCleared,
+        }
+        .encode(&mut out)
+        .expect("encodes");
+        refused_at_every_cut(out.get(..len).expect("the body"), ConcernChanged::decode);
+
+        let page = ConcernsPage::new();
+        let len = ConcernsBody {
+            rev: 41,
+            seq: 7,
+            total: 0,
+            refused: 0,
+            outcome: ConcernsOutcome::Ok,
+            page: Some(&page),
+        }
+        .encode(&mut out)
+        .expect("encodes");
+        refused_at_every_cut(out.get(..len).expect("the body"), ConcernsHeader::decode);
+    }
+
+    /// `ConcernRows::of` returned at key 3 and never read the rest of the body,
+    /// so it accepted what the header decoder beside it refused. A client that
+    /// walks the rows without decoding the header first — the ordinary case
+    /// for one that wants the rows — was reading past the end of the message.
+    #[test]
+    fn a_row_walk_over_a_body_with_a_tail_is_refused_like_the_header_is() {
+        let page = ConcernsPage::new();
+        let mut out = [0u8; 64];
+        let len = ConcernsBody {
+            rev: 41,
+            seq: 7,
+            total: 0,
+            refused: 0,
+            outcome: ConcernsOutcome::Ok,
+            page: Some(&page),
+        }
+        .encode(&mut out)
+        .expect("encodes");
+        for tail in out.get_mut(len..len + 2).expect("room for a tail") {
+            *tail = 0xff;
+        }
+        let with_tail = out.get(..len + 2).expect("the body and a tail");
+        assert!(ConcernsHeader::decode(with_tail).is_err());
+        assert!(ConcernRows::of(with_tail).is_err());
     }
 }

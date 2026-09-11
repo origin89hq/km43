@@ -1,9 +1,9 @@
-//! `a0` — the body three messages wear, and the one byte that keeps it from
+//! `a0` — the body two messages wear, and the one byte that keeps it from
 //! being nothing at all.
 //!
-//! `Snapshot 0x02` asks for everything, `Goodbye 0x0C` says the client is done
-//! and `Goodbye 0x8C` agrees. None of the three has a field, so all three are
-//! the same one byte on the wire and the same type here.
+//! `Goodbye 0x0C` says the client is done and `Goodbye 0x8C` agrees. Neither
+//! has a field, so both are the same one byte on the wire and the same type
+//! here. `Snapshot 0x02` wore it first and is retired.
 //!
 //! P-011 makes a body a CBOR map, so *empty inner body* is the empty map and
 //! not a payload of no bytes. A wrapper carries both equally happily — key 1 is
@@ -29,7 +29,7 @@ use crate::generated::{ErrorCode, MessageType};
 pub struct EmptyBody;
 
 impl EmptyBody {
-    /// The three messages whose inner body has no keys, so a caller cannot
+    /// The two messages whose inner body has no keys, so a caller cannot
     /// reach for this on a message that owes fields.
     ///
     /// `Goodbye`'s two directions are both here: P-076 gives the response no
@@ -172,13 +172,15 @@ mod tests {
     use super::*;
     use crate::render::Rendering;
 
-    /// The three that wear it, and the twenty-three that do not.
+    /// The two that wear it, and the thirty that do not.
     ///
     /// `Discover 0x00` is `(empty map)` in the document too and is deliberately
-    /// among the twenty-three: P-054 leaves it unauthenticated, so it has no
-    /// wrapper and therefore no *inner* body. The guard is a written-out match
-    /// for the same reason this list is exhaustive — a twenty-seventh type has
-    /// to be placed rather than silently omitted.
+    /// among the thirty: P-054 leaves it unauthenticated, so it has no wrapper
+    /// and therefore no *inner* body. The guard is a written-out match for the
+    /// same reason this list is exhaustive — a thirty-third type has to be
+    /// placed rather than silently omitted. The eight inventory, readings,
+    /// concerns and history types were routed by the guard and named by this
+    /// list by nobody, which is how a list comes to prove less than it says.
     #[test]
     fn only_the_two_inner_bodies_with_no_fields_are_written_as_the_empty_map() {
         let mut dst = [0u8; 8];
@@ -192,6 +194,14 @@ mod tests {
             MessageType::DiscoverResponse,
             MessageType::Hello,
             MessageType::HelloResponse,
+            MessageType::Inventory,
+            MessageType::InventoryResponse,
+            MessageType::Readings,
+            MessageType::ReadingsResponse,
+            MessageType::Concerns,
+            MessageType::ConcernsResponse,
+            MessageType::History,
+            MessageType::HistoryResponse,
             MessageType::Subscribe,
             MessageType::SubscribeResponse,
             MessageType::EventResponse,

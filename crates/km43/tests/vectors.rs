@@ -811,6 +811,42 @@ fn p_001_the_published_frame_is_the_one_this_crate_writes() {
     );
 }
 
+/// **The six link frames' wire bytes, read.** `every_published_link_frame_is_one_
+/// this_crate_decodes` starts from `envelope_cbor`, so a wrong `crc16_ccitt_false`
+/// or a mis-framed `encoded_with_delimiter` in the `link_local` block was
+/// invisible: the gate accepts any quoted key inside a block as *read*, and the
+/// client `frame` block's test brace-matches its own object only.
+#[test]
+fn every_published_link_frame_is_the_one_this_crate_frames_and_checksums() {
+    let link = object("link_local");
+    let envelopes = strings_of(link, "envelope_cbor");
+    let frames = strings_of(link, "encoded_with_delimiter");
+    let crcs = strings_of(link, "crc16_ccitt_false");
+    assert_eq!(envelopes.len(), 6, "the link block changed shape");
+    assert_eq!(frames.len(), envelopes.len());
+    assert_eq!(crcs.len(), envelopes.len());
+
+    for ((envelope, frame), crc) in envelopes.iter().zip(&frames).zip(&crcs) {
+        let envelope = unhex(envelope);
+        let published = unhex(frame);
+        let crc = u16::from_str_radix(crc.trim_start_matches("0x"), 16).expect("a hex crc");
+        assert_eq!(
+            km43::crc16(&envelope),
+            crc,
+            "the crc this crate computes over a published link envelope is not the published one"
+        );
+        let mut dst = [0u8; MAX_FRAME];
+        let len = km43::FrameWriter::default()
+            .write(&envelope, &mut dst)
+            .expect("a published link envelope fits a frame");
+        assert_eq!(
+            dst.get(..len).expect("the frame length"),
+            published.as_slice(),
+            "the frame this crate writes for a link envelope is not the one the corpus publishes"
+        );
+    }
+}
+
 /// **The QR payload, counted.** P-049 fixes it at an exact character count, and
 /// the count is what a client validates a scan against before it derives
 /// anything — so an off-by-one there rejects every real label.
@@ -1129,7 +1165,13 @@ fn the_published_inventory_body_reads_back_to_what_the_generator_wrote() {
 fn the_widest_reading_the_generator_publishes_is_the_one_this_crate_budgets_for() {
     let q = SignalQuality::carrying(Validity::Stale, Provenance::Measured).expect("stale carries");
 
-    let sample = Sample::new(u16::MAX, q, Some(i32::MIN), Some(u32::MAX)).expect("the widest one");
+    let sample = Sample::new(
+        Id::new(u16::MAX).expect("a signal id"),
+        q,
+        Some(i32::MIN),
+        Some(u32::MAX),
+    )
+    .expect("the widest one");
     let mut dst = [0u8; 64];
     let mut cbor = CborWriter::new(&mut dst);
     sample.encode(&mut cbor).expect("encodes");
@@ -1142,7 +1184,13 @@ fn the_widest_reading_the_generator_publishes_is_the_one_this_crate_budgets_for(
 
     let all = [q; MAX_SERIES_LEN];
     let values = [i32::MIN; MAX_SERIES_LEN];
-    let series = Series::new(u16::MAX, &all, &values, Some(u32::MAX)).expect("the widest one");
+    let series = Series::new(
+        Id::new(u16::MAX).expect("a signal id"),
+        &all,
+        &values,
+        Some(u32::MAX),
+    )
+    .expect("the widest one");
     let mut dst = [0u8; 256];
     let mut scratch = [0u8; MAX_SERIES_LEN];
     let mut cbor = CborWriter::new(&mut dst);
@@ -1169,12 +1217,14 @@ fn the_published_readings_body_is_the_one_this_encoder_writes() {
     let open = SignalQuality::absent(Validity::SensorFault).expect("a fault carries nothing");
 
     let mut page = ReadingsPage::new();
-    let sample = Sample::new(9, ok, Some(1_250), None).expect("12.50 V");
+    let sample =
+        Sample::new(Id::new(9).expect("a signal id"), ok, Some(1_250), None).expect("12.50 V");
     assert!(page.push_sample(&sample).expect("encodes"));
 
     let q = [ok, open, ok];
     let values = [3_312, 3_309];
-    let series = Series::new(21, &q, &values, None).expect("two readable of three");
+    let series = Series::new(Id::new(21).expect("a signal id"), &q, &values, None)
+        .expect("two readable of three");
     assert!(page.push_series(&series).expect("encodes"));
 
     let body = ReadingsBody {

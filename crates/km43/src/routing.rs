@@ -38,7 +38,24 @@ use crate::envelope::{Header, ReqId, SessionId};
 /// Never zero — zero is the link itself, which is what makes *no connection*
 /// and *connection 0* decidable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Conn(pub u16);
+pub struct Conn(u16);
+
+impl Conn {
+    /// Refuses 0, so a `Conn` in hand is a connection and never the link.
+    #[must_use]
+    pub const fn new(handle: u16) -> Option<Self> {
+        if handle == 0 {
+            None
+        } else {
+            Some(Self(handle))
+        }
+    }
+
+    #[must_use]
+    pub const fn get(self) -> u16 {
+        self.0
+    }
+}
 
 /// What a refusal is about, which is what decides how it is addressed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -128,6 +145,20 @@ impl About {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn conn(handle: u16) -> Conn {
+        Conn::new(handle).expect("a non-zero handle")
+    }
+
+    /// Zero is the link itself. A `Conn(0)` used to be constructible, and a
+    /// pre-session answer built on one came back with `SessionId::None`, which
+    /// is the P-021 shape: an answer no connection can be told apart by.
+    #[test]
+    fn a_zero_handle_is_not_a_connection() {
+        assert_eq!(Conn::new(0), None);
+        assert_eq!(Conn::new(1).map(Conn::get), Some(1));
+        assert_eq!(Conn::new(u16::MAX).map(Conn::get), Some(u16::MAX));
+    }
     use crate::generated::MessageType;
 
     fn asked(session: u16, req_id: u32) -> Header {
@@ -149,12 +180,12 @@ mod tests {
     fn p_027_an_error_about_a_frame_that_parsed_echoes_what_the_client_matches_on() {
         let out = About::AClientFrame {
             header: asked(3, 17),
-            conn: Conn(3),
+            conn: conn(3),
         }
         .addressed();
         assert_eq!(out.session, SessionId::from(3));
         assert_eq!(out.req_id, ReqId(17));
-        assert_eq!(out.route, Route::ToClient(Conn(3)));
+        assert_eq!(out.route, Route::ToClient(conn(3)));
     }
 
     /// And it echoes whatever the frame carried, rather than anything derived —
@@ -164,7 +195,7 @@ mod tests {
         for (session, req) in [(1u16, 0u32), (8, 1), (0xFFFF, u32::MAX), (2, 42)] {
             let out = About::AClientFrame {
                 header: asked(session, req),
-                conn: Conn(1),
+                conn: conn(1),
             }
             .addressed();
             assert_eq!(
@@ -182,12 +213,12 @@ mod tests {
     /// waiting out its own timeout with an empty screen.
     #[test]
     fn p_025_a_frame_too_malformed_to_parse_is_answered_on_the_connection_it_arrived_on() {
-        let out = About::AFrameThatDidNotParse { conn: Conn(6) }.addressed();
+        let out = About::AFrameThatDidNotParse { conn: conn(6) }.addressed();
         assert_eq!(out.session, SessionId::None);
         assert_eq!(out.req_id, ReqId(0));
         assert_eq!(
             out.route,
-            Route::ToClient(Conn(6)),
+            Route::ToClient(conn(6)),
             "the one refusal a client cannot ask about again was not sent to it"
         );
     }
@@ -202,7 +233,7 @@ mod tests {
     fn p_026_a_pre_session_answer_carries_the_handle_that_asked() {
         for handle in [1u16, 2, 8, 0xFFFF] {
             let out = About::APreSessionRequest {
-                conn: Conn(handle),
+                conn: conn(handle),
                 req_id: ReqId(4),
             }
             .addressed();
@@ -212,7 +243,7 @@ mod tests {
                 "connection {handle} could not be told apart from the other seven"
             );
             assert_eq!(out.req_id, ReqId(4));
-            assert_eq!(out.route, Route::ToClient(Conn(handle)));
+            assert_eq!(out.route, Route::ToClient(conn(handle)));
         }
     }
 
@@ -241,18 +272,18 @@ mod tests {
         let about_a_client = [
             About::AClientFrame {
                 header: asked(3, 17),
-                conn: Conn(3),
+                conn: conn(3),
             },
-            About::AFrameThatDidNotParse { conn: Conn(3) },
+            About::AFrameThatDidNotParse { conn: conn(3) },
             About::APreSessionRequest {
-                conn: Conn(3),
+                conn: conn(3),
                 req_id: ReqId(1),
             },
         ];
         for about in about_a_client {
             assert_eq!(
                 about.addressed().route,
-                Route::ToClient(Conn(3)),
+                Route::ToClient(conn(3)),
                 "{about:?} was not routed to the client it is about"
             );
         }
@@ -272,14 +303,14 @@ mod tests {
             let out = about.addressed();
             out.session == SessionId::None && out.req_id == ReqId(0)
         };
-        assert!(zeroed(About::AFrameThatDidNotParse { conn: Conn(3) }));
+        assert!(zeroed(About::AFrameThatDidNotParse { conn: conn(3) }));
         assert!(zeroed(About::ALinkLocalFrame));
         assert!(!zeroed(About::AClientFrame {
             header: asked(3, 17),
-            conn: Conn(3),
+            conn: conn(3),
         }));
         assert!(!zeroed(About::APreSessionRequest {
-            conn: Conn(3),
+            conn: conn(3),
             req_id: ReqId(1),
         }));
     }

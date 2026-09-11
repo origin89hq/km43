@@ -338,11 +338,21 @@ impl<'a> LogPage<'a> {
     /// Highest rather than last, because nothing here requires a page's entries
     /// to ascend.
     pub fn push(&mut self, entry: LogEntry<'a>) -> Result<(), ReadLogError> {
+        // Refused, not saturated: a record at the ceiling has no *past*, and a
+        // cursor that saturates points at the record it just delivered, which
+        // is the P-029 duplicate the paragraph above exists to prevent.
+        // `Event::accept` refuses the same ceiling on the way in.
+        let past = LogSeq(
+            entry
+                .seq
+                .0
+                .checked_add(1)
+                .ok_or(ReadLogError::SeqAtTheCeiling)?,
+        );
         let slot = self
             .entries
             .get_mut(self.len)
             .ok_or(ReadLogError::PageFull(MAX_LOG_PAGE_ENTRIES))?;
-        let past = LogSeq(entry.seq.0.saturating_add(1));
         *slot = entry;
         self.len = self.len.saturating_add(1);
         if past.0 > self.next_seq.0 {
@@ -485,6 +495,8 @@ pub enum ReadLogError {
     /// More entries than a page holds, refused on the array's declared length
     /// rather than after sixty-four have been decoded.
     PageFull(usize),
+    /// A record at `u64::MAX`, past which there is no cursor to hand out.
+    SeqAtTheCeiling,
     /// A page past `MAX_LOG_PAGE_BYTES`. A page is not a frame — it travels
     /// inside one, under an envelope and a wrapper — and a full one comes back
     /// with `complete = false` rather than growing.
@@ -516,6 +528,7 @@ impl ReadLogError {
             Self::Missing(_)
             | Self::Duplicate(_)
             | Self::PageFull(_)
+            | Self::SeqAtTheCeiling
             | Self::Entry(_)
             | Self::Cbor(_) => Refusal::Client(ErrorCode::MalformedFrame),
         }
@@ -528,6 +541,9 @@ impl fmt::Display for ReadLogError {
             Self::Missing(key) => write!(f, "log read carries no {key}"),
             Self::Duplicate(key) => write!(f, "log read carries {key} twice"),
             Self::PageFull(cap) => write!(f, "a page holds at most {cap} entries"),
+            Self::SeqAtTheCeiling => {
+                f.write_str("a record at the sequence ceiling has no cursor past it")
+            }
             Self::PageTooLong(len) => {
                 write!(
                     f,
@@ -964,5 +980,27 @@ mod tests {
         Rendering::<112>::each_says_something_of_its_own(&EVERY);
         assert_eq!(ReadLogError::PageTooLong(2000).refusal().code(), 5);
         assert_eq!(ReadLogError::PageFull(64).refusal().code(), 1);
+    }
+    /// A record at `u64::MAX` has no position after it. Saturating the cursor
+    /// left `next_seq` pointing *at* the delivered record, which is the P-029
+    /// duplicate `push`'s own doc says it prevents. Refused, and the page is
+    /// left as it was.
+    #[test]
+    fn a_record_at_the_sequence_ceiling_is_refused_rather_than_given_a_cursor_onto_itself() {
+        let mut page = LogPage::new(LogSeq(1), LogSeq(1), false);
+        assert_eq!(
+            page.push(entry(u64::MAX)),
+            Err(ReadLogError::SeqAtTheCeiling)
+        );
+        page.push(entry(5))
+            .expect("a refusal leaves the page usable");
+        let mut dst = [0u8; 256];
+        let len = page.encode(&mut dst).expect("one record encodes");
+        let back = LogPage::decode(dst.get(..len).expect("the page")).expect("it reads back");
+        assert_eq!(
+            back.next_seq,
+            LogSeq(6),
+            "the cursor is past the one record that was taken"
+        );
     }
 }

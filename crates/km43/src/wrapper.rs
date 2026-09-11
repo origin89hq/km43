@@ -964,11 +964,15 @@ mod tests {
     /// read-only request re-enters the session as its own answer, MAC and all.
     #[test]
     fn each_message_type_verifies_only_under_the_label_p_052_names_for_it() {
-        const TABLE: [(MessageType, Option<Under>); 24] = [
+        const TABLE: [(MessageType, Option<Under>); 32] = [
             (MessageType::Subscribe, Some(Under::Request)),
             (MessageType::ReadLog, Some(Under::Request)),
             (MessageType::GetConfig, Some(Under::Request)),
             (MessageType::Goodbye, Some(Under::Request)),
+            (MessageType::Inventory, Some(Under::Request)),
+            (MessageType::Readings, Some(Under::Request)),
+            (MessageType::Concerns, Some(Under::Request)),
+            (MessageType::History, Some(Under::Request)),
             (MessageType::HelloResponse, Some(Under::Response)),
             (MessageType::SubscribeResponse, Some(Under::Response)),
             (MessageType::ReadLogResponse, Some(Under::Response)),
@@ -978,6 +982,10 @@ mod tests {
             (MessageType::FirmwareResponse, Some(Under::Response)),
             (MessageType::TimeResponse, Some(Under::Response)),
             (MessageType::GoodbyeResponse, Some(Under::Response)),
+            (MessageType::InventoryResponse, Some(Under::Response)),
+            (MessageType::ReadingsResponse, Some(Under::Response)),
+            (MessageType::ConcernsResponse, Some(Under::Response)),
+            (MessageType::HistoryResponse, Some(Under::Response)),
             (MessageType::ErrorResponse, Some(Under::Response)),
             (MessageType::EventResponse, Some(Under::Event)),
             (MessageType::Discover, None),
