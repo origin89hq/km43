@@ -2921,6 +2921,7 @@ kind = "tank level"
 [[dataset_metrics]]
 name = "uptime"
 kind = "uptime since boot"
+domain = "since_reset"
 
 # Words the protocol cannot carry today, each with the reason.
 

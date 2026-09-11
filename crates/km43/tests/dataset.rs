@@ -131,3 +131,16 @@ fn a_limit_is_not_the_live_reading() {
         "a charge-current ceiling is a limit, not the current"
     );
 }
+
+#[test]
+fn uptime_is_counted_since_a_reset() {
+    assert_eq!(
+        MetricKind::UPTIME_SINCE_BOOT.dataset_name(SignalDomain::SinceReset, None, None),
+        Some("uptime")
+    );
+    assert_eq!(
+        MetricKind::UPTIME_SINCE_BOOT.dataset_name(SignalDomain::Live, None, None),
+        None,
+        "an uptime is a counter since boot, not an instantaneous reading"
+    );
+}

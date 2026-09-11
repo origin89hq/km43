@@ -1291,7 +1291,7 @@ The public equipment dataset ([offgrid-equipment](https://github.com/origin89hq/
 | `tank-level` | `0x0401` tank level | any | any | live |
 | `generator-run-state` | `0x0501` generator state (enum, see below) | any | any | live |
 | `generator-run-hours` | `0x0502` generator run hours | any | any | lifetime |
-| `uptime` | `0x0602` uptime since boot | any | any | live |
+| `uptime` | `0x0602` uptime since boot | any | any | since_reset |
 | `ac-apparent-power` | *not carried: no metric kind* | — | — | — |
 | `ac-power-factor` | *not carried: no metric kind* | — | — | — |
 | `charge-stage` | *not carried: the charge stage enum space has no members yet (#3)* | — | — | — |
