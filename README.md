@@ -45,7 +45,10 @@ refuses a crosswalk row that names a word the pin does not hold. `just
 vocabulary` fetches what the dataset publishes now, verifies it against the
 dataset's index, and reports which words arrived or left; the pin moves only
 with `just vocabulary --accept`, so a change in the dataset reaches the
-registry as a diff somebody reads.
+registry as a diff somebody reads. The `vocabulary` workflow runs that check
+once a day and, when the vocabulary moved, opens a pull request with the pin
+moved, the bindings regenerated and the gate's result; nothing merges on its
+own.
 
 ## Consumers
 
