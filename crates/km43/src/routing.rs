@@ -51,6 +51,7 @@ impl Conn {
         }
     }
 
+    /// The handle, never 0.
     #[must_use]
     pub const fn get(self) -> u16 {
         self.0
