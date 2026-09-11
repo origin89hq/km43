@@ -1,9 +1,11 @@
 {
   "name": "@origin89/km43",
   "version": "0.0.0",
-  "private": true,
   "description": "TypeScript bindings for KM43, generated from the protocol registry",
   "license": "MIT OR Apache-2.0",
+  "publishConfig": {
+    "access": "public"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/origin89hq/km43",
@@ -11,17 +13,28 @@
   },
   "type": "module",
   "exports": {
-    ".": "./src/generated.ts"
+    ".": {
+      "types": "./dist/generated.d.ts",
+      "import": "./dist/generated.js",
+      "default": "./dist/generated.js"
+    }
   },
   "files": [
-    "src"
+    "dist",
+    "CHANGELOG.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE"
   ],
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "prepack": "pnpm run build && cp ../../LICENSE-MIT ../../LICENSE-APACHE .",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "tsc -p tsconfig.test.json && node --test .test-out/test/*.test.js"
   },
   "devDependencies": {
     "@types/node": "22.20.2",
     "typescript": "7.0.2"
-  }
+  },
+  "sideEffects": false,
+  "types": "./dist/generated.d.ts"
 }

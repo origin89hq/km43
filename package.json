@@ -8,10 +8,15 @@
     "lint": "biome ci . --error-on-warnings",
     "lint:fix": "biome check --write .",
     "typecheck": "pnpm -r run typecheck",
-    "check": "pnpm run lint && pnpm run typecheck",
-    "test": "pnpm -r run test"
+    "check": "pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run build",
+    "test": "pnpm -r run test",
+    "build": "pnpm -r run build",
+    "changeset": "changeset",
+    "release:version": "changeset version && pnpm install --lockfile-only --ignore-scripts && pnpm check",
+    "release:publish": "changeset publish"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.13"
+    "@biomejs/biome": "2.5.13",
+    "@changesets/cli": "3.0.2"
   }
 }

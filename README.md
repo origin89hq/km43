@@ -19,7 +19,7 @@ unit freezes key derivation, protocol versioning and serial numbers.
 | Registry | Every allocated number, in the one file that owns them | [`crates/km43/protocol.toml`](crates/km43/protocol.toml), rendered as [`REGISTRY.md`](docs/protocol/REGISTRY.md) and [`MAP.md`](docs/protocol/MAP.md) |
 | Vectors | Known-good bytes from a generator that never imports the implementation | [`docs/protocol/vectors/`](docs/protocol/vectors/) |
 | Implementation | `km43`, a `no_std` crate with no allocator, built for the host and for the controller's Cortex-M0+ | [`crates/km43/`](crates/km43/) |
-| Bindings | TypeScript types generated from the registry | [`packages/km43/`](packages/km43/) |
+| Bindings | TypeScript types generated from the registry, published as `@origin89/km43` | [`packages/km43/`](packages/km43/) |
 | Gate | The consistency checks CI runs, and the generators | [`crates/xtask/`](crates/xtask/) |
 
 ## Commands

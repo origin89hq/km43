@@ -21,6 +21,13 @@ unit and integration tests; the rest of `just test` is the doctests, including
 the compile-fail ones that guard the type-state types. They are not something
 to cut if the gate ever feels slow.
 
+## Releasing the bindings
+
+A change that reaches users of `@origin89/km43` needs a changeset: run
+`pnpm changeset`, pick the bump, describe the result for them, and commit the
+generated file with the change. Merging to `main` then opens or updates a
+release PR; merging that publishes. See [docs/releases.md](docs/releases.md).
+
 ## Changing the protocol
 
 Read [`docs/PROTOCOL.md`](docs/PROTOCOL.md) first. A fielded unit will meet a
