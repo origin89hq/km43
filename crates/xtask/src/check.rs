@@ -229,10 +229,6 @@ impl Checks {
         }
     }
 
-    /// registry.toml and PROTOCOL.md must claim the same protocol version.
-    ///
-    /// They are the two files a version bump has to touch, and nothing else would
-    /// notice if only one of them moved.
     /// The published bodies must carry the fields PROTOCOL.md lists, under the
     /// numbers it gives them.
     ///
@@ -282,6 +278,10 @@ impl Checks {
         }
     }
 
+    /// protocol.toml and PROTOCOL.md must claim the same protocol version.
+    ///
+    /// They are the two files a version bump has to touch, and nothing else would
+    /// notice if only one of them moved.
     fn registry_version_matches_the_spec(&self) -> Result<(), Failure> {
         let fail = |detail: String| Failure {
             check: "registry and spec agree on the version",
@@ -301,7 +301,7 @@ impl Checks {
             Ok(())
         } else {
             Err(fail(format!(
-                "registry.toml says protocol {} but PROTOCOL.md's title is {title:?}",
+                "protocol.toml says protocol {} but PROTOCOL.md's title is {title:?}",
                 reg.meta.protocol
             )))
         }
@@ -862,7 +862,7 @@ impl Checks {
         )))
     }
 
-    /// Everything declared `no_std` must compile for the Cortex-M0+.
+    /// Everything declared `no_std` must compile for both parts.
     ///
     /// **The claim this repo makes is that the host and the target cannot disagree**
     /// — no allocator on either, so a fixture cannot be built from something the
@@ -875,13 +875,17 @@ impl Checks {
     /// smaller, and the whole firmware failed to compile on a constant the gate had
     /// been green about for as long as it existed.
     ///
+    /// Two targets, because two parts speak this protocol: the controller's
+    /// Cortex-M0+ and the comms processor's RISC-V. The second was installed by
+    /// `rust-toolchain.toml` and, until this loop, built by nothing.
+    ///
     /// The crate list is **read from the tree**, not written down here: a list of
     /// names is checked against nothing, so a new `no_std` crate would be added,
     /// never cross-compiled, and look covered. Only the libraries are built —
     /// `#[cfg(test)]` code needs `std` and never ships.
     fn every_no_std_crate_builds_for_the_target(&self) -> Result<(), Failure> {
         const CHECK: &str = "every no_std crate builds for the target";
-        const TARGET: &str = "thumbv6m-none-eabi";
+        const TARGETS: [&str; 2] = ["thumbv6m-none-eabi", "riscv32imac-unknown-none-elf"];
         let fail = |detail: String| Failure {
             check: CHECK,
             detail,
@@ -907,32 +911,37 @@ impl Checks {
         crates.sort();
         if crates.is_empty() {
             return Err(fail(
-                "no crate in crates/ declares #![no_std], which cannot be right — this repo's whole              argument is that its logic runs on a Cortex-M0+ with no allocator."
+                "no crate in crates/ declares #![no_std], which cannot be right — this repo's \
+                 whole argument is that its logic runs on a Cortex-M0+ with no allocator."
                     .to_owned(),
             ));
         }
 
-        let mut cargo = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned()));
-        cargo
-            .current_dir(&self.root)
-            .args(["check", "--target", TARGET]);
-        for name in &crates {
-            cargo.args(["-p", name]);
+        for target in TARGETS {
+            let mut cargo =
+                Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned()));
+            cargo
+                .current_dir(&self.root)
+                .args(["check", "--locked", "--target", target]);
+            for name in &crates {
+                cargo.args(["-p", name]);
+            }
+            let out = cargo
+                .output()
+                .map_err(|e| fail(format!("running cargo check --target {target}: {e}")))?;
+            if !out.status.success() {
+                let why = String::from_utf8_lossy(&out.stderr);
+                return Err(fail(format!(
+                    "the no_std crates ({}) do not all build for {target}. A green host build \
+                     says nothing about this: there `std` is present, `usize` is 64 bits and \
+                     the enum layouts differ. If the target is not installed, `rustup target \
+                     add {target}`.\n\n{}",
+                    crates.join(", "),
+                    why.trim()
+                )));
+            }
         }
-        let out = cargo
-            .output()
-            .map_err(|e| fail(format!("running cargo check --target {TARGET}: {e}")))?;
-        if out.status.success() {
-            return Ok(());
-        }
-        let why = String::from_utf8_lossy(&out.stderr);
-        Err(fail(format!(
-            "the no_std crates ({}) do not all build for {TARGET}. A green host build says nothing \
-             about this: there `std` is present, `usize` is 64 bits and the enum layouts differ. If \
-             the target is not installed, `rustup target add {TARGET}`.\n\n{}",
-            crates.join(", "),
-            why.trim()
-        )))
+        Ok(())
     }
 }
 

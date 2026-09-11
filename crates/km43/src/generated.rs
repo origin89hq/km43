@@ -1395,7 +1395,9 @@ impl ErrorCode {
     pub fn needs_a_mac(self) -> bool {
         ERROR_NEEDS_A_MAC
             .binary_search_by_key(&(self as u16), |&(c, _)| c)
-            .is_ok_and(|i| ERROR_NEEDS_A_MAC[i].1)
+            .ok()
+            .and_then(|i| ERROR_NEEDS_A_MAC.get(i))
+            .is_some_and(|&(_, m)| m)
     }
 }
 
@@ -1843,9 +1845,7 @@ impl MetricKind {
         METRIC_UNITS
             .binary_search_by_key(&self.0, |&(k, _, _)| k)
             .ok()
-            .map(|i| {
-                let (_, u, s) = METRIC_UNITS[i];
-                (u, s)
-            })
+            .and_then(|i| METRIC_UNITS.get(i))
+            .map(|&(_, u, s)| (u, s))
     }
 }

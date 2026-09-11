@@ -1,3 +1,6 @@
+# The compiler `rust-version` names, read from the manifest so it is pinned once.
+msrv := `sed -nE 's/^rust-version = "([0-9.]+)"/\1/p' Cargo.toml`
+
 default:
     @just --list --unsorted
 
@@ -49,5 +52,11 @@ registry:
 # with the crate.
 vectors:
     cargo xtask vectors
+
+# Consumers may still build with the compiler `rust-version` names. Not part of
+# `check` because it needs a second toolchain installed: `rustup toolchain
+# install {{msrv}} --profile minimal`.
+msrv-check:
+    cargo +{{msrv}} check --locked --workspace
 
 check: fmt-check lint typecheck test build doc spec

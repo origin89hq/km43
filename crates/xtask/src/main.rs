@@ -37,7 +37,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Regenerate REGISTRY.md and the language bindings from registry.toml.
+    /// Regenerate REGISTRY.md, MAP.md and both bindings from protocol.toml.
     Registry,
     /// Regenerate the test vectors.
     Vectors,

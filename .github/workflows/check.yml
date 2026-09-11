@@ -1,6 +1,7 @@
-# The gate. Everything here is also `just check`, so a red run reproduces
-# locally with one command. The toolchain, its components and the
-# cross-compile targets come from rust-toolchain.toml; nothing is pinned twice.
+# The gate. Everything here is also `just check` or `just msrv-check`, so a red
+# run reproduces locally with one command. The toolchain, its components and the
+# cross-compile targets come from rust-toolchain.toml, and the MSRV from
+# Cargo.toml; nothing is pinned twice.
 name: check
 
 on:
@@ -44,5 +45,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - run: rustup toolchain install 1.88 --profile minimal
-      - run: cargo +1.88 check --locked --workspace
+      - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b # v3
+        with:
+          just-version: '1.58.0'
+      - run: rustup toolchain install "$(just --evaluate msrv)" --profile minimal
+      - run: just msrv-check
