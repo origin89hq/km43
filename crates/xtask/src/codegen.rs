@@ -181,7 +181,49 @@ impl Codegen {
             heading: "## Client capability mask".to_owned(),
             table: self.client_capability(),
         });
+        out.push(Section {
+            heading: "## Dataset metrics".to_owned(),
+            table: self.dataset_metrics(),
+        });
         out
+    }
+
+    /// The crosswalk as a reader looks it up: by the dataset's word, with the
+    /// place spelled out and *any* where a row leaves it open.
+    fn dataset_metrics(&self) -> String {
+        let named = |space: &str, number: Option<u16>| -> String {
+            number.map_or_else(
+                || "any".to_owned(),
+                |n| {
+                    self.registry
+                        .open_registries
+                        .get(space)
+                        .and_then(|rows| rows.iter().find(|r| r.number == Some(n)))
+                        .map_or_else(|| format!("`0x{n:04X}`"), |r| r.name.clone())
+                },
+            )
+        };
+        let mut t = String::from("| Dataset word | Kind | Role | Point |\n|---|---|---|---|\n");
+        for c in &self.registry.crosswalk.carried {
+            let kind = self
+                .registry
+                .metrics
+                .iter()
+                .find(|m| m.kind == c.kind)
+                .map_or_else(String::new, |m| m.name.clone());
+            let _ = writeln!(
+                t,
+                "| `{}` | `0x{:04X}` {kind} | {} | {} |",
+                c.name,
+                c.kind,
+                named("component_role", c.role),
+                named("measurement_point", c.point)
+            );
+        }
+        for (name, why) in &self.registry.crosswalk.absent {
+            let _ = writeln!(t, "| `{name}` | *not carried: {why}* | — | — |");
+        }
+        t
     }
 
     fn link_errors(&self) -> String {

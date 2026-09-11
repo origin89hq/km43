@@ -7,7 +7,11 @@
     "enabled": true,
     "indentStyle": "space",
     "indentWidth": 2,
-    "includes": ["**", "!packages/km43/src/generated.ts"]
+    "includes": [
+      "**",
+      "!packages/km43/src/generated.ts",
+      "!crates/km43/dataset-vocabulary.json"
+    ]
   },
   "linter": {
     "enabled": true,

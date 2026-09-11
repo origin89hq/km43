@@ -227,6 +227,79 @@ impl Bindings {
             let _ = writeln!(o, "    ({:#06x}, \"{}\", {}),", m.kind, m.unit, m.scale);
         }
         o.push_str("];\n\nimpl MetricKind {\n    #[must_use]\n    pub fn unit_and_scale(self) -> Option<(&'static str, i8)> {\n        METRIC_UNITS\n            .binary_search_by_key(&self.0, |&(k, _, _)| k)\n            .ok()\n            .and_then(|i| METRIC_UNITS.get(i))\n            .map(|&(_, u, s)| (u, s))\n    }\n}\n");
+        o.push_str(&self.rust_dataset());
+        o
+    }
+
+    /// The public equipment dataset's word for a reading, as a table a lookup
+    /// walks first match wins, which is why the registry hands the rows over
+    /// most specific first.
+    fn rust_dataset(&self) -> String {
+        let place = |name: &str, number: Option<u16>| {
+            number.map_or_else(|| "None".to_owned(), |n| format!("Some({name}({n:#06x}))"))
+        };
+        let mut o = String::new();
+        o.push_str(
+            "\n/// The public equipment dataset's word for a reading: a metric kind at a\n\
+             /// place. A `None` place matches any. Rows are most specific first, so the\n\
+             /// first match is the one to take.\n\
+             #[derive(Debug, Clone, Copy, PartialEq, Eq)]\n\
+             pub struct DatasetMetric {\n    \
+                 pub kind: MetricKind,\n    \
+                 pub role: Option<ComponentRole>,\n    \
+                 pub point: Option<MeasurementPoint>,\n    \
+                 pub name: &'static str,\n\
+             }\n\n\
+             pub const DATASET_METRICS: &[DatasetMetric] = &[\n",
+        );
+        for c in &self.registry.crosswalk.carried {
+            let _ = writeln!(
+                o,
+                "    DatasetMetric {{\n        kind: MetricKind({:#06x}),\n        role: {},\n        point: {},\n        name: {:?},\n    }},",
+                c.kind,
+                place("ComponentRole", c.role),
+                place("MeasurementPoint", c.point),
+                c.name
+            );
+        }
+        o.push_str(
+            "];\n\n/// Dataset words no metric carries, each with why.\n\
+             pub const DATASET_ABSENT: &[(&str, &str)] = &[\n",
+        );
+        for (name, why) in &self.registry.crosswalk.absent {
+            // What rustfmt would do with the line, done here so the generated file is
+            // already formatted: a tuple within its `fn_call_width` of 60 stays on one
+            // line, and a wider one is broken one element per line.
+            // `{:?}` on a `str` is a Rust string literal: quotes, backslashes and
+            // control characters escaped, so the text a consumer reads is the text
+            // in `protocol.toml` and not what the compiler made of a stray `\t`.
+            let tuple = format!("({name:?}, {why:?})");
+            if tuple.len() <= 60 {
+                let _ = writeln!(o, "    {tuple},");
+            } else {
+                let _ = writeln!(o, "    (\n        {name:?},\n        {why:?},\n    ),");
+            }
+        }
+        o.push_str(
+            "];\n\nimpl MetricKind {\n    \
+                 /// The dataset's word for this kind at a place, or `None` when it has none.\n    \
+                 #[must_use]\n    \
+                 pub fn dataset_name(\n        \
+                     self,\n        \
+                     role: Option<ComponentRole>,\n        \
+                     point: Option<MeasurementPoint>,\n    \
+                 ) -> Option<&'static str> {\n        \
+                     DATASET_METRICS\n            \
+                         .iter()\n            \
+                         .find(|m| {\n                \
+                             m.kind == self\n                    \
+                                 && m.role.is_none_or(|r| Some(r) == role)\n                    \
+                                 && m.point.is_none_or(|p| Some(p) == point)\n            \
+                         })\n            \
+                         .map(|m| m.name)\n    \
+                 }\n\
+             }\n",
+        );
         o
     }
 
@@ -709,6 +782,49 @@ impl Bindings {
             let _ = writeln!(o, "  {:#06x}: [\"{}\", {}],", m.kind, m.unit, m.scale);
         }
         o.push_str("};\n");
+        o.push_str(&self.ts_dataset());
+        o
+    }
+
+    /// The same crosswalk for a client, most specific row first.
+    fn ts_dataset(&self) -> String {
+        let mut o = String::new();
+        o.push_str(
+            "\n// The public equipment dataset's word for a reading: a metric kind at a\n\
+             // place. An undefined place matches any; rows are most specific first.\n\
+             export interface DatasetMetric {\n  \
+                 readonly kind: number;\n  \
+                 readonly role?: number;\n  \
+                 readonly point?: number;\n  \
+                 readonly name: string;\n\
+             }\n\n\
+             export const datasetMetrics: readonly DatasetMetric[] = [\n",
+        );
+        for c in &self.registry.crosswalk.carried {
+            let mut row = format!("  {{ kind: {:#06x}", c.kind);
+            if let Some(role) = c.role {
+                let _ = write!(row, ", role: {role:#06x}");
+            }
+            if let Some(point) = c.point {
+                let _ = write!(row, ", point: {point:#06x}");
+            }
+            let _ = writeln!(o, "{row}, name: {} }},", js(&c.name));
+        }
+        o.push_str(
+            "];\n\n// Dataset words no metric carries, each with why.\n\
+             export const datasetAbsent: Readonly<Record<string, string>> = {\n",
+        );
+        for (name, why) in &self.registry.crosswalk.absent {
+            let _ = writeln!(o, "  {}: {},", js(name), js(why));
+        }
+        o.push_str(
+            "};\n\n\
+             export function datasetName(kind: number, role?: number, point?: number): string | undefined {\n  \
+                 return datasetMetrics.find(\n    \
+                     (m) => m.kind === kind && (m.role === undefined || m.role === role) && (m.point === undefined || m.point === point),\n  \
+                 )?.name;\n\
+             }\n",
+        );
         o
     }
 }
@@ -819,6 +935,12 @@ fn words(s: &str) -> impl Iterator<Item = &str> {
         .map_or(s, |(before, _)| before)
         .split(|c: char| !c.is_ascii_alphanumeric())
         .filter(|w| !w.is_empty())
+}
+
+/// A JavaScript string literal for `s`: a JSON string is one, with quotes,
+/// backslashes and control characters escaped.
+fn js(s: &str) -> String {
+    serde_json::to_string(s).unwrap_or_else(|_| "\"\"".to_owned())
 }
 
 #[cfg(test)]

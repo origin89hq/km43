@@ -47,6 +47,7 @@ pub fn run(dry_run: bool) -> Result<()> {
         checks.every_link_lands(),
         checks.no_number_is_allocated_twice(),
         checks.every_requirement_is_cited(),
+        checks.dataset_crosswalk_is_sound(),
     ] {
         match result {
             Ok(()) => {}
@@ -406,6 +407,31 @@ impl Checks {
             }
         }
 
+        if wrong.is_empty() {
+            Ok(())
+        } else {
+            Err(fail(wrong.join("\n      ")))
+        }
+    }
+
+    /// Every word of the dataset's vocabulary is carried or explained, every live
+    /// metric reaches a word or is declared the controller's own, and the pinned
+    /// vocabulary is the one the pin names.
+    ///
+    /// The failure is a support list that lies by omission: a dataset word with
+    /// no row reads as "Origin89 cannot read this" when nobody decided, and a live
+    /// metric with no row is a reading a consumer cannot name, so it never reaches
+    /// the rating that limits it.
+    fn dataset_crosswalk_is_sound(&self) -> Result<(), Failure> {
+        let fail = |detail: String| Failure {
+            check: "dataset crosswalk is sound",
+            detail,
+        };
+        let reg = self.registry().map_err(|e| fail(e.to_string()))?;
+        let words = reg
+            .vocabulary(&self.root)
+            .map_err(|e| fail(format!("{e:#}")))?;
+        let wrong = crosswalk_findings(&reg, &words);
         if wrong.is_empty() {
             Ok(())
         } else {
@@ -1158,6 +1184,79 @@ fn walk(root: &Path) -> Result<Vec<PathBuf>, String> {
 /// and every frame carrying it decodes cleanly into the wrong thing — a metric
 /// read as another metric, an outcome acted on as a different outcome. There is
 /// no MAC failure and no decode error, because nothing is malformed.
+/// What is wrong with the crosswalk against the dataset's words, as sentences.
+///
+/// Empty means sound. Kept apart from the check so a test can hand it a
+/// registry with one row removed and read the sentence it produces.
+pub fn crosswalk_findings(registry: &crate::registry::Registry, words: &[String]) -> Vec<String> {
+    use crate::registry::Status;
+    use std::collections::BTreeSet;
+
+    let mut wrong = Vec::new();
+    let known: BTreeSet<&str> = words.iter().map(String::as_str).collect();
+    let crosswalk = &registry.crosswalk;
+
+    let mut named: BTreeSet<&str> = BTreeSet::new();
+    for c in &crosswalk.carried {
+        named.insert(&c.name);
+        if !known.contains(c.name.as_str()) {
+            wrong.push(format!(
+                "`{}` is carried as a dataset word and the pinned vocabulary has no such word",
+                c.name
+            ));
+        }
+    }
+    for (name, _) in &crosswalk.absent {
+        if crosswalk.carried.iter().any(|c| &c.name == name) {
+            wrong.push(format!("`{name}` is listed as absent and also carried"));
+        }
+        named.insert(name);
+        if !known.contains(name.as_str()) {
+            wrong.push(format!(
+                "`{name}` is listed as absent and the pinned vocabulary has no such word"
+            ));
+        }
+    }
+    for word in words {
+        if !named.contains(word.as_str()) {
+            wrong.push(format!(
+                "dataset word `{word}` has no row: carry it, or say why the protocol cannot"
+            ));
+        }
+    }
+
+    let internal: BTreeSet<&str> = registry
+        .dataset
+        .as_ref()
+        .map(|d| d.internal.iter().map(String::as_str).collect())
+        .unwrap_or_default();
+    let carried: BTreeSet<u16> = crosswalk.carried.iter().map(|c| c.kind).collect();
+    for m in registry.metrics.iter().filter(|m| m.status == Status::Live) {
+        match (
+            carried.contains(&m.kind),
+            internal.contains(m.name.as_str()),
+        ) {
+            (false, false) => wrong.push(format!(
+                "live metric `{}` ({:#06x}) reaches no dataset word and is not declared internal",
+                m.name, m.kind
+            )),
+            (true, true) => wrong.push(format!(
+                "`{}` is declared internal and also carried as a dataset word",
+                m.name
+            )),
+            (true, false) | (false, true) => {}
+        }
+    }
+    for name in &internal {
+        if !registry.metrics.iter().any(|m| m.name == *name) {
+            wrong.push(format!(
+                "dataset.internal names `{name}`, which is not a metric"
+            ));
+        }
+    }
+    wrong
+}
+
 pub fn no_number_is_allocated_twice(registry: &crate::registry::Registry) -> Result<(), String> {
     let mut clashes = Vec::new();
 
@@ -1251,4 +1350,73 @@ pub fn no_number_is_allocated_twice(registry: &crate::registry::Registry) -> Res
         clashes.len(),
         clashes.join("\n  ")
     ))
+}
+
+#[cfg(test)]
+mod crosswalk {
+    use super::{crosswalk_findings, repo_root};
+    use crate::registry::{Carried, Registry};
+
+    fn loaded() -> (Registry, Vec<String>) {
+        let root = repo_root().expect("a repo to read the registry from");
+        let reg = Registry::load(&root).expect("the registry parses");
+        let words = reg.vocabulary(&root).expect("the pinned vocabulary reads");
+        (reg, words)
+    }
+
+    #[test]
+    fn the_registry_as_committed_is_sound() {
+        let (reg, words) = loaded();
+        assert_eq!(crosswalk_findings(&reg, &words), Vec::<String>::new());
+    }
+
+    /// The failure this exists for: a word nobody decided about reads, in a
+    /// support list, as "Origin89 cannot read this".
+    #[test]
+    fn a_dataset_word_no_row_accounts_for_is_named() {
+        let (mut reg, words) = loaded();
+        reg.crosswalk.carried.retain(|c| c.name != "tank-level");
+        let said = crosswalk_findings(&reg, &words).join("\n");
+        assert!(said.contains("`tank-level` has no row"), "{said}");
+    }
+
+    #[test]
+    fn a_word_outside_the_pinned_vocabulary_is_refused() {
+        let (mut reg, words) = loaded();
+        reg.crosswalk.carried.push(Carried {
+            name: "cabin-mood".to_owned(),
+            kind: 0x0101,
+            role: Some(0x0015),
+            point: None,
+        });
+        let said = crosswalk_findings(&reg, &words).join("\n");
+        assert!(
+            said.contains("`cabin-mood` is carried") && said.contains("no such word"),
+            "{said}"
+        );
+    }
+
+    #[test]
+    fn a_live_metric_with_no_word_must_be_declared_internal() {
+        let (mut reg, words) = loaded();
+        let dataset = reg.dataset.as_mut().expect("a pin");
+        dataset.internal.retain(|m| m != "log ring utilisation");
+        let said = crosswalk_findings(&reg, &words).join("\n");
+        assert!(
+            said.contains("`log ring utilisation`") && said.contains("not declared internal"),
+            "{said}"
+        );
+
+        let (mut reg, words) = loaded();
+        reg.dataset
+            .as_mut()
+            .expect("a pin")
+            .internal
+            .push("uptime since boot".to_owned());
+        let said = crosswalk_findings(&reg, &words).join("\n");
+        assert!(
+            said.contains("declared internal and also carried"),
+            "{said}"
+        );
+    }
 }
