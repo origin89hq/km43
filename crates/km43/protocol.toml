@@ -2752,11 +2752,11 @@ direction = "controller-to-comms"
 [dataset]
 vocabulary_url = "https://data.origin89.com/v1/vocabulary.json"
 vocabulary_file = "dataset-vocabulary.json"
-vocabulary_sha256 = "9a5141acbb49989e93fe2e873c6cb699d3ec1b8a3afb15571a7fce5ffeb50e13"
+vocabulary_sha256 = "2a52198908bd63011d3a438787d81773b5bbd600b10c8145e55c945af2654749"
 # Where the pinned bytes came from, as it happened. The URL is where the dataset
 # serves the file; the copy here was built from the change that adds it, before
 # that change had merged, so it was not fetched from anywhere.
-vocabulary_provenance = "built from origin89hq/offgrid-equipment PR #102 at commit 1410625e, not fetched from the URL"
+vocabulary_provenance = "built from origin89hq/offgrid-equipment PR #102 at commit 8c814a08, not fetched from the URL"
 # Live metric kinds that are the controller's own business and have no dataset
 # word: a client reads them, an equipment database has no column for them.
 internal = [
