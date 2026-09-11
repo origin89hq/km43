@@ -433,7 +433,7 @@ pub enum WrapperError {
     /// with a key missing (P-051).
     Missing(WrapperKey),
     /// A `type` P-052 does not wrap. Refused rather than verified under a
-    /// guessed label, which would authenticate a `Hello` as a `Snapshot`.
+    /// guessed label, which would authenticate a `Hello` as a `Readings`.
     NotWrapped(MessageType),
     /// An unsolicited `Event` carrying a `req_id` where P-023 requires zero. The
     /// `evt` preimage covers a literal `0x00000000`, so a number here is a field

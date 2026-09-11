@@ -41,11 +41,11 @@ tableOfContents:
 
 Scope check first, because two of the numbers in the brief are wrong and one of them changes the plan.
 
-`docs/PROTOCOL.md` carries **123** numbered requirements, not ~150 (`grep -o '\*\*P-[0-9]\{3\}\*\*' | sort -u`). `docs/protocol/LINK.md` carried **zero** and **zero** RFC-2119 keywords — two instances of "shall never" and otherwise plain prose — while holding the connection lifecycle, the heartbeat ladder, the `TimeOffer` floor/cap/rate-limit, the backpressure ladder and the comms release flow, with PROTOCOL.md leaning on it normatively ("one floor, both doors", P-114). Roughly a third of the enforceable behaviour of this protocol could not be cited by a test name at all. It now carries **68**, which is the first thing stage 1 did.
+`docs/PROTOCOL.md` carried **123** numbered requirements when this was written, not ~150 (`grep -o '\*\*P-[0-9]\{3\}\*\*' | sort -u`). `docs/protocol/LINK.md` carried **zero** and **zero** RFC-2119 keywords — two instances of "shall never" and otherwise plain prose — while holding the connection lifecycle, the heartbeat ladder, the `TimeOffer` floor/cap/rate-limit, the backpressure ladder and the comms release flow, with PROTOCOL.md leaning on it normatively ("one floor, both doors", P-114). Roughly a third of the enforceable behaviour of this protocol could not be cited by a test name at all. It now carries **68**, which is the first thing stage 1 did. The live counts are the first line `cargo xtask check` prints; this document does not repeat them.
 
-Second, and this was the finding that mattered: `cargo xtask check` existed, passed, and **nothing ran it**. No `.github/`, a pre-commit skill that ran fmt/clippy/test only, and `cargo test` that never reached xtask — while `main.rs` called `check` "the one CI runs". Eight checks that were, in practice, a command somebody remembered to type. Both gates exist now and both run the whole set. Every gate below is worth exactly what enforces it, which is why this paragraph came before the plan rather than inside it.
+Second, and this was the finding that mattered: `cargo xtask check` existed, passed, and **nothing ran it**. No `.github/`, a pre-commit skill that ran fmt/clippy/test only, and `cargo test` that never reached xtask — while `main.rs` called `check` "the one CI runs". Eight checks that were, in practice, a command somebody remembered to type. CI runs the whole set now, through `just check`. Every gate below is worth exactly what enforces it, which is why this paragraph came before the plan rather than inside it.
 
-Third: the repo had **zero tests** when this was written, and has 29 now — all of them in xtask, standing behind the traceability gate rather than behind a requirement. `crates/km43` is still generated numbers and an 11-line `lib.rs`. This is a plan for a greenfield, which is the cheapest moment it will ever be, and the ratchet in `traceability.toml` is what stops that staying true by accident.
+Third: the repo had **zero tests** when this was written, and 29 by the time this section was first revised — all of them in xtask, standing behind the traceability gate rather than behind a requirement — while `crates/km43` was generated numbers and an 11-line `lib.rs`. Neither is true any more: the crate and its tests are most of this repository. This was a plan for a greenfield, which is the cheapest moment it will ever be, and the ratchet in `traceability.toml` is what stopped that staying true by accident.
 
 ---
 
@@ -85,7 +85,7 @@ than counted.
 **What this caught that nothing else can:** a requirement no implementation can
 satisfy. Every stage below assumes the target exists.
 
-**Gate:** `cargo xtask check` runs in `.claude/skills/pre-commit/SKILL.md` and in
+**Gate:** `cargo xtask check` runs in `just check` and in
 CI, which is the enforcement for the edits above.
 
 ---
@@ -112,7 +112,7 @@ A requirement may be cited by more than one test and a test may cite more than o
 
 **A header is a claim by a whole file, and that is the weakest thing this matrix counts.** Any asserting test in the file makes every requirement the header names count, with nothing linking the rule to a test. That is right for one test genuinely standing behind two rules and wrong for a rule the file does not implement: `envelope.rs` claimed P-143 — which refusal a session-requiring request gets — and no test in the tree asserts either refusal, no code in the tree performs one, and the decision belongs to a request dispatcher that does not exist. The header stood over nothing for as long as it had been there.
 
-So the check prints how many covered rules have no test named after them. **Fifty-six of a hundred and sixty-one**, a third of the count. Most are honest — `crc.rs` claiming the CRC rule is a file about nothing else — and the list is a reading queue rather than a defect list. It warns rather than failing for that reason: a check that cannot tell an honest header from a hollow one would be asking for seventy renames instead of seventy readings.
+So the check prints how many covered rules have no test named after them. It was **fifty-six of a hundred and sixty-one** when this was written, a third of the count, and the check prints the current figure. Most are honest — `crc.rs` claiming the CRC rule is a file about nothing else — and the list is a reading queue rather than a defect list. It warns rather than failing for that reason: a check that cannot tell an honest header from a hollow one would be asking for seventy renames instead of seventy readings.
 
 **Measurement.** A ninth xtask check, `every_requirement_is_cited`, in the same list as the eight that exist:
 
@@ -143,17 +143,17 @@ Three buckets, and the middle one is the whole design:
 
 A fragment of a test name and not a count, because two tests about the same clause satisfy a count and prove nothing. A `//! cites:` header never satisfies a clause — it stands for a whole file and cannot say which sentence it is about. Renaming a test that stands behind a clause turns the check red on purpose: the rename is exactly when somebody should be asked whether the clause still has a test. The table is for rules that say two things; most say one, and listing those would make it a tax rather than a check.
 
-**And the table only holds rules somebody has already read, which is its real limit.** So the check also prints the reading list: every **covered** requirement whose own text states two or more obligations and which stands on **one** test, with no clauses declared. P-164 sat in that intersection for months. There are 34 of them today, and each is a rule to read beside its code — some will be one behaviour stated twice (`MUST do X and MUST NOT do the opposite of X`), and the ones that are not get a `[[clauses]]` entry and drop off the list.
+**And the table only holds rules somebody has already read, which is its real limit.** So the check also prints the reading list: every **covered** requirement whose own text states two or more obligations and which stands on **one** test, with no clauses declared. P-164 sat in that intersection for months. The check prints how many there are, and each is a rule to read beside its code — some will be one behaviour stated twice (`MUST do X and MUST NOT do the opposite of X`), and the ones that are not get a `[[clauses]]` entry and drop off the list.
 
-Counting `MUST`/`SHALL` is a smell and not a rule, which is why it warns. Making it fail would force an entry for all thirty-four, and filling this file to make a number go down is what it says out loud it must not become.
+Counting `MUST`/`SHALL` is a smell and not a rule, which is why it warns. Making it fail would force an entry for every one of them, and filling this file to make a number go down is what it says out loud it must not become.
 
-**Reporting the gap.** `cargo xtask check` prints the three counts, the uncovered list, every clause nobody has tested, the reading list above, and — as a warning the audit round reads, not a build failure — every MUST cited by exactly one test. A MUST that names a receiver behaviour wants a normal, an edge and a rejection case (`.claude/rules/testing.md`); one test means somebody wrote the happy path and stopped.
+**Reporting the gap.** `cargo xtask check` prints the three counts, the uncovered list, every clause nobody has tested, the reading list above, and — as a warning the audit round reads, not a build failure — every MUST cited by exactly one test. A MUST that names a receiver behaviour wants a normal, an edge and a rejection case (the testing rule in CLAUDE.md); one test means somebody wrote the happy path and stopped.
 
 **What this changes today.** P-049 is the worked example: a MUST with a normative character count, no vector, and `crates/xtask/src/vectors.rs` never builds the string. It is not untestable — it is uncovered, and the fix is one line in the generator emitting `{"payload": "km43:1:...", "len": 105}` beside the `device_id` and `printed_secret` it already holds. That is the difference this stage exists to force: *uncovered* and *untestable* are different words, and only one of them is allowed to be silent.
 
 **Also fixed here, and one thing deliberately not.** The client capability mask and LINK.md's codes 256–264 were not in `protocol.toml` at all, so nothing *could* reach them; both are rows now, and the bindings emit `LinkErrorCode` and `ClientCapability` from them. `Codegen::write` refuses when REGISTRY.md holds a `##` heading whose table no section claimed, because the tooling was asymmetric in the unsafe direction — data that disappears fails loudly at `splice`, and a hand-kept table is silent forever, which is exactly how the capability mask stayed outside the registry.
 
-`Registry::unreachable` gained the link errors and now includes the local controller requirements in its scan, but it still does **not** walk `codes.*` or `enums.*`, and DEFERRED entry 11 records the gap rather than the entry claiming coverage that does not exist. Both ways were built and neither is honest yet. By member it reports all eighteen: a member of one of those spaces is a label, `quality = estimated` decides nothing on the wire, no rule quotes it, and requiring one means writing eighteen sentences that repeat the table. By space name it reported four that *are* reached, under their field name rather than their space name — `source` for `time_source`, `section` for `config_section`. A check that cries wolf gets switched off, and that is worse than a gap somebody wrote down.
+`Registry::unreachable` gained the link errors and sweeps PROTOCOL.md and LINK.md — not the controller's design document, because a number only a behaviour over there produces is one this specification has not said who emits — but it still does **not** walk `codes.*` or `enums.*`, and DEFERRED entry 11 records the gap rather than the entry claiming coverage that does not exist. Both ways were built and neither is honest yet. By member it reports all eighteen: a member of one of those spaces is a label, `quality = estimated` decides nothing on the wire, no rule quotes it, and requiring one means writing eighteen sentences that repeat the table. By space name it reported four that *are* reached, under their field name rather than their space name — `source` for `time_source`, `section` for `config_section`. A check that cries wolf gets switched off, and that is worse than a gap somebody wrote down.
 
 **Cost:** LINK.md numbering, half a day. The check, a day. The toml is written as tests land, not up front.
 
@@ -265,7 +265,7 @@ That last line is the rule that makes "neither is the reference" operational: **
 
 **(a) TLA+/PlusCal, once, throwaway — for the crash-ordering question.** ~300 lines of PlusCal over: verify MAC → check counter → persist counter → reserve dedup entry → execute → complete entry, with a `crash` action available at every point and FRAM modelled as *a write either lands or does not, and a read-back may disagree*. TLC enumerates the interleavings; the invariants are `NoCommandExecutesTwice`, `NoCounterRegresses`, `EveryRefusedCommandRetriesSuccessfully`. What it finds that review did not: the reachable state where an entry left *in flight* by a reset meets a retry, and no ordering answers it on its own — which is the state P-121 is actually about. **Its deliverable is edits to P-079, P-080, P-120, P-121 and P-122, not a model in CI.** Delete it in the same commit as the edits, with the model preserved under `docs/models/` marked non-normative, because a model kept green is a second specification and this corpus's named failure mode is two documents disagreeing. The counter-argument is real — a deleted model cannot catch the next change — and the answer is that the next change to that subsystem re-runs it from that commit, which is cheaper than keeping it green against code it does not track. **Cost: 3 days, and the invariants take longer than the model.**
 
-**(b) `stateright`, kept, for the connection/session lifecycle — but only under one condition.** BFS with state dedup over `{ClientConnected, Discover, Pair, Hello, wrq, signed, Goodbye, expire, ClientDisconnected, comms_reboot, controller_reboot}` × 2 connections × 2 clients. The cheapest thing it gives you is not an invariant violation, it is **the undefined-transition check**: a reachable `(state, action)` pair with no written transition. That is precisely the double-`Hello` finding, found mechanically in the first run. The condition: **`Model::next_state` must call the real `o89-core` session module, not a re-modelled copy.** A re-modelled copy is a second spec that drifts, which is the thing being avoided. If the session module cannot be driven that way, the seam is in the wrong place (CLAUDE.md's own rule) and fixing the seam is worth more than the model. **Cost: a week, of which most is making the module drivable — and that cost is the one people underestimate.**
+**(b) `stateright`, kept, for the connection/session lifecycle — but only under one condition.** BFS with state dedup over `{ClientConnected, Discover, Pair, Hello, wrq, signed, Goodbye, expire, ClientDisconnected, comms_reboot, controller_reboot}` × 2 connections × 2 clients. The cheapest thing it gives you is not an invariant violation, it is **the undefined-transition check**: a reachable `(state, action)` pair with no written transition. That is precisely the double-`Hello` finding, found mechanically in the first run. The condition: **`Model::next_state` must call the controller's real session module (`o89-core`, in origin89), not a re-modelled copy.** A re-modelled copy is a second spec that drifts, which is the thing being avoided. If the session module cannot be driven that way, the seam is in the wrong place (CLAUDE.md's own rule) and fixing the seam is worth more than the model. **Cost: a week, of which most is making the module drivable — and that cost is the one people underestimate.**
 
 **No** to Alloy (nothing here is relational), no to a proof assistant (the properties are safety properties on a small state space, which is TLC's job), no to Kani over the whole state machine (it will not close).
 
@@ -337,7 +337,7 @@ Out of scope and stated: physical possession of the STM32.
 
 **What it catches that stage 7 cannot:** every stage above runs on a machine where the UART is a `Vec` and the FRAM is a `HashMap`. This catches a physical assumption.
 
-**The dividing rule is already written:** if a piece of *logic* needs hardware to test, the seam is in the wrong place, and `o89-core` names no peripheral. So the list of things that genuinely need hardware is short, and everything not on it belongs above.
+**The dividing rule is already written:** if a piece of *logic* needs hardware to test, the seam is in the wrong place, and the controller's core crate names no peripheral. So the list of things that genuinely need hardware is short, and everything not on it belongs above.
 
 **Needs hardware:**
 
@@ -346,7 +346,7 @@ Out of scope and stated: physical possession of the STM32.
 - The DMA circular RX ring wrapping under load.
 - FRAM torn writes and NOR ring rotation at a supply that actually sags. A simulated brown-out is a coin flip; a bench PSU on a script is a thousand of them.
 - **The physical button** — and this is the one to say out loud. P-066 defines a *120-second window a press opens*, surfaced as `pairing_open`; P-116 requires the contact *held* at the instant a `Time 0x0A` is processed; DEFERRED entry 6 adds a third gesture for a firmware downgrade; factory reset is a fourth use of the same word. No host test can distinguish a window from a hold, because on the host they are the same boolean. Until the gestures are distinguished in prose, the bench cannot prove anything about them either — so this is a stage-0 dependency wearing a hardware hat.
-- The RTC backup domain and LSE. BENCH.md already names the two false-PASS traps (SB26 strapping VBAT to VDD; RTCCLK on LSI), and a false PASS is worse here than a failure.
+- The RTC backup domain and LSE. origin89's [BENCH.md](https://github.com/origin89hq/origin89/blob/main/docs/BENCH.md) already names the two false-PASS traps (SB26 strapping VBAT to VDD; RTCCLK on LSI), and a false PASS is worse here than a failure.
 - The ESP32 rail cut, the heartbeat ladder, and the thermal behaviour of hammering a load switch.
 - The three timing numbers DEFERRED entry 4 is blocked on: one `ReadLog` page, one full `Snapshot`, and the UART with eight sessions subscribed and events going out eight times. Those are measurements, and the entry's trigger is *the first time a browser talks to real hardware*.
 
@@ -411,7 +411,7 @@ And what it must **not** mean: passing our unit tests. Those cite our module bou
 
 | | Per commit | Nightly | Per release | Scheduled |
 |---|---|---|---|---|
-| `cargo xtask check` (9 checks) | ● | | | |
+| `cargo xtask check` | ● | | | |
 | fmt, clippy `--all-targets`, `cargo test` | ● | | | |
 | Properties (bolero, sampled) | ● | | | |
 | Fuzz targets, corpus committed | | ● | | |
@@ -424,4 +424,4 @@ And what it must **not** mean: passing our unit tests. Those cite our module bou
 | `cargo-mutants` over the corpus | | | ● | |
 | Bench session | | | | dated, written down |
 
-**The one change to make today, before any of this:** put `cargo xtask check` in the pre-commit skill and in a CI workflow, or change `crates/xtask/src/main.rs:40` to stop claiming CI runs it. Eight checks that pass and that nothing runs are the same instrument as reading the table carefully, which is what DEFERRED entry 11 was written to replace — and entry 11 currently says the checks do not exist, which makes the file wrong about the one thing it is for.
+**Done, and kept here because it was the one change that mattered:** `cargo xtask check` runs in CI and in `just check`. Eight checks that passed and that nothing ran were the same instrument as reading the table carefully, which is what DEFERRED entry 11 was written to replace.

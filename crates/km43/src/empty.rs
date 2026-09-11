@@ -114,7 +114,7 @@ impl EmptyBody {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EmptyBodyError {
     /// A `type` that does not carry an empty *inner* body. Refused rather than
-    /// written as `a0`, which would put a `Snapshot 0x82` on the wire saying
+    /// written as `a0`, which would put a `Readings 0x8E` on the wire saying
     /// nothing at all.
     ///
     /// *Inner* is the word that matters. `Discover 0x00` is `(empty map)` too,

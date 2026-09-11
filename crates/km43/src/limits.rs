@@ -13,8 +13,8 @@
 //!
 //! P-003 was on that list and this file cannot stand behind it. *Refusing is
 //! preferred to evicting* is a behaviour, and every test here is about a buffer
-//! size — the caps live here and the refusing does not. It is `session.rs`'s,
-//! which is what P-003's own sentence is about: silently dropping a client's
+//! size — the caps live here and the refusing does not. It is the controller's
+//! session module's, which is what P-003's own sentence is about: silently dropping a client's
 //! enrolment is how a cabin loses its ability to be told to stop.
 
 // The COBS worst case is defined once, beside the encoder it bounds. Two
@@ -100,8 +100,8 @@ pub const MAX_CHALLENGES: usize = 8;
 /// reach nine.
 ///
 /// The window it is counted over is a duration rather than a width, so it lives
-/// beside the rows that measure it: `session::AUTH_FAILURE_WINDOW`. `WINDOW` in
-/// `dedup.rs` sits the same way relative to `MAX_CMD_DEDUP`.
+/// beside the rows that measure it, in the controller's session module; its
+/// dedup window sits the same way relative to `MAX_CMD_DEDUP`.
 pub const MAX_AUTH_FAILURES: u8 = 8;
 
 /// The CRC-16 that goes into COBS alongside the envelope.

@@ -23,7 +23,7 @@ tableOfContents:
   </div>
   <div>
     <dt>Consumers</dt>
-    <dd>Rust controller and browser client</dd>
+    <dd>The `km43` crate, and any second implementation</dd>
   </div>
   <div>
     <dt>Editing rule</dt>
@@ -45,8 +45,8 @@ perfect in a hex dump and fail every MAC, and the only symptom is "it does not
 work" on a bench day. A CRC is the same: `CRC-16/CCITT-FALSE` names one algorithm
 but nobody remembers which of the CCITT variants that is at 11 p.m.
 
-Both `km43` and the browser client test against the same file, so each side
-can prove itself alone before the two halves are ever connected.
+`km43` tests against this file, and a second implementation can prove itself
+against the same bytes before the two are ever connected.
 
 ```bash
 cargo xtask vectors
@@ -81,10 +81,13 @@ produces the shorter string.
 | `conventions` | Byte order, truncation, HKDF argument assignment, CBOR profile |
 | `inputs` | The fixed, obviously-fake secret, device id, challenge and nonce |
 | `limits` | `MAX_PAYLOAD` and the derivation of `MAX_FRAME` |
-| `derived_keys` | `client_key` and `session_key` with every HKDF argument spelled out |
-| `macs` | Pair proof, pair ack, Hello proof, signed request, response, event — each with its full preimage in hex |
+| `derived_keys` | `client_key`, `session_key` and `pair_key` with every HKDF argument spelled out |
+| `qr` | The label payload P-049 counts, and its length |
+| `macs` | `pair_proof`, `pair_ack_mac`, `hello_proof`, `signed_request`, `wrapper_request`, `response`, `event` — each with its full preimage in hex |
+| `bodies` | Every published inner body, readable and as CBOR |
 | `crc16`, `cobs` | Edge cases: empty, a single zero, embedded zeros, the 254-byte block boundary |
 | `frame` | One complete encoded frame, envelope through delimiter |
+| `link_local` | Six controller–comms frames, envelope through delimiter, with their CRCs |
 
 The inputs are deliberately unmistakable — `printed_secret` is `00 01 02 … 1f`
 and `device_id` spells `ORIGIN89 DEMO 01` — so nobody can confuse a test vector

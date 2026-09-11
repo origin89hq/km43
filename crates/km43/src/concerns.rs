@@ -1735,7 +1735,7 @@ mod tests {
     /// There is deliberately no test here named after **P-211**. This proves its
     /// *always present* clause and nothing proves the other one — the row does
     /// not survive a restart, because there is no `age` on a concern in
-    /// `o89-core` and no FRAM path to carry it. A rule half proved under its own
+    /// the controller and no FRAM path to carry it. A rule half proved under its own
     /// number reads greener than one nobody has touched, and nobody goes looking
     /// at a number that is already green.
     #[test]

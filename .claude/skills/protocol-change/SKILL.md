@@ -23,10 +23,10 @@ If you add a message that changes anything — configuration, firmware, time, pa
 
 **Read the spec back and confirm every field it promises actually exists.**
 
-Two holes got through review this way: `HelloAck` told clients to read a counter that was not in its body, and `Hello` referenced a challenge that `Discover` never sent. Prose describing a property the wire format does not deliver is the failure mode of this document.
+Two holes got through review this way: `Hello 0x81` told clients to read a counter that was not in its body, and `Hello` referenced a challenge that `Discover` never sent. Prose describing a property the wire format does not deliver is the failure mode of this document.
 
 ## After changing it
 
 - Round-trip tests over every length, and a decode test for every truncation.
 - Garbage input must never panic — a resynchronising receiver hands you arbitrary bytes.
-- Update the message table, the error codes, and the limits table in the same commit.
+- Allocate in `crates/km43/protocol.toml`, run `just registry` and `just vectors`, and update the limits table in the same commit.

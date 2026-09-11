@@ -28,7 +28,7 @@ use crate::limits::{
 /// A reading's two answers in one byte: `validity << 4 | provenance`.
 ///
 /// Named `SignalQuality` and not `Quality` only because the retired five-value
-/// `quality` enum still occupies that name until `Snapshot` goes. It takes the
+/// `quality` enum still occupies that name until it is withdrawn. It takes the
 /// plain word then — there will be one of these, and this is it.
 ///
 /// A newtype rather than a bare `u8` because the two halves are only ever

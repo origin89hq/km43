@@ -749,7 +749,7 @@ impl CloseConnections {
 
 /// `CloseConnectionAck 0xE4` — what happened, and **how many**.
 ///
-/// Named `CloseReport` because `Closed` is already taken, by `o89-core`'s
+/// Named `CloseReport` because `Closed` is already taken, by the controller's
 /// session closing. The third name collision in this module and the third time
 /// the compiler has been the one to notice: a link message and the thing it
 /// causes are close enough in English to want the same word, and far enough
