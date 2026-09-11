@@ -48,6 +48,7 @@ jobs:
       - run: just check
       - run: git diff --exit-code
       - run: pnpm --filter @origin89/km43 pack --dry-run
+      - run: cargo package --locked -p km43
 
   # Consumers may still build with the compiler `rust-version` names. A
   # host-only check on that compiler is what keeps the declaration honest.

@@ -1,6 +1,6 @@
 [package]
 name = "km43"
-version = "0.0.0"
+version = "0.1.0"
 description = "KM43, the bounded, authenticated message protocol between an Origin89 controller and its clients"
 readme = "../../README.md"
 keywords = ["protocol", "no-std", "embedded", "cbor"]
@@ -9,6 +9,10 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+# The vectors live in `docs/`, outside what a crate tarball can carry, so the
+# test that reads them cannot compile from crates.io. The license texts are
+# symlinks to the repository root; `cargo package` ships the files they point at.
+exclude = ["tests/vectors.rs"]
 
 [dependencies]
 # The same audited primitives the generator uses. Sharing them means the

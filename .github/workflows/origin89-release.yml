@@ -124,3 +124,49 @@ jobs:
           PNPM_CONFIG_PROVENANCE: "true"
         with:
           pack-dir-artifact-id: ${{ needs.pack.outputs.pack-dir-artifact-id }}
+
+  # The Rust crate. Changesets versions package.json and nothing else, so the
+  # crate's version is the one in crates/km43/Cargo.toml and a release is a PR
+  # that moves it: every push to main compares that version with crates.io and
+  # publishes it when it is not there yet. crates.io's trusted publisher for
+  # km43 names this repository and this workflow filename.
+  crate:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install
+      - name: Compare the manifest version with crates.io
+        id: version
+        run: |
+          version="$(cargo metadata --format-version 1 --no-deps --locked | jq -r '.packages[] | select(.name == "km43") | .version')"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if curl -fsS https://index.crates.io/km/43/km43 | jq -e --arg v "$version" 'select(.vers == $v)' > /dev/null; then
+            echo "km43 $version is already on crates.io"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "km43 $version is not on crates.io"
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.version.outputs.publish == 'true'
+        run: cargo test --locked --workspace
+      - if: steps.version.outputs.publish == 'true'
+        run: cargo xtask check
+      - if: steps.version.outputs.publish == 'true'
+        id: auth
+        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+      - if: steps.version.outputs.publish == 'true'
+        run: cargo publish --locked -p km43
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+      - if: steps.version.outputs.publish == 'true'
+        run: gh release create "km43-v$VERSION" --target "$GITHUB_SHA" --title "km43 $VERSION" --notes "https://crates.io/crates/km43/$VERSION"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
