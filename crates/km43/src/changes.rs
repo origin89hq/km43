@@ -85,7 +85,8 @@ pub struct PChange {
     pub dev: Id,
     /// Key 2, the presence it moved to.
     pub presence: Presence,
-    /// Key 3, the presence last announced for it.
+    /// Key 3, the presence it moved from. Unlike `VChange` key 3 this is the
+    /// last value **held**, not the last announced (P-212).
     pub prev: Presence,
 }
 
@@ -442,7 +443,7 @@ pub struct TopologyChanged {
 }
 
 impl TopologyChanged {
-    /// Write the body.
+    /// Write the body into `dst`. A destination too small is refused with nothing written to it.
     pub fn encode(&self, dst: &mut [u8]) -> Result<usize, ChangeError> {
         let mut cbor = CborWriter::new(dst);
         cbor.map(4)?;

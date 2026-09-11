@@ -1245,7 +1245,7 @@ pub struct ReadInventory {
 }
 
 impl ReadInventory {
-    /// Write the body.
+    /// Write the body into `dst`. `dev` goes out only when present, so a request for every device's parameters carries no key 4.
     pub fn encode(self, dst: &mut [u8]) -> Result<usize, InventoryError> {
         let mut cbor = CborWriter::new(dst);
         cbor.map(if self.dev.is_some() { 4 } else { 3 })?;
@@ -1308,11 +1308,11 @@ fn once<T>(slot: &mut Option<T>, key: ReadInventoryKey, value: T) -> Result<(), 
 /// over the bytes as they appear in a page, and a body that rebuilt them would
 /// be hashing a second opinion.
 pub struct InventoryBody<'a> {
-    /// Key 1.
+    /// Key 1, the revision the rows are of; a client compares it against the one it asked with.
     pub rev: u32,
     /// Key 2, echoed so the response is self-describing.
     pub what: u8,
-    /// Key 6.
+    /// Key 6. Anything but `Ok` means the page carries no rows and no digest (P-190).
     pub outcome: InventoryOutcome,
     /// Key 5, rows of this kind at `rev`.
     pub total: u16,
@@ -1377,15 +1377,15 @@ impl InventoryBody<'_> {
 /// the half of P-173 that lives on this side of the wire.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InventoryHeader {
-    /// Key 1.
+    /// Key 1, the revision the page is of. Differing from the request's, the walk is torn (P-152).
     pub rev: u32,
-    /// Key 2, echoed.
+    /// Key 2, the kind echoed back, so a page can be matched to the request it answers.
     pub what: u8,
-    /// Key 6.
+    /// Key 6. Anything but `Ok` answered nothing, and rows or a digest beside it are refused.
     pub outcome: InventoryOutcome,
     /// Key 4, the id to pass back as `from`; 0 when this page ends the kind.
     pub next: u16,
-    /// Key 5.
+    /// Key 5, rows of this kind at `rev`, or of this `dev` when the request named one.
     pub total: u16,
     /// How many rows key 3 carried.
     pub rows: usize,

@@ -459,7 +459,7 @@ pub struct ConcernChanged {
 }
 
 impl ConcernChanged {
-    /// Write the body.
+    /// Write the body into `dst`, refusing a change to the state it was already in.
     pub fn encode(&self, dst: &mut [u8]) -> Result<usize, ConcernsError> {
         let mut cbor = CborWriter::new(dst);
         cbor.map(6)?;
@@ -681,7 +681,7 @@ impl ReadConcerns {
         Self { rev, from }
     }
 
-    /// Write the body.
+    /// Write the body into `dst`. A destination too small is refused with nothing written to it.
     pub fn encode(&self, dst: &mut [u8]) -> Result<usize, ConcernsError> {
         let mut cbor = CborWriter::new(dst);
         cbor.map(2)?;
@@ -692,7 +692,7 @@ impl ReadConcerns {
         Ok(cbor.finish()?)
     }
 
-    /// Read one back.
+    /// Read one back. A missing `rev` or `from` is refused, never defaulted: a `from` read as 0 would restart a walk the client meant to continue.
     pub fn decode(payload: &[u8]) -> Result<Self, ConcernsError> {
         let mut body = CborReader::new(payload);
         let pairs = body.map()?;
@@ -718,7 +718,7 @@ impl ReadConcerns {
 /// derived one prints all of it.
 #[derive(Clone, Copy)]
 pub struct ConcernsBody<'a> {
-    /// Key 1.
+    /// Key 1, the revision the rows are of.
     pub rev: u32,
     /// Key 2, and the pin a walk is held against (P-210).
     pub seq: u64,
@@ -728,7 +728,7 @@ pub struct ConcernsBody<'a> {
     /// 65,535 concerns needs a bigger table either way, and a count that wrapped
     /// would say it had refused almost none.
     pub refused: u16,
-    /// Key 7.
+    /// Key 7. Anything but `Ok` carries no rows and no cursor (P-199).
     pub outcome: ConcernsOutcome,
     /// Present only on outcome 1. Every other outcome answered nothing (P-199).
     pub page: Option<&'a ConcernsPage>,
@@ -774,7 +774,7 @@ impl ConcernsBody<'_> {
 /// What a client reads out of a `Concerns 0x8F` before it looks at the rows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ConcernsHeader {
-    /// Key 1.
+    /// Key 1, the revision the page is of.
     pub rev: u32,
     /// Key 2, the pin the walk is held against.
     pub seq: u64,
@@ -784,7 +784,7 @@ pub struct ConcernsHeader {
     pub total: u16,
     /// Key 6, how many concerns the table refused.
     pub refused: u16,
-    /// Key 7.
+    /// Key 7. Anything but `Ok` answered nothing, and rows or a cursor beside it are refused.
     pub outcome: ConcernsOutcome,
     /// How many rows key 3 carried. Compared against `total` and `next`, this is
     /// how a client tells a short page from a torn one.

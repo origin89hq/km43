@@ -541,7 +541,7 @@ impl ReadSignals {
         self.used == 0
     }
 
-    /// Write the body.
+    /// Write the body into `dst`; selectors go out in the order they were added.
     pub fn encode(&self, dst: &mut [u8]) -> Result<usize, ReadingsError> {
         let mut cbor = CborWriter::new(dst);
         cbor.map(if self.is_everything() { 2 } else { 3 })?;
@@ -811,12 +811,12 @@ impl ReadingsPage {
 pub struct ReadingsBody<'a> {
     /// Key 1, the log position the page is current as of.
     pub seq: u64,
-    /// Key 2.
+    /// Key 2, the topology revision the signals are read against.
     pub rev: u32,
     /// Omitted when the clock has never been set. Never a zero — a zero here is
     /// 1970 and reads as a timestamp.
     pub at: Option<u64>,
-    /// Key 8.
+    /// Key 8. Anything but `Ok` carries no rows and no cursor (P-199).
     pub outcome: ReadingsOutcome,
     /// Key 7, the signals the selection resolves to.
     pub total: u16,
@@ -872,17 +872,17 @@ impl ReadingsBody<'_> {
 /// What a client reads out of a `Readings 0x8E`, before it looks at the rows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReadingsHeader {
-    /// Key 1.
+    /// Key 1, the log position the readings are current as of.
     pub seq: u64,
-    /// Key 2.
+    /// Key 2, the topology revision they were read against.
     pub rev: u32,
     /// Key 3, absent while the clock has never been set.
     pub at: Option<u64>,
-    /// Key 8.
+    /// Key 8. Anything but `Ok` answered nothing, and rows or a cursor beside it are refused.
     pub outcome: ReadingsOutcome,
     /// Key 6, the `sig` to resume at; 0 when the selection is complete.
     pub next: u16,
-    /// Key 7.
+    /// Key 7, how many signals the selection resolves to, across every page.
     pub total: u16,
     /// How many rows key 4 carried.
     pub samples: usize,
