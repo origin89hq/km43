@@ -1388,6 +1388,7 @@ mod crosswalk {
             kind: 0x0101,
             role: Some(0x0015),
             point: None,
+            domain: None,
         });
         let said = crosswalk_findings(&reg, &words).join("\n");
         assert!(

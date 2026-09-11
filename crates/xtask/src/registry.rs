@@ -272,6 +272,9 @@ pub struct DatasetMetric {
     pub kind: Option<String>,
     pub role: Option<String>,
     pub point: Option<String>,
+    /// The signal domain the word is true for: `AC energy` is `ac-energy-total`
+    /// only over `lifetime`, and `ac-energy-today` over `today`.
+    pub domain: Option<String>,
     pub absent: Option<String>,
 }
 
@@ -282,6 +285,7 @@ pub struct Carried {
     pub kind: u16,
     pub role: Option<u16>,
     pub point: Option<u16>,
+    pub domain: Option<u8>,
 }
 
 /// The crosswalk, resolved: what is carried, most specific row first, and what
@@ -556,35 +560,13 @@ impl Registry {
     /// does neither, a name no table allocates, and two rows that reach the same
     /// place — which would make a word depend on the order somebody typed them.
     pub fn resolve_crosswalk(&self) -> Result<Crosswalk> {
-        let metric = |name: &str| {
-            self.metrics
-                .iter()
-                .filter(|m| !m.status.is_gone())
-                .find(|m| m.name == name)
-                .map(|m| m.kind)
-        };
-        // A place that is withdrawn or retired is not a place a row may name: the
-        // generated table would otherwise keep assigning a word to a number the
-        // registry says is gone.
-        let in_space = |space: &str, name: &str| -> Result<u16> {
-            self.open_registries
-                .get(space)
-                .and_then(|rows| {
-                    rows.iter()
-                        .filter(|r| r.status.is_some_and(|s| !s.is_gone()))
-                        .find(|r| r.name == name)
-                })
-                .and_then(|r| r.number)
-                .with_context(|| format!("no allocated `{space}` row is named {name:?}"))
-        };
-
         let mut carried = Vec::new();
         let mut absent = Vec::new();
         let mut places = BTreeSet::new();
         for row in &self.dataset_metrics {
             match (&row.kind, &row.absent) {
                 (Some(kind_name), None) => {
-                    let kind = metric(kind_name).with_context(|| {
+                    let kind = self.metric_number(kind_name).with_context(|| {
                         format!(
                             "dataset word {:?} names metric {kind_name:?}, which is not an \
                              allocated metric",
@@ -594,14 +576,19 @@ impl Registry {
                     let role = row
                         .role
                         .as_deref()
-                        .map(|r| in_space("component_role", r))
+                        .map(|r| self.place_number("component_role", r))
                         .transpose()?;
                     let point = row
                         .point
                         .as_deref()
-                        .map(|p| in_space("measurement_point", p))
+                        .map(|p| self.place_number("measurement_point", p))
                         .transpose()?;
-                    if !places.insert((kind, role, point)) {
+                    let domain = row
+                        .domain
+                        .as_deref()
+                        .map(|d| self.domain_number(d))
+                        .transpose()?;
+                    if !places.insert((kind, role, point, domain)) {
                         bail!(
                             "dataset word {:?} reaches metric {kind_name:?} at a place another \
                              row already claims; one place carries one word",
@@ -613,10 +600,11 @@ impl Registry {
                         kind,
                         role,
                         point,
+                        domain,
                     });
                 }
                 (None, Some(why)) => {
-                    if row.role.is_some() || row.point.is_some() {
+                    if row.role.is_some() || row.point.is_some() || row.domain.is_some() {
                         bail!(
                             "dataset word {:?} is absent and names a place, which nothing can \
                              be at",
@@ -657,10 +645,48 @@ impl Registry {
                 c.kind,
                 c.role,
                 c.point,
+                c.domain,
             )
         });
         absent.sort();
         Ok(Crosswalk { carried, absent })
+    }
+
+    /// The number of a metric that is still allocated, by its name.
+    fn metric_number(&self, name: &str) -> Option<u16> {
+        self.metrics
+            .iter()
+            .filter(|m| !m.status.is_gone())
+            .find(|m| m.name == name)
+            .map(|m| m.kind)
+    }
+
+    /// The number of a row of an open space, by its name. A place that is
+    /// withdrawn or retired is not a place a row may name: the generated table
+    /// would otherwise keep assigning a word to a number the registry says is gone.
+    fn place_number(&self, space: &str, name: &str) -> Result<u16> {
+        self.open_registries
+            .get(space)
+            .and_then(|rows| {
+                rows.iter()
+                    .filter(|r| r.status.is_some_and(|s| !s.is_gone()))
+                    .find(|r| r.name == name)
+            })
+            .and_then(|r| r.number)
+            .with_context(|| format!("no allocated `{space}` row is named {name:?}"))
+    }
+
+    /// The value of a signal domain, by its name.
+    fn domain_number(&self, name: &str) -> Result<u8> {
+        self.enums
+            .get("signal_domain")
+            .and_then(|rows| {
+                rows.iter()
+                    .filter(|r| !r.status.is_gone())
+                    .find(|r| r.name == name)
+            })
+            .map(|r| r.value)
+            .with_context(|| format!("no allocated `signal_domain` is named {name:?}"))
     }
 
     /// How narrowly a row names its place: both role and point, the role, the
@@ -668,11 +694,19 @@ impl Registry {
     /// total when a role-only row and a point-only row both match one reading.
     #[must_use]
     pub fn specificity(row: &Carried) -> u8 {
-        match (row.role.is_some(), row.point.is_some()) {
-            (true, true) => 3,
-            (true, false) => 2,
-            (false, true) => 1,
-            (false, false) => 0,
+        match (
+            row.role.is_some(),
+            row.point.is_some(),
+            row.domain.is_some(),
+        ) {
+            (true, true, true) => 7,
+            (true, true, false) => 6,
+            (true, false, true) => 5,
+            (true, false, false) => 4,
+            (false, true, true) => 3,
+            (false, true, false) => 2,
+            (false, false, true) => 1,
+            (false, false, false) => 0,
         }
     }
 
@@ -971,8 +1005,60 @@ mod crosswalk {
             kind: kind.map(str::to_owned),
             role: role.map(str::to_owned),
             point: None,
+            domain: None,
             absent: absent.map(str::to_owned),
         }
+    }
+
+    /// The value the registry allocates to a signal domain, read from the registry.
+    fn domain(reg: &Registry, name: &str) -> u8 {
+        reg.enums
+            .get("signal_domain")
+            .and_then(|rows| rows.iter().find(|r| r.name == name))
+            .map(|r| r.value)
+            .expect("an allocated domain")
+    }
+
+    /// A counter's word depends on its window: the lifetime AC energy is the
+    /// dataset's total, today's is its today figure, and yesterday's is nothing.
+    #[test]
+    fn a_domain_tells_a_total_from_a_day() {
+        let reg = loaded();
+        let energy = metric(&reg, "AC energy");
+        let total = reg
+            .crosswalk
+            .carried
+            .iter()
+            .find(|c| c.name == "ac-energy-total")
+            .expect("ac-energy-total");
+        assert_eq!(total.kind, energy);
+        assert_eq!(total.domain, Some(domain(&reg, "lifetime")));
+        let today = reg
+            .crosswalk
+            .carried
+            .iter()
+            .find(|c| c.name == "ac-energy-today")
+            .expect("ac-energy-today");
+        assert_eq!(today.domain, Some(domain(&reg, "today")));
+        assert!(
+            !reg.crosswalk
+                .carried
+                .iter()
+                .any(|c| c.kind == energy && c.domain.is_none()),
+            "no AC energy row is left open to every window"
+        );
+
+        let mut reg = loaded();
+        let mut bad = row("ac-energy-total", Some("AC energy"), None, None);
+        bad.domain = Some("fortnight".to_owned());
+        reg.dataset_metrics.push(bad);
+        let said = reg
+            .resolve_crosswalk()
+            .expect_err("fortnight is not a domain");
+        assert!(
+            said.to_string().contains("no allocated `signal_domain`"),
+            "{said}"
+        );
     }
 
     /// The number the registry allocates to a metric, read from the registry so
@@ -1051,6 +1137,7 @@ mod crosswalk {
             kind: Some("temperature".to_owned()),
             role: None,
             point: Some("cell".to_owned()),
+            domain: None,
             absent: None,
         });
         let temperature = metric(&reg, "temperature");

@@ -123,5 +123,13 @@
     "unparsed",
     "needs-conditions",
     "conflict"
+  ],
+  "propertyStatus": [
+    "value",
+    "conflict"
+  ],
+  "propertyScopes": [
+    "per-input",
+    "total"
   ]
 }

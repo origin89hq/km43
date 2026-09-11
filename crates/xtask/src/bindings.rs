@@ -248,14 +248,19 @@ impl Bindings {
                  pub kind: MetricKind,\n    \
                  pub role: Option<ComponentRole>,\n    \
                  pub point: Option<MeasurementPoint>,\n    \
+                 pub domain: Option<SignalDomain>,\n    \
                  pub name: &'static str,\n\
              }\n\n\
              pub const DATASET_METRICS: &[DatasetMetric] = &[\n",
         );
         for c in &self.registry.crosswalk.carried {
+            let domain = c.domain.map_or_else(
+                || "None".to_owned(),
+                |d| format!("Some(SignalDomain::{})", variant(&self.domain_name(d))),
+            );
             let _ = writeln!(
                 o,
-                "    DatasetMetric {{\n        kind: MetricKind({:#06x}),\n        role: {},\n        point: {},\n        name: {:?},\n    }},",
+                "    DatasetMetric {{\n        kind: MetricKind({:#06x}),\n        role: {},\n        point: {},\n        domain: {domain},\n        name: {:?},\n    }},",
                 c.kind,
                 place("ComponentRole", c.role),
                 place("MeasurementPoint", c.point),
@@ -287,14 +292,16 @@ impl Bindings {
                  pub fn dataset_name(\n        \
                      self,\n        \
                      role: Option<ComponentRole>,\n        \
-                     point: Option<MeasurementPoint>,\n    \
+                     point: Option<MeasurementPoint>,\n        \
+                     domain: Option<SignalDomain>,\n    \
                  ) -> Option<&'static str> {\n        \
                      DATASET_METRICS\n            \
                          .iter()\n            \
                          .find(|m| {\n                \
                              m.kind == self\n                    \
                                  && m.role.is_none_or(|r| Some(r) == role)\n                    \
-                                 && m.point.is_none_or(|p| Some(p) == point)\n            \
+                                 && m.point.is_none_or(|p| Some(p) == point)\n                    \
+                                 && m.domain.is_none_or(|d| Some(d) == domain)\n            \
                          })\n            \
                          .map(|m| m.name)\n    \
                  }\n\
@@ -786,6 +793,17 @@ impl Bindings {
         o
     }
 
+    /// The name the registry gives a signal domain value, for the generated
+    /// variant. A value the crosswalk resolved always exists, so an unknown one
+    /// renders as its number and fails to compile rather than passing silently.
+    fn domain_name(&self, value: u8) -> String {
+        self.registry
+            .enums
+            .get("signal_domain")
+            .and_then(|rows| rows.iter().find(|r| r.value == value))
+            .map_or_else(|| value.to_string(), |r| r.name.clone())
+    }
+
     /// The same crosswalk for a client, most specific row first.
     fn ts_dataset(&self) -> String {
         let mut o = String::new();
@@ -796,6 +814,7 @@ impl Bindings {
                  readonly kind: number;\n  \
                  readonly role?: number;\n  \
                  readonly point?: number;\n  \
+                 readonly domain?: number;\n  \
                  readonly name: string;\n\
              }\n\n\
              export const datasetMetrics: readonly DatasetMetric[] = [\n",
@@ -808,6 +827,9 @@ impl Bindings {
             if let Some(point) = c.point {
                 let _ = write!(row, ", point: {point:#06x}");
             }
+            if let Some(domain) = c.domain {
+                let _ = write!(row, ", domain: {domain:#04x}");
+            }
             let _ = writeln!(o, "{row}, name: {} }},", js(&c.name));
         }
         o.push_str(
@@ -819,9 +841,18 @@ impl Bindings {
         }
         o.push_str(
             "};\n\n\
-             export function datasetName(kind: number, role?: number, point?: number): string | undefined {\n  \
+             export function datasetName(\n  \
+                 kind: number,\n  \
+                 role?: number,\n  \
+                 point?: number,\n  \
+                 domain?: number,\n\
+             ): string | undefined {\n  \
                  return datasetMetrics.find(\n    \
-                     (m) => m.kind === kind && (m.role === undefined || m.role === role) && (m.point === undefined || m.point === point),\n  \
+                     (m) =>\n      \
+                         m.kind === kind &&\n      \
+                         (m.role === undefined || m.role === role) &&\n      \
+                         (m.point === undefined || m.point === point) &&\n      \
+                         (m.domain === undefined || m.domain === domain),\n  \
                  )?.name;\n\
              }\n",
         );

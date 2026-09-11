@@ -2739,10 +2739,11 @@ direction = "controller-to-comms"
 # listed with why, so "not translatable" reads differently from "forgotten".
 #
 # A lookup takes the first row that matches, and rows are handed over most
-# specific first: a row naming both role and point, then one naming the role,
-# then one naming only the point, then one naming neither. So a row with a
-# role outranks a row with a point, and a battery bank's cell temperature is
-# the bank's row's word even when a cell row exists.
+# specific first: the role weighs most, then the point, then the domain, so a
+# row naming both role and point comes before one naming the role, which comes
+# before one naming only the point, and a row naming only the domain comes
+# last of the constrained rows. A battery bank's cell temperature is the bank's
+# row's word even when a cell row exists.
 #
 # `vocabulary` pins the dataset's own list by hash. A row naming a word outside
 # it, or a word in it that no row accounts for, fails `cargo xtask check`.
@@ -2751,11 +2752,11 @@ direction = "controller-to-comms"
 [dataset]
 vocabulary_url = "https://data.origin89.com/v1/vocabulary.json"
 vocabulary_file = "dataset-vocabulary.json"
-vocabulary_sha256 = "3b93b4b9e223a8f1a3cfd29fdfffbf039a606dcd340ed958c5720481b11bcd8a"
+vocabulary_sha256 = "9a5141acbb49989e93fe2e873c6cb699d3ec1b8a3afb15571a7fce5ffeb50e13"
 # Where the pinned bytes came from, as it happened. The URL is where the dataset
 # serves the file; the copy here was built from the change that adds it, before
 # that change had merged, so it was not fetched from anywhere.
-vocabulary_provenance = "built from origin89hq/offgrid-equipment PR #102 at commit c01fb553, not fetched from the URL"
+vocabulary_provenance = "built from origin89hq/offgrid-equipment PR #102 at commit 1410625e, not fetched from the URL"
 # Live metric kinds that are the controller's own business and have no dataset
 # word: a client reads them, an equipment database has no column for them.
 internal = [
@@ -2888,9 +2889,19 @@ kind = "AC power"
 name = "ac-frequency"
 kind = "AC frequency"
 
+# A counter's word depends on its window, which the signal's domain names: the
+# lifetime total is the dataset's total, today's is its today figure, and a
+# yesterday or since-reset counter has no dataset word at all.
+
 [[dataset_metrics]]
 name = "ac-energy-total"
 kind = "AC energy"
+domain = "lifetime"
+
+[[dataset_metrics]]
+name = "ac-energy-today"
+kind = "AC energy"
+domain = "today"
 
 # Generator, tank, controller.
 
@@ -2911,10 +2922,6 @@ name = "uptime"
 kind = "uptime since boot"
 
 # Words the protocol cannot carry today, each with the reason.
-
-[[dataset_metrics]]
-name = "ac-energy-today"
-absent = "the protocol carries a running AC energy total; a day's figure is a client's difference over History"
 
 [[dataset_metrics]]
 name = "ac-apparent-power"

@@ -203,7 +203,21 @@ impl Codegen {
                 },
             )
         };
-        let mut t = String::from("| Dataset word | Kind | Role | Point |\n|---|---|---|---|\n");
+        let domain = |value: Option<u8>| -> String {
+            value.map_or_else(
+                || "any".to_owned(),
+                |v| {
+                    self.registry
+                        .enums
+                        .get("signal_domain")
+                        .and_then(|rows| rows.iter().find(|r| r.value == v))
+                        .map_or_else(|| v.to_string(), |r| r.name.clone())
+                },
+            )
+        };
+        let mut t = String::from(
+            "| Dataset word | Kind | Role | Point | Domain |\n|---|---|---|---|---|\n",
+        );
         for c in &self.registry.crosswalk.carried {
             let kind = self
                 .registry
@@ -213,15 +227,16 @@ impl Codegen {
                 .map_or_else(String::new, |m| m.name.clone());
             let _ = writeln!(
                 t,
-                "| `{}` | `0x{:04X}` {kind} | {} | {} |",
+                "| `{}` | `0x{:04X}` {kind} | {} | {} | {} |",
                 c.name,
                 c.kind,
                 named("component_role", c.role),
-                named("measurement_point", c.point)
+                named("measurement_point", c.point),
+                domain(c.domain)
             );
         }
         for (name, why) in &self.registry.crosswalk.absent {
-            let _ = writeln!(t, "| `{name}` | *not carried: {why}* | — | — |");
+            let _ = writeln!(t, "| `{name}` | *not carried: {why}* | — | — | — |");
         }
         t
     }
