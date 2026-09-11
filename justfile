@@ -53,6 +53,10 @@ registry:
 vectors:
     cargo xtask vectors
 
+# Fetch the equipment dataset's published vocabulary, show which words moved, and move the pin with `--accept`.
+vocabulary *args:
+    cargo xtask vocabulary {{args}}
+
 # Consumers may still build with the compiler `rust-version` names. Not part of
 # `check` because it needs a second toolchain installed: `rustup toolchain
 # install {{msrv}} --profile minimal`.

@@ -36,6 +36,17 @@ stale.
 See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and the rules a protocol
 change has to keep.
 
+## The dataset it names
+
+The registry's crosswalk (`[[dataset_metrics]]`) names readings with the words
+of the public equipment dataset, [offgrid-equipment](https://github.com/origin89hq/offgrid-equipment).
+Its vocabulary is pinned beside the registry by hash, and `cargo xtask check`
+refuses a crosswalk row that names a word the pin does not hold. `just
+vocabulary` fetches what the dataset publishes now, verifies it against the
+dataset's index, and reports which words arrived or left; the pin moves only
+with `just vocabulary --accept`, so a change in the dataset reaches the
+registry as a diff somebody reads.
+
 ## Consumers
 
 A consumer pins a version of this repository, and a change here reaches it
