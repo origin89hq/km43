@@ -169,9 +169,17 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
       # Not gated on the publish step: a job that published and then failed
       # here would find the version on the index next run and never come back
-      # for the release. Once the version is on crates.io, the release is owed.
+      # for the release. Once the version is on crates.io, the release is owed,
+      # and it is tagged at the commit the tarball records rather than at this
+      # run's, which on a rerun may be a later merge.
       - name: Create the GitHub release if it does not exist
-        run: gh release view "km43-v$VERSION" > /dev/null 2>&1 || gh release create "km43-v$VERSION" --target "$GITHUB_SHA" --title "km43 $VERSION" --notes "https://crates.io/crates/km43/$VERSION"
+        run: |
+          if gh release view "km43-v$VERSION" > /dev/null 2>&1; then
+            echo "release km43-v$VERSION exists"
+            exit 0
+          fi
+          target="$(curl -fsS "https://static.crates.io/crates/km43/km43-$VERSION.crate" | tar -xzOf - "km43-$VERSION/.cargo_vcs_info.json" | jq -er '.git.sha1')"
+          gh release create "km43-v$VERSION" --target "$target" --title "km43 $VERSION" --notes "https://crates.io/crates/km43/$VERSION"
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}

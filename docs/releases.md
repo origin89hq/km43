@@ -26,7 +26,8 @@ Follow the [Origin89 release standard](https://github.com/origin89hq/engineering
   specification gate and publishes with a token from trusted publishing. It
   then creates the `km43-v<version>` release if none exists, whether or not
   this run did the publishing, so a job that failed between the two can be
-  rerun. A push whose version is already published and released does
+  rerun. The release is tagged at the commit the published tarball records
+  in `.cargo_vcs_info.json`, not at the rerun's head. A push whose version is already published and released does
   nothing, so merging an unrelated PR cannot publish twice. An index that
   cannot be read fails the job rather than reading as an unpublished version.
   The gate runs `cargo package` dry to show what the tarball would carry.
