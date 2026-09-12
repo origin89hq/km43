@@ -139,5 +139,10 @@
   "modelKeyVia": [
     "name",
     "alias"
+  ],
+  "linkEvidenceKinds": [
+    "register-match",
+    "vendor-doc",
+    "catalogue-name"
   ]
 }
