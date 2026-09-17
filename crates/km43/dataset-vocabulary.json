@@ -71,6 +71,14 @@
     "jump-starter",
     "out-of-scope"
   ],
+  "batteryChemistry": [
+    "lifepo4",
+    "lithium",
+    "agm",
+    "gel",
+    "flooded",
+    "lead-acid"
+  ],
   "families": [
     "modbus-rs485",
     "modbus-tcp",
@@ -139,5 +147,10 @@
   "modelKeyVia": [
     "name",
     "alias"
+  ],
+  "linkEvidenceKinds": [
+    "register-match",
+    "vendor-doc",
+    "catalogue-name"
   ]
 }

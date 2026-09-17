@@ -2750,11 +2750,11 @@ direction = "controller-to-comms"
 [dataset]
 vocabulary_url = "https://data.origin89.com/v1/vocabulary.json"
 vocabulary_file = "dataset-vocabulary.json"
-vocabulary_sha256 = "2a52198908bd63011d3a438787d81773b5bbd600b10c8145e55c945af2654749"
+vocabulary_sha256 = "4e74393aeeefdf6862e81ea293c9bb480f74803bfab6b58db10d66037cd02b32"
 # How the pinned bytes were obtained, as it happened: `just vocabulary --accept`
 # writes the fetch it verified against the dataset's index, and nothing else
 # writes this line.
-vocabulary_provenance = "fetched from https://data.origin89.com/v1/vocabulary.json, listed by the index as sha256 2a52198908bd63011d3a438787d81773b5bbd600b10c8145e55c945af2654749"
+vocabulary_provenance = "fetched from https://data.origin89.com/v1/vocabulary.json, listed by the index as sha256 4e74393aeeefdf6862e81ea293c9bb480f74803bfab6b58db10d66037cd02b32"
 # Live metric kinds that are the controller's own business and have no dataset
 # word: a client reads them, an equipment database has no column for them.
 internal = [
