@@ -2714,7 +2714,7 @@ mod tests {
     fn an_authorise() -> ReleaseRequest<'static> {
         ReleaseRequest {
             op: CommsReleaseOp::Authorise,
-            version: "0.2.0+g1a2b3c4",
+            version: "0.2.0+g1a2b3c4d",
             image_len: 1_048_576,
             digest: [0xA5; DIGEST_BYTES],
         }
@@ -2762,7 +2762,7 @@ mod tests {
         ] {
             let verdict = ReleaseVerdict {
                 outcome,
-                version: "0.1.0+g9f8e7d6",
+                version: "0.1.0+g9f8e7d6c",
                 bytes_have: 524_288,
             };
             let len = verdict
@@ -3108,7 +3108,7 @@ mod tests {
 
         let len = ReleaseVerdict {
             outcome: CommsRelease::RefusedDigestMismatch,
-            version: "0.1.0+g9f8e7d6",
+            version: "0.1.0+g9f8e7d6c",
             bytes_have: 524_288,
         }
         .write(link_header(LinkMessageType::CommsReleaseAck), &mut bytes)

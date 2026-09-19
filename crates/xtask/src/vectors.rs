@@ -1816,7 +1816,7 @@ impl Builder {
                 req_id: 5,
                 body: cmap! {
                     1 => Cb::U(1),
-                    2 => Cb::T("0.2.0+g1a2b3c4".into()),
+                    2 => Cb::T("0.2.0+g1a2b3c4d".into()),
                     3 => Cb::U(u64::try_from(IMAGE.len())?),
                     4 => Cb::B(Sha256::digest(IMAGE.as_bytes()).to_vec()),
                 },
@@ -1835,7 +1835,7 @@ impl Builder {
                 req_id: 5,
                 body: cmap! {
                     1 => Cb::U(4),
-                    2 => Cb::T("0.1.0+g9f8e7d6".into()),
+                    2 => Cb::T("0.1.0+g9f8e7d6c".into()),
                     3 => Cb::U(524_288),
                 },
                 readable: "{1:outcome=refused_digest_mismatch, 2:version, 3:bytes_have=524288}"

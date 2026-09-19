@@ -1774,7 +1774,7 @@ fn every_published_link_frame_is_one_this_crate_decodes() {
                     ReleaseRequest::decode(envelope).expect("the published authorise reads");
                 let image = b"km43 comms release vector image";
                 assert_eq!(request.op, CommsReleaseOp::Authorise);
-                assert_eq!(request.version, "0.2.0+g1a2b3c4");
+                assert_eq!(request.version, "0.2.0+g1a2b3c4d");
                 assert_eq!(
                     request.image_len,
                     u32::try_from(image.len()).expect("it fits")
@@ -1791,7 +1791,7 @@ fn every_published_link_frame_is_one_this_crate_decodes() {
             LinkMessageType::CommsReleaseAck => {
                 let verdict = ReleaseVerdict::decode(envelope).expect("the published ack reads");
                 assert_eq!(verdict.outcome, CommsRelease::RefusedDigestMismatch);
-                assert_eq!(verdict.version, "0.1.0+g9f8e7d6");
+                assert_eq!(verdict.version, "0.1.0+g9f8e7d6c");
                 assert_eq!(verdict.bytes_have, 524_288);
                 seen += 1;
             }
