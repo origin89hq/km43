@@ -1803,11 +1803,11 @@ mod tests {
         Rendering::<128>::each_says_something_of_its_own(&EVERY);
         for why in EVERY {
             let want = if matches!(why, InventoryError::RowTooLong(_)) {
-                5
+                Refusal::Client(ErrorCode::PayloadTooLarge)
             } else {
-                1
+                Refusal::Client(ErrorCode::MalformedFrame)
             };
-            assert_eq!(why.refusal().code(), want, "{why}");
+            assert_eq!(why.refusal(), want, "{why}");
         }
     }
 
