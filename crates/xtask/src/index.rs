@@ -30,7 +30,7 @@ struct Rule {
     id: String,
     document: &'static str,
     section: String,
-    sentence: String,
+    statement: String,
 }
 
 impl Index {
@@ -82,7 +82,7 @@ fn rules_in(text: &str, document: &'static str, letter: char) -> Vec<Rule> {
                 id: format!("{letter}-{digits}"),
                 document,
                 section: section_before(text, at),
-                sentence: first_sentence(after),
+                statement: statement(after),
             })
         })
         .collect()
@@ -115,26 +115,79 @@ fn section_before(text: &str, at: usize) -> String {
         .unwrap_or_default()
 }
 
-/// The rule's first sentence: from after its number to the first full stop
-/// that ends a sentence, or to the end of its paragraph, whitespace
-/// collapsed.
-fn first_sentence(after: &str) -> String {
-    let paragraph = after.split("\n\n").next().unwrap_or_default();
-    let body = paragraph
+/// What a rule states: its first sentence, or, where that sentence runs
+/// into a fenced block or introduces a list, through the block to where the
+/// sentence ends, or through the whole list. No rule is exported cut off.
+/// Whitespace collapsed; a fenced block becomes inline code.
+fn statement(after: &str) -> String {
+    let body = after
         .trim_start()
         .trim_start_matches(['—', '-', ':'])
         .trim_start();
-    let end = body
-        .match_indices(". ")
-        .chain(body.match_indices(".\n"))
+    let mut text = String::new();
+    // The lines of a fenced block being read, until its closing fence.
+    let mut fence: Option<Vec<&str>> = None;
+    let mut in_list = false;
+    for line in body.lines() {
+        let trimmed = line.trim();
+        if let Some(code) = fence.as_mut() {
+            if trimmed.starts_with("```") {
+                text.push_str(" `");
+                text.push_str(&code.join(" "));
+                text.push_str("` ");
+                fence = None;
+            } else if !trimmed.is_empty() {
+                code.push(trimmed);
+            }
+            continue;
+        }
+        if trimmed.starts_with("```") {
+            fence = Some(Vec::new());
+            continue;
+        }
+        if trimmed.is_empty() {
+            if in_list || ends_a_sentence(&text) {
+                break;
+            }
+            continue;
+        }
+        if trimmed.starts_with('#') || opens_a_rule(trimmed) {
+            break;
+        }
+        in_list |= is_list_item(trimmed);
+        text.push_str(trimmed);
+        text.push(' ');
+        if !in_list && let Some(end) = sentence_end(&text) {
+            text.truncate(end);
+            break;
+        }
+    }
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Where the first sentence of `text` ends, just past its full stop.
+fn sentence_end(text: &str) -> Option<usize> {
+    text.match_indices(". ")
         .map(|(at, _)| at.saturating_add(1))
-        .min()
-        .unwrap_or(body.len());
-    body.get(..end)
-        .unwrap_or(body)
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
+        .next()
+}
+
+fn ends_a_sentence(text: &str) -> bool {
+    text.trim_end().ends_with('.')
+}
+
+fn is_list_item(line: &str) -> bool {
+    line.starts_with("- ")
+        || line.starts_with("* ")
+        || line.split_once(". ").is_some_and(|(number, _)| {
+            !number.is_empty() && number.bytes().all(|b| b.is_ascii_digit())
+        })
+}
+
+fn opens_a_rule(line: &str) -> bool {
+    ["**P-", "**L-", "- **P-", "- **L-"]
+        .iter()
+        .any(|start| line.starts_with(start))
 }
 
 fn rust(rules: &[Rule]) -> String {
@@ -158,7 +211,7 @@ fn rust(rules: &[Rule]) -> String {
         let _ = writeln!(o, "        id: {:?},", rule.id);
         let _ = writeln!(o, "        document: {:?},", rule.document);
         let _ = writeln!(o, "        section: {:?},", rule.section);
-        let _ = writeln!(o, "        sentence: {:?},", rule.sentence);
+        let _ = writeln!(o, "        statement: {:?},", rule.statement);
         let _ = writeln!(o, "    }},");
     }
     let _ = writeln!(o, "];");
@@ -176,8 +229,28 @@ mod tests {
         let ids: Vec<_> = rules.iter().map(|r| r.id.as_str()).collect();
         assert_eq!(ids, ["L-010", "L-011"]);
         assert_eq!(rules[0].section, "Heading");
-        assert_eq!(rules[0].sentence, "The first thing.");
-        assert_eq!(rules[1].sentence, "It MUST hold.");
+        assert_eq!(rules[0].statement, "The first thing.");
+        assert_eq!(rules[1].statement, "It MUST hold.");
+    }
+
+    #[test]
+    fn a_sentence_that_runs_into_a_block_is_taken_to_its_end() {
+        let text = "## H\n\n**P-049** — The payload MUST be exactly\n\n```text\nkm43:1:<id>\n```\n\n— the literal `km43` and\nits parts. Then more.\n";
+        let rules = rules_in(text, "docs/PROTOCOL.md", 'P');
+        assert_eq!(
+            rules[0].statement,
+            "The payload MUST be exactly `km43:1:<id>` — the literal `km43` and its parts."
+        );
+    }
+
+    #[test]
+    fn a_rule_that_introduces_a_list_carries_the_whole_list() {
+        let text = "## H\n\n**P-117** — The override:\n\n1. Is armed once. It MUST clear.\n2. Is single-use.\n\nAfter the list.\n";
+        let rules = rules_in(text, "docs/PROTOCOL.md", 'P');
+        assert_eq!(
+            rules[0].statement,
+            "The override: 1. Is armed once. It MUST clear. 2. Is single-use."
+        );
     }
 
     #[test]

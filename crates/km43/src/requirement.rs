@@ -18,8 +18,10 @@ pub struct Requirement {
     pub document: &'static str,
     /// The heading it sits under.
     pub section: &'static str,
-    /// Its first sentence, whitespace collapsed.
-    pub sentence: &'static str,
+    /// What it states: its first sentence, or, where that sentence runs into
+    /// a code block or introduces a list, through the block or the whole
+    /// list, whitespace collapsed and a code block made inline code.
+    pub statement: &'static str,
 }
 
 #[cfg(test)]
@@ -44,7 +46,15 @@ mod tests {
                 other => panic!("{other} is neither document's letter"),
             };
             assert_eq!(rule.document, document, "{}", rule.id);
-            assert!(!rule.sentence.is_empty(), "{} says nothing", rule.id);
+            assert!(!rule.statement.is_empty(), "{} says nothing", rule.id);
+            assert!(
+                rule.statement.ends_with(['.', '`'])
+                    || rule.statement.ends_with(".*")
+                    || rule.statement.ends_with(".**"),
+                "{} is cut off: {}",
+                rule.id,
+                rule.statement
+            );
             assert!(
                 !rule.section.is_empty(),
                 "{} sits under no heading",
