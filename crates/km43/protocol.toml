@@ -2627,6 +2627,16 @@ value = 4
 name = "resync"
 status = "live"
 
+[[link_outcomes.enter_download]]
+value = 1
+name = "entering"
+status = "live"
+
+[[link_outcomes.enter_download]]
+value = 2
+name = "refused_outside_window"
+status = "live"
+
 [[link_enums.link_transport]]
 value = 1
 name = "ble"
@@ -2675,6 +2685,19 @@ status = "live"
 [[link_enums.comms_release_op]]
 value = 4
 name = "confirm_healthy"
+status = "live"
+
+# Why the controller asked for the download mode: diagnostic, logged by the
+# controller with the verdict (L-192), since the module keeps nothing across the
+# reset; nothing either side branches on.
+[[link_enums.download_reason]]
+value = 1
+name = "bench"
+status = "live"
+
+[[link_enums.download_reason]]
+value = 2
+name = "recovery"
 status = "live"
 
 # The link-local opcodes. LINK.md's own table was the only place these were
@@ -2726,6 +2749,17 @@ direction = "comms-to-controller"
 request = 0x67
 response = 0xE7
 name = "CommsRelease"
+direction = "controller-to-comms"
+
+# The download window (LINK.md): the controller's request that the module
+# reset into its ROM's serial download mode, honoured only inside the window
+# the comms firmware opens at its own start. Controller to comms only: from
+# the other side it would be the untrusted chip choosing when the trusted one
+# stops.
+[[link_messages]]
+request = 0x68
+response = 0xE8
+name = "EnterDownload"
 direction = "controller-to-comms"
 
 # ---------------------------------------------------------------------------

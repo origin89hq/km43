@@ -772,6 +772,8 @@ enum Link {
     NetConfigAck = 0xe5,
     CommsRelease = 0x67,
     CommsReleaseAck = 0xe7,
+    EnterDownload = 0x68,
+    EnterDownloadAck = 0xe8,
 }
 
 /// One published link frame before it is framed: the envelope's three header
@@ -1734,11 +1736,7 @@ impl Builder {
 
     /// The link bodies, one per published frame.
     fn link_cases() -> Result<Vec<LinkCase>> {
-        /// What the published `CommsRelease` authorises: not a firmware, but a
-        /// fixed run of bytes whose SHA-256 anybody can recompute. The text is
-        /// quoted in `body_readable` so an outside implementation can.
-        const IMAGE: &str = "km43 comms release vector image";
-        Ok(vec![
+        let mut cases = vec![
             LinkCase {
                 name: "link_up_0x60",
                 kind: Link::Up,
@@ -1810,10 +1808,44 @@ impl Builder {
             // bytes, so the published digest is one a firmware could have
             // computed from the image named in `body_readable`.
             LinkCase {
+                // The bench's reason, which is the one a controller sends on
+                // every unit before it leaves the bench.
+                name: "enter_download_0x68",
+                kind: Link::EnterDownload,
+                session: 0,
+                req_id: 5,
+                body: cmap! {1 => Cb::U(1)},
+                readable: "{1:reason=bench}".into(),
+            },
+            LinkCase {
+                // The refusal, not the acceptance: `entering` is the frame a
+                // module sends once and then resets, and the refusal is the
+                // one a controller that knocked late has to read.
+                name: "enter_download_ack_0xe8",
+                kind: Link::EnterDownloadAck,
+                session: 0,
+                req_id: 5,
+                body: cmap! {1 => Cb::U(2)},
+                readable: "{1:outcome=refused_outside_window}".into(),
+            },
+        ];
+        cases.extend(Self::release_cases()?);
+        Ok(cases)
+    }
+
+    /// The comms firmware release pair, apart because its digest is computed
+    /// rather than written down.
+    fn release_cases() -> Result<Vec<LinkCase>> {
+        /// What the published `CommsRelease` authorises: not a firmware, but a
+        /// fixed run of bytes whose SHA-256 anybody can recompute. The text is
+        /// quoted in `body_readable` so an outside implementation can.
+        const IMAGE: &str = "km43 comms release vector image";
+        Ok(vec![
+            LinkCase {
                 name: "comms_release_0x67",
                 kind: Link::CommsRelease,
                 session: 0,
-                req_id: 5,
+                req_id: 6,
                 body: cmap! {
                     1 => Cb::U(1),
                     2 => Cb::T("0.2.0+g1a2b3c4d".into()),
@@ -1832,7 +1864,7 @@ impl Builder {
                 name: "comms_release_ack_0xe7",
                 kind: Link::CommsReleaseAck,
                 session: 0,
-                req_id: 5,
+                req_id: 6,
                 body: cmap! {
                     1 => Cb::U(4),
                     2 => Cb::T("0.1.0+g9f8e7d6c".into()),

@@ -13,14 +13,14 @@ use km43::{
     CONCERN_MAX_BYTES, Caps, CborReader, CborWriter, ClientId, ClientKind, Closed, CmdList,
     Concern, ConcernChanged, ConcernRaised, ConcernRows, ConcernState, ConcernsBody,
     ConcernsHeader, ConcernsOutcome, ConcernsPage, Condition, Counter, DeviceId, DeviceSecret,
-    Discovery, ElementAt, Enrolment, Envelope, Epoch, Handshake, Header, HelloInner, HelloReport,
-    Id, InventoryHeader, InventoryOutcome, LogSeq, MAX_DISCOVER_BODY, MAX_FRAME, MAX_HELLO_INNER,
-    MAX_HELLO_REPORT, MAX_PAYLOAD, MAX_SERIES_LEN, MessageType, Page, Pair, PairAck, PairProof,
-    Part, PresenceChanged, PrintedSecret, Provenance, ReadConcerns, ReadInventory, ReadSignals,
-    ReadingsBody, ReadingsHeader, ReadingsOutcome, ReadingsPage, ReqId, Row, RowKind, RowSlots,
-    SAMPLE_MAX_BYTES, SERIES_MAX_BYTES, Sample, Sel, Series, Session, SessionId, SessionKey,
-    Severity, SignalQuality, Signed, SignedClaim, SignedKey, StateSeq, Subject,
-    TopologyChangeReason, TopologyChanged, Validity, ValidityChanged, Value, VendorCode,
+    Discovery, ElementAt, Enrolment, Envelope, Epoch, Handshake, Header, HelloClaim, HelloInner,
+    HelloReport, Id, InventoryHeader, InventoryOutcome, LogSeq, MAX_DISCOVER_BODY, MAX_FRAME,
+    MAX_HELLO_INNER, MAX_HELLO_REPORT, MAX_PAYLOAD, MAX_SERIES_LEN, MessageType, Page, Pair,
+    PairAck, PairProof, Part, PresenceChanged, PrintedSecret, Provenance, ReadConcerns,
+    ReadInventory, ReadSignals, ReadingsBody, ReadingsHeader, ReadingsOutcome, ReadingsPage, ReqId,
+    Row, RowKind, RowSlots, SAMPLE_MAX_BYTES, SERIES_MAX_BYTES, Sample, Sel, Series, Session,
+    SessionId, SessionKey, Severity, SignalQuality, Signed, SignedClaim, SignedKey, StateSeq,
+    Subject, TopologyChangeReason, TopologyChanged, Validity, ValidityChanged, Value, VendorCode,
     VendorNamespace, Version, Wrapped,
 };
 
@@ -90,11 +90,11 @@ fn the_published_envelope_decodes_to_the_fields_the_generator_wrote() {
 
 /// The published MAC tags, recomputed by this crate.
 ///
-/// The crate's own MAC tests compare against hex literals transcribed into
-/// `mac.rs`, which are a restatement rather than an outside opinion — change the
-/// generator to truncate from the right, regenerate, and every one of those
-/// tests stays green while the controller and the published vectors disagree
-/// about every tag on the wire. This is the test that goes red.
+/// The crate's own MAC tests compare one tag against another and never against
+/// the file — the hex literals `mac.rs` once carried were a restatement rather
+/// than an outside opinion, green while the generator truncated from the
+/// right. Change the generator that way, regenerate, and this is the test that
+/// goes red.
 #[test]
 fn every_published_tag_is_one_this_crate_recomputes() {
     let key = session_key();
@@ -244,15 +244,47 @@ fn the_pairing_and_hello_tags_are_ones_this_crate_recomputes_too() {
     .prove(&enrolment().client_key(), &challenge, &mut scratch)
     .expect("the published inner body encodes");
 
+    let published = bodies.first().expect("the hello body");
     assert_eq!(
         request.payload(),
-        bodies.first().expect("the hello body").as_slice(),
+        published.as_slice(),
         "this encoder and the published inner body have parted company"
     );
     request
         .proof()
         .verify(tags.get(2).expect("the hello proof tag"))
         .expect("the published hello proof is not what we compute");
+
+    // And the other direction over the same bytes. The frame written here
+    // carries the payload just asserted equal to the published body, so
+    // decoding it back through the claim is decoding the published bytes: the
+    // fields come out as the generator wrote them, and the encoder and the
+    // decoder are not simply wrong together.
+    let header = Header {
+        kind: MessageType::Hello,
+        session: SessionId::from(3),
+        req_id: ReqId(17),
+    };
+    let mut frame = [0u8; MAX_PAYLOAD];
+    let len = request
+        .write(header, &mut frame)
+        .expect("the published hello fits a payload");
+    let envelope = Envelope::decode(frame.get(..len).expect("the writer's own length"))
+        .expect("the frame this crate wrote decodes");
+    let accepted = HelloClaim::decode(envelope)
+        .expect("the frame names a Hello")
+        .verify(&enrolment().client_key(), &challenge, Version::V1_0)
+        .expect("the published proof verifies over the published body");
+    assert_eq!(
+        accepted.inner,
+        HelloInner {
+            version: Version::V1_0,
+            client_id: ClientId::new(7).expect("the published slot"),
+            client_version: "o89-cli 0.1.0",
+            client_nonce,
+        },
+        "the published inner body does not decode to the fields the generator wrote"
+    );
 }
 
 /// The bodies under `bodies`, in the order the file writes them: the
@@ -811,7 +843,7 @@ fn p_001_the_published_frame_is_the_one_this_crate_writes() {
     );
 }
 
-/// **The eight link frames' wire bytes, read.** `every_published_link_frame_is_one_
+/// **The ten link frames' wire bytes, read.** `every_published_link_frame_is_one_
 /// this_crate_decodes` starts from `envelope_cbor`, so a wrong `crc16_ccitt_false`
 /// or a mis-framed `encoded_with_delimiter` in the `link_local` block was
 /// invisible: the gate accepts any quoted key inside a block as *read*, and the
@@ -822,7 +854,7 @@ fn every_published_link_frame_is_the_one_this_crate_frames_and_checksums() {
     let envelopes = strings_of(link, "envelope_cbor");
     let frames = strings_of(link, "encoded_with_delimiter");
     let crcs = strings_of(link, "crc16_ccitt_false");
-    assert_eq!(envelopes.len(), 8, "the link block changed shape");
+    assert_eq!(envelopes.len(), 10, "the link block changed shape");
     assert_eq!(frames.len(), envelopes.len());
     assert_eq!(crcs.len(), envelopes.len());
 
@@ -1686,16 +1718,15 @@ fn the_published_change_records_are_the_ones_this_crate_reads() {
 #[test]
 fn every_published_link_frame_is_one_this_crate_decodes() {
     use km43::{
-        ClientConnected, ClientUp, ClientUpAck, ClockOffer, CommsRelease, CommsReleaseOp, Intake,
-        LinkEnvelope, LinkMessageType, NetConfig, NetVerdict, ReleaseRequest, ReleaseVerdict, Side,
-        TimeOffer, TimeVerdict, arriving,
+        ClientConnected, ClientUp, ClientUpAck, ClockOffer, DownloadReason, DownloadRequest,
+        DownloadVerdict, EnterDownload, Intake, LinkEnvelope, LinkMessageType, NetConfig,
+        NetVerdict, Side, TimeOffer, TimeVerdict, arriving,
     };
-    use sha2::{Digest, Sha256};
 
     let frames = link_envelopes();
     assert_eq!(
         frames.len(),
-        8,
+        10,
         "the published link section changed shape; this test walks it by count \
          so a vector that stops being published cannot go unnoticed"
     );
@@ -1765,40 +1796,67 @@ fn every_published_link_frame_is_one_this_crate_decodes() {
                 );
                 seen += 1;
             }
-            // The digest is a real SHA-256 over a fixed run of bytes, checked
-            // by recomputing it here rather than by reading 32 bytes back: a
-            // generator that published any 32 bytes would pass the decoder and
-            // prove nothing about the field a release turns on (L-170).
-            LinkMessageType::CommsRelease => {
-                let request =
-                    ReleaseRequest::decode(envelope).expect("the published authorise reads");
-                let image = b"km43 comms release vector image";
-                assert_eq!(request.op, CommsReleaseOp::Authorise);
-                assert_eq!(request.version, "0.2.0+g1a2b3c4d");
-                assert_eq!(
-                    request.image_len,
-                    u32::try_from(image.len()).expect("it fits")
-                );
-                assert_eq!(
-                    request.digest,
-                    <[u8; 32]>::from(Sha256::digest(image)),
-                    "the published digest is not the SHA-256 of the image it names"
-                );
+            kind @ (LinkMessageType::CommsRelease | LinkMessageType::CommsReleaseAck) => {
+                a_published_release_frame_reads(kind, envelope);
                 seen += 1;
             }
-            // The refusal, not the acceptance, and `version` still names the
-            // old image: what it will boot next is not what it was sent.
-            LinkMessageType::CommsReleaseAck => {
-                let verdict = ReleaseVerdict::decode(envelope).expect("the published ack reads");
-                assert_eq!(verdict.outcome, CommsRelease::RefusedDigestMismatch);
-                assert_eq!(verdict.version, "0.1.0+g9f8e7d6c");
-                assert_eq!(verdict.bytes_have, 524_288);
+            LinkMessageType::EnterDownload => {
+                let request =
+                    DownloadRequest::decode(envelope).expect("the published request reads");
+                assert_eq!(request.reason, DownloadReason::Bench);
+                seen += 1;
+            }
+            // The refusal, not the acceptance: the frame a controller that
+            // knocked late has to read (L-191).
+            LinkMessageType::EnterDownloadAck => {
+                let verdict =
+                    DownloadVerdict::decode(envelope).expect("the published verdict reads");
+                assert_eq!(verdict.outcome, EnterDownload::RefusedOutsideWindow);
                 seen += 1;
             }
             other => panic!("a published link frame this test does not cover: {other:?}"),
         }
     }
     assert_eq!(seen, frames.len(), "a published frame was walked past");
+}
+
+/// The comms firmware release pair, read out of the published link section.
+/// Apart from the walk above only because the digest is recomputed here, which
+/// is the check that makes the release vector worth publishing (L-170).
+fn a_published_release_frame_reads(kind: km43::LinkMessageType, envelope: km43::LinkEnvelope<'_>) {
+    use km43::{CommsRelease, CommsReleaseOp, LinkMessageType, ReleaseRequest, ReleaseVerdict};
+    use sha2::{Digest, Sha256};
+
+    match kind {
+        // The digest is a real SHA-256 over a fixed run of bytes, checked
+        // by recomputing it here rather than by reading 32 bytes back: a
+        // generator that published any 32 bytes would pass the decoder and
+        // prove nothing about the field a release turns on (L-170).
+        LinkMessageType::CommsRelease => {
+            let request = ReleaseRequest::decode(envelope).expect("the published authorise reads");
+            let image = b"km43 comms release vector image";
+            assert_eq!(request.op, CommsReleaseOp::Authorise);
+            assert_eq!(request.version, "0.2.0+g1a2b3c4d");
+            assert_eq!(
+                request.image_len,
+                u32::try_from(image.len()).expect("it fits")
+            );
+            assert_eq!(
+                request.digest,
+                <[u8; 32]>::from(Sha256::digest(image)),
+                "the published digest is not the SHA-256 of the image it names"
+            );
+        }
+        // The refusal, not the acceptance, and `version` still names the
+        // old image: what it will boot next is not what it was sent.
+        LinkMessageType::CommsReleaseAck => {
+            let verdict = ReleaseVerdict::decode(envelope).expect("the published ack reads");
+            assert_eq!(verdict.outcome, CommsRelease::RefusedDigestMismatch);
+            assert_eq!(verdict.version, "0.1.0+g9f8e7d6c");
+            assert_eq!(verdict.bytes_have, 524_288);
+        }
+        other => panic!("{other:?} is not a release frame"),
+    }
 }
 
 /// Which side receives each published frame, written out rather than derived.
@@ -1812,7 +1870,7 @@ fn every_published_link_frame_is_one_this_crate_decodes() {
 fn receiving(opcode: u8) -> km43::Side {
     use km43::Side::{Comms, Controller};
 
-    const AT: [(u8, km43::Side); 8] = [
+    const AT: [(u8, km43::Side); 10] = [
         (0x60, Controller), // LinkUp, either way; the STM32 receives this one
         (0x62, Controller), // ClientConnected, comms → controller
         (0x66, Controller), // TimeOffer, comms → controller
@@ -1821,6 +1879,8 @@ fn receiving(opcode: u8) -> km43::Side {
         (0xe5, Controller), // NetConfigAck, back to the controller
         (0x67, Comms),      // CommsRelease, controller → comms
         (0xe7, Controller), // CommsReleaseAck, back to the controller
+        (0x68, Comms),      // EnterDownload, controller → comms
+        (0xe8, Controller), // EnterDownloadAck, back to the controller
     ];
 
     AT.into_iter()
