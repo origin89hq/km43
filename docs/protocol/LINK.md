@@ -320,8 +320,9 @@ LinkUp  0x60  ·  LinkUp  0xE0
   4: fw               text    ≤ 32 bytes, the sender's own firmware version
   5: boot_id          u32     redrawn randomly on every boot
   6: hw               text    ≤ 32 bytes, board revision
-  7: net_version      u32     *optional*, comms only: the credential version it
-                              has cached, 0 if it has none
+  7: net_version      u32     *optional*, comms only: the version of the last
+                              `NetConfig` it stored, a clear included; 0 if it
+                              was never given one
 ```
 
 Request and response carry the same fields, except field 7, which only the comms
@@ -715,7 +716,8 @@ NetConfig  0x65
 
 NetConfigAck  0xE5
   1: outcome      u8      1 stored · 2 rejected_invalid · 3 nvs_write_failed
-  2: version      u32     what it now holds; 0 if it holds nothing
+  2: version      u32     the version of what it now holds, a clear included;
+                          0 if it was never given a network
 ```
 
 **L-131** — A `NetConfig` with `op = clear` MUST omit both `psk` and `ssid`, and
@@ -730,13 +732,23 @@ anything outside it is a credential no radio can use — refused here with
 `rejected_invalid` rather than at association, where the only symptom is a board
 that never comes on the air.
 
-**L-132** — `NetConfigAck` MUST report in `version` what the comms processor now
-holds, and MUST report 0 when it holds nothing. It is the other end of the push
+**L-132** — `NetConfigAck` MUST report in `version` the version of the
+`NetConfig` the comms processor now holds, a stored `clear` included, and MUST
+report 0 only when it was never given a network. It is the other end of the push
 rule below: the controller decides whether to push by comparing the version the
 comms processor reports against its own, so a comms processor that acknowledges a
 version it did not store is a controller that stops pushing to a board with no
 credentials on it. Zero is the honest answer from a board with an empty NVS, and
 it is what gets it provisioned.
+
+A clear is stored at the version it carried, not as an empty NVS. The version is
+one monotonic fact both ends share, and a clear has to move it or a cache still
+holding the old network is never told (L-131, L-135). A comms processor that
+reported 0 after a clear would be pushed the same clear on every `LinkUp` for the
+life of the unit: the controller holds version *n* and nothing, the cache
+reports 0, and L-133 compares for *different*. Reporting *n* ends that; 0 then
+means one thing, *never provisioned*, which is the case L-133's rationale was
+written for.
 
 **L-133** — The controller MUST push `NetConfig` after every `LinkUp` whose
 `net_version` does not equal its own version, and MUST NOT withhold the push

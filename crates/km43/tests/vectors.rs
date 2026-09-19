@@ -1758,8 +1758,8 @@ fn every_published_link_frame_is_one_this_crate_decodes() {
                 assert_eq!(verdict.outcome, NetConfig::Stored);
                 assert_eq!(
                     verdict.version, 0,
-                    "L-132's honest answer from an empty board, and the one that \
-                     gets it provisioned"
+                    "L-132's honest answer from a board never given a network, \
+                     and the one that gets it provisioned"
                 );
                 seen += 1;
             }
