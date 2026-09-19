@@ -87,7 +87,7 @@ produces the shorter string.
 | `bodies` | Every published inner body, readable and as CBOR |
 | `crc16`, `cobs` | Edge cases: empty, a single zero, embedded zeros, the 254-byte block boundary |
 | `frame` | One complete encoded frame, envelope through delimiter |
-| `link_local` | Six controller–comms frames, envelope through delimiter, with their CRCs |
+| `link_local` | Eight controller–comms frames, envelope through delimiter, with their CRCs |
 
 The inputs are deliberately unmistakable — `printed_secret` is `00 01 02 … 1f`
 and `device_id` spells `ORIGIN89 DEMO 01` — so nobody can confuse a test vector

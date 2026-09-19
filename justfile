@@ -62,8 +62,10 @@ vocabulary *args:
 
 # Consumers may still build with the compiler `rust-version` names. Not part of
 # `check` because it needs a second toolchain installed: `rustup toolchain
-# install {{msrv}} --profile minimal`.
+# install {{msrv}} --profile minimal`. Warnings are errors here because the older
+# compiler lints differently: 1.88 reported seven dead constants that 1.98 did
+# not, and a plain `check` stayed green over them.
 msrv-check:
-    cargo +{{msrv}} check --locked --workspace
+    RUSTFLAGS="-D warnings" cargo +{{msrv}} check --locked --workspace
 
 check: fmt-check lint typecheck test build doc spec

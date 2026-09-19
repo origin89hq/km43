@@ -90,7 +90,8 @@ has to be remembered.
 | NetConfig | `0x65` | `0xE5` | controller → comms |
 | TimeOffer | `0x66` | `0xE6` | comms → controller |
 | CommsRelease | `0x67` | `0xE7` | controller → comms |
-| *reserved* | `0x68`–`0x7E` | `0xE8`–`0xFE` | — |
+| EnterDownload | `0x68` | `0xE8` | controller → comms |
+| *reserved* | `0x69`–`0x7E` | `0xE9`–`0xFE` | — |
 
 **L-001** — A receiver MUST refuse a link-local message arriving from the side
 the direction column does not permit, with code 256 — the same code as an opcode
@@ -190,6 +191,8 @@ which is the subject of the next section.
 | Outstanding link-local requests, per side | **4** | L-014 |
 | Response timeout | 500 ms | L-015 |
 | Attempts before the link is treated as down | 3 | L-015 |
+| `EnterDownload` repeat period, exempt from L-015 | 100 ms | L-192 |
+| `EnterDownload` given up after | 3 000 ms | L-192 |
 
 **L-014** — A side MUST NOT have more than 4 link-local requests outstanding,
 and a receiver MUST answer a peer's fifth with code 262. It is a fixed table on
@@ -206,8 +209,14 @@ already answered, and it is only safe because nothing in this range carries a MA
 or a counter. Retrying forever is the alternative, and it hides a link that has
 stopped carrying traffic behind a sender that looks busy.
 
-There are no test vectors for this range because there is nothing cryptographic
-in it. That is not an omission.
+Nothing in this range is cryptographic, so its vectors in
+[vectors/v1.json](vectors/v1.json) are wire bytes only, and they are a subset
+of the eighteen opcodes: `LinkUp`, `ClientConnected` and its acknowledgement,
+`TimeOffer` and its refusal, `NetConfigAck`, and `EnterDownload` and its
+refusal, chosen for the bodies with the most keys and, for `TimeOffer` and
+`EnterDownload`, the refusal rather than the acceptance. They exist because the
+two ends of this link are two codebases, and bytes two implementations agree on
+with nothing else checking them are how a format drifts.
 
 ---
 
@@ -1055,6 +1064,78 @@ The two checks answer different questions and fail at different times:
 
 Delete L-172 and the failure is not "an attacker gets in". It is a comms board
 executing garbage after a power cut, and no drive short enough to fix it.
+
+---
+
+## The download window
+
+On controller board A revision A the module's `IO8` is unconnected, so the
+ROM's strapping route into serial download does not work, and the one route
+that does is the register one: firmware running on the module sets the ROM's
+force-download flag and resets itself. That route exists only while firmware on
+the module runs and still honours the request, so on that board the ability to
+reprogram the module is a property of the image on it, and an image that
+crashes before it listens, or one that drops the request, takes the last
+programming path with it. The earlier bench image scanned the relayed client
+stream for a text line, which is the failure this section exists against: a
+pattern in that stream which reboots the module into download mode hands any
+client able to reach the link a way to take the product off the air.
+
+```text
+EnterDownload  0x68
+  1: reason     u8      1 bench · 2 recovery — diagnostic: the controller
+                        records it with the request, and nothing either side
+                        branches on it
+
+EnterDownloadAck  0xE8
+  1: outcome    u8      1 entering · 2 refused_outside_window
+```
+
+**L-190** — Before it forwards any client frame, the comms processor MUST
+listen on the controller UART for `EnterDownload` for 1 500 ms from its own
+start, the half-open interval from the start to the start plus 1 500 ms, and
+MUST honour one arriving inside it: answer `entering`, set the ROM's
+force-download flag, and reset into the ROM within 100 ms of the answer,
+forwarding and answering nothing else meanwhile. One received at or after the
+close is outside the window (L-191). The window runs before any code that can
+crash for a reason of ours, which is what keeps an application in a crash loop
+offering it on every cycle, and the 1.5 s it costs every boot is spent while
+the link is coming up anyway.
+
+**L-191** — Outside that window the comms processor MUST answer
+`refused_outside_window` and MUST NOT set the flag; and whatever the window,
+it MUST NOT act on an `EnterDownload` that arrived on a client transport.
+L-002 already refuses the frame there with code 257; this says the action is
+never taken, so that the refusal being lost to a bug in the routing does not
+become a reboot. The refusal outside the window is an answer rather than
+silence because L-015 reads silence as a dead link, and a controller that
+asked too late must learn it asked too late, not that the module is gone.
+
+**L-192** — The controller MUST send `EnterDownload` only after it has itself
+reset the module, by cycling `EN` or the rail, MUST send the first within
+200 ms of releasing `EN`, and MUST repeat it every 100 ms with the same
+`req_id` until it is answered or 3 000 ms have passed. It MUST log the reason it
+sent with the verdict, or with the absence of one: the module keeps nothing across
+the reset it is asked for, so the controller's log is the only account of why a
+module entered its ROM. L-015 does not apply to
+`EnterDownload`: not its 500 ms, not its three attempts, and not its taking
+the link down, because the window is measured from the module's start, which
+the controller cannot see, and three attempts half a second apart could all
+fall before the module's UART is up or all after the window closed; giving up
+at 3 000 ms is this rule's, and it takes nothing down. Tying the
+request to a reset the controller performed is what correlates the two clocks,
+and it is also what makes the request unforgeable from the module's side: a
+comms processor cannot be talked into the ROM by anything that did not first
+hold its `EN` low.
+
+Nothing here is cryptographic; the two frames are published in
+[vectors/v1.json](vectors/v1.json) beside the other link frames, because the
+two ends of this link are two codebases and the request that recovers one of
+them is the last frame that may drift. Revision B restores the strapping route
+with a pull-up on `IO8` (hardware#48), and there this message is defence in
+depth; on revision A it carries the whole recovery story, and the acceptance
+test is an image that crashes at once, delivered as an update, recovered
+through the controller with no wire on the module.
 
 ---
 

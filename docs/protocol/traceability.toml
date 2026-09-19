@@ -988,7 +988,18 @@
 # things, wherever that test lives, and deleting them would let the controller's
 # copy read a half-built rule as covered.
 #
-# 122 -> 123, and it is the one reason this number is allowed to rise: the
+# 122 -> 125: LINK.md gained the download window, L-190 to L-192, for the
+# request that puts the module into its ROM's serial download mode from the
+# controller and nowhere else (origin89hq/km43#30, origin89hq/firmware#1). All
+# three bind the two firmwares' clocks: how long the comms processor listens
+# from its own start, what it answers outside that window and never does from
+# a client transport, and when the controller sends and how it repeats. The
+# crate's part, the two bodies and the direction, is tested beside the other
+# bodies; a test in this workspace named after one of the three would stand
+# over a window that exists only in a firmware, which is the shape this file
+# refuses.
+#
+# 125 -> 126, and it is the one reason this number is allowed to rise: the
 # specification gained a rule. L-034 says what the version and board texts on
 # the link look like, that the widest legal version fits the field, and that a
 # receiver carries a text in another shape rather than refusing it. The width,
@@ -998,8 +1009,7 @@
 # `fw_controller`, or has a `CommsRelease` body, so a test named after any of
 # them here would stand over nothing. Its `[[clauses]]` entry is what keeps the
 # tests that exist from reading as the whole rule.
-
-uncovered = 123
+uncovered = 126
 
 # P-045 is the shape this file is for. Nothing can drive an implementation into
 # transmitting a key it does not have, so the thing that stands behind it reads
