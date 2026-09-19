@@ -750,10 +750,27 @@ enum Msg {
     Event = 0x04,
     ReadLog = 0x05,
     Command = 0x08,
+    Pair = 0x0B,
     Discover = 0x80,
     // `Hello` is the 0x81 *response*; the request 0x01 has no vector here.
     Hello = 0x81,
+    LogPage = 0x85,
     Ack = 0x88,
+    PairAck = 0x8B,
+    Error = 0xFF,
+}
+
+/// The two error codes the published `Error 0xFF` bodies carry.
+///
+/// One from each side of the registry's MAC'd column: `hello_required_first`
+/// is the refusal a controller sends with no key in hand, so it goes bare;
+/// `busy_retry` is one a receiver refuses to read out of a bare body (P-051),
+/// so it only ever travels wrapped. A vector for each is what pins the column
+/// from outside the crate.
+#[derive(Clone, Copy)]
+enum ErrorCode {
+    HelloRequiredFirst = 4,
+    BusyRetry = 7,
 }
 
 /// The link-local message types the vectors exercise.
@@ -889,6 +906,40 @@ pub struct Builder {
     session_salt: Vec<u8>,
 }
 
+/// One of the bodies the crate writes only as a whole envelope, published both
+/// as the map on its own and as the `[type, session_id, req_id, body]` around it.
+struct WholeEnvelope {
+    name: &'static str,
+    kind: Msg,
+    session: u16,
+    req_id: u32,
+    body: Vec<u8>,
+    authentication: &'static str,
+    body_readable: &'static str,
+    envelope_readable: &'static str,
+}
+
+impl WholeEnvelope {
+    fn entry(self) -> (&'static str, Value) {
+        let whole = Builder::envelope(self.kind, self.session, self.req_id, &self.body);
+        (
+            self.name,
+            obj(vec![
+                ("type", json!(self.kind as u8)),
+                ("authentication", json!(self.authentication)),
+                ("session_id", json!(self.session)),
+                ("req_id", json!(self.req_id)),
+                ("body_readable", json!(self.body_readable)),
+                ("body_cbor", json!(hex(&self.body))),
+                ("body_len", json!(self.body.len())),
+                ("envelope_readable", json!(self.envelope_readable)),
+                ("whole_envelope_cbor", json!(hex(&whole))),
+                ("whole_envelope_len", json!(whole.len())),
+            ]),
+        )
+    }
+}
+
 /// A response body and its MAC, kept so the frame vector wraps the same bytes.
 struct Response {
     inner: Vec<u8>,
@@ -937,10 +988,15 @@ impl Builder {
         }
     }
 
-    /// The client's pairing proof. `label` goes last because it is the only
-    /// variable-width field: nothing follows it, so no length prefix is needed.
-    fn pair_proof(&self) -> (&'static str, Value) {
-        let preimage = [
+    /// The client's pairing proof preimage. `label` goes last because it is
+    /// the only variable-width field: nothing follows it, so no length prefix
+    /// is needed.
+    ///
+    /// One function feeds both the `macs` entry and the `Pair 0x0B` body, so
+    /// the tag the body carries in key 3 is the tag the file publishes, by
+    /// construction rather than by a reader checking.
+    fn pair_proof_preimage(&self) -> Vec<u8> {
+        [
             L_PAIR_PROOF,
             &self.device_id,
             &self.challenge,
@@ -948,17 +1004,13 @@ impl Builder {
             &[ClientKind::App as u8],
             self.label.as_bytes(),
         ]
-        .concat();
-        (
-            "pair_proof",
-            MacVector::new(DerivedKey::Pair, preimage, "'km43/v1/pair-proof' | device_id[16] | challenge[16] | client_nonce[16] | client_kind:u8 | label (UTF-8, no NUL, last)").finish(&self.pair_key),
-        )
+        .concat()
     }
 
-    /// The controller's answer, which fixes the client's identity and carries
-    /// the challenge for the handshake that follows.
-    fn pair_ack(&self) -> (&'static str, Value) {
-        let preimage = [
+    /// The preimage of the controller's answer, which fixes the client's
+    /// identity and carries the challenge for the handshake that follows.
+    fn pair_ack_preimage(&self) -> Vec<u8> {
+        [
             L_PAIR_ACK,
             &self.device_id,
             &self.challenge,
@@ -968,11 +1020,92 @@ impl Builder {
             &self.epoch.to_be_bytes(),
             &self.next_challenge,
         ]
-        .concat();
+        .concat()
+    }
+
+    fn pair_proof(&self) -> (&'static str, Value) {
+        (
+            "pair_proof",
+            MacVector::new(DerivedKey::Pair, self.pair_proof_preimage(), "'km43/v1/pair-proof' | device_id[16] | challenge[16] | client_nonce[16] | client_kind:u8 | label (UTF-8, no NUL, last)").finish(&self.pair_key),
+        )
+    }
+
+    fn pair_ack(&self) -> (&'static str, Value) {
         (
             "pair_ack_mac",
-            MacVector::new(DerivedKey::Pair, preimage, "'km43/v1/pair-ack' | device_id[16] | challenge[16] | client_nonce[16] | outcome:u8 | client_id:u32be | epoch:u32be | next_challenge[16]").finish(&self.pair_key),
+            MacVector::new(DerivedKey::Pair, self.pair_ack_preimage(), "'km43/v1/pair-ack' | device_id[16] | challenge[16] | client_nonce[16] | outcome:u8 | client_id:u32be | epoch:u32be | next_challenge[16]").finish(&self.pair_key),
         )
+    }
+
+    /// The `Pair 0x0B` body: the fields the proof attests, the proof, and the
+    /// nonce both preimages share (P-069).
+    fn pair_request_body(&self) -> Vec<u8> {
+        cbor(&cmap! {
+            1 => Cb::U(ClientKind::App as u64),
+            2 => Cb::T(self.label.into()),
+            3 => Cb::B(t16(hmac(&self.pair_key, &self.pair_proof_preimage()))),
+            4 => Cb::B(self.client_nonce.clone()),
+        })
+    }
+
+    /// The `Pair 0x8B` body. `epoch` is under the MAC and not in the body:
+    /// P-087 has `Discover 0x80` say it, and both ends supply it from there.
+    fn pair_ack_body(&self) -> Vec<u8> {
+        cbor(&cmap! {
+            1 => Cb::U(PairOutcome::Enrolled as u64),
+            2 => Cb::U(u64::from(self.client_id)),
+            3 => Cb::B(t16(hmac(&self.pair_key, &self.pair_ack_preimage()))),
+            4 => Cb::B(self.next_challenge.clone()),
+        })
+    }
+
+    /// `ReadLog 0x05`: from 1216, at most 64. One function so the body
+    /// published on its own and the one inside `macs.wrapper_request` are the
+    /// same bytes.
+    fn readlog_body() -> Vec<u8> {
+        cbor(&cmap! {1 => Cb::U(0x04C0), 2 => Cb::U(64)})
+    }
+
+    /// The page that answers it: two records from 1216, the cursor one past
+    /// the highest `seq` the page carries (P-029), and not yet caught up.
+    ///
+    /// The first record has no `at` — a boot written before the clock was ever
+    /// set, which is the one record that genuinely has no time — so a decoder
+    /// that defaults an absent key 2 to 0 reads back a different page.
+    fn logpage_body() -> Vec<u8> {
+        cbor(&cmap! {
+            1 => Cb::A(vec![
+                cmap! { 1 => Cb::U(0x04C0), 3 => Cb::U(0x0601), 4 => Cb::M(BTreeMap::new()) },
+                cmap! {
+                    1 => Cb::U(0x04C1), 2 => Cb::U(0x0000_018F_1E2A_3B40), 3 => Cb::U(0x0201),
+                    4 => cmap! {1 => Cb::U(3), 2 => Cb::U(1)},
+                },
+            ]),
+            2 => Cb::U(0x04C2),
+            3 => Cb::U(1),
+            4 => Cb::Bool(false),
+        })
+    }
+
+    /// The two keys of `Error 0xFF`, as the standalone map that goes bare into
+    /// an envelope or wrapped under a session key.
+    fn error_body(code: ErrorCode, detail: &str) -> Vec<u8> {
+        cbor(&cmap! {1 => Cb::U(code as u64), 2 => Cb::T(detail.into())})
+    }
+
+    /// A whole envelope, head and body, for the messages the crate writes in
+    /// one piece: `[type, session_id, req_id, body]`.
+    fn envelope(kind: Msg, session: u16, req_id: u32, body: &[u8]) -> Vec<u8> {
+        // An array of four whose fourth item is the body's own bytes: the
+        // head says four, and the body follows the three scalars as written.
+        [
+            head(4, 4).as_slice(),
+            &cbor(&Cb::U(kind as u64)),
+            &cbor(&Cb::U(u64::from(session))),
+            &cbor(&Cb::U(u64::from(req_id))),
+            body,
+        ]
+        .concat()
     }
 
     fn hello_proof(&self) -> (&'static str, Value) {
@@ -1790,7 +1923,116 @@ impl Builder {
         .into_iter()
         .chain(Self::concern_events())
         .chain(Self::change_events())
+        .chain(self.whole_envelope_entries())
+        .chain([Self::readlog_entry(), Self::logpage_entry()])
         .collect::<Vec<_>>())
+    }
+
+    /// The three bodies the crate writes only as a whole envelope: a `Pair`
+    /// carries its proof in the body it proves, its ack the same, and a bare
+    /// `Error` puts its two keys straight into the envelope's map. Each is
+    /// published twice — the body map on its own, under the name the spec
+    /// check reads, and the whole `[type, session_id, req_id, body]` a decoder
+    /// meets on a wire.
+    fn whole_envelope_entries(&self) -> Vec<(&'static str, Value)> {
+        [
+            WholeEnvelope {
+                // `session_id` 0: the client has no session yet (P-021), and the
+                // comms processor stamps the handle in on the way past.
+                name: "pair_0x0B",
+                kind: Msg::Pair,
+                session: 0,
+                req_id: self.req_id,
+                body: self.pair_request_body(),
+                authentication: "key 3 is macs.pair_proof.out16, computed over keys 1 and 2 and the trio the Discover above fixed; no wrapper, the proof is the authentication",
+                body_readable: "{1:client_kind=1, 2:label, 3:proof, 4:client_nonce}",
+                envelope_readable: "[type:0x0B, session_id:0, req_id:17, {1:client_kind, 2:label, 3:proof, 4:client_nonce}]",
+            },
+            WholeEnvelope {
+                // The handle the comms processor assigned, echoed back so the
+                // answer routes to the connection that asked (P-026).
+                name: "pair_0x8B",
+                kind: Msg::PairAck,
+                session: self.session_id,
+                req_id: self.req_id,
+                body: self.pair_ack_body(),
+                authentication: "key 3 is macs.pair_ack_mac.out16, computed over keys 1, 2 and 4, the trio, and an epoch the body does not carry (P-087); no wrapper",
+                body_readable: "{1:outcome=enrolled, 2:client_id=7, 3:mac, 4:next_challenge}",
+                envelope_readable: "[type:0x8B, session_id:3, req_id:17, {1:outcome, 2:client_id, 3:mac, 4:next_challenge}]",
+            },
+            WholeEnvelope {
+                // The bare shape: a refusal from a controller holding no session
+                // for this handle (P-142), echoing the frame it answers (P-027).
+                // Code 4 is one the registry lets a receiver read bare.
+                name: "error_0xFF",
+                kind: Msg::Error,
+                session: self.session_id,
+                req_id: self.req_id,
+                body: Self::error_body(ErrorCode::HelloRequiredFirst, "no session on this connection"),
+                authentication: "none; this is the bare shape, and the wrapped one is macs.error_response",
+                body_readable: "{1:code=4, 2:detail}",
+                envelope_readable: "[type:0xFF, session_id:3, req_id:17, {1:code, 2:detail}]",
+            },
+        ]
+        .into_iter()
+        .map(WholeEnvelope::entry)
+        .collect()
+    }
+
+    fn readlog_entry() -> (&'static str, Value) {
+        let body = Self::readlog_body();
+        (
+            "readlog_0x05",
+            obj(vec![
+                ("type", json!(Msg::ReadLog as u8)),
+                (
+                    "authentication",
+                    json!(
+                        "this is the inner body; on the wire it is key 1 of the wrapper, whose key 2 is a MAC under session_key with the label 'km43/v1/wrq' — macs.wrapper_request wraps these same bytes"
+                    ),
+                ),
+                (
+                    "body_readable",
+                    json!("{1:from_seq=1216, 2:max_entries=64}"),
+                ),
+                ("body_cbor", json!(hex(&body))),
+                ("body_len", json!(body.len())),
+            ]),
+        )
+    }
+
+    fn logpage_entry() -> (&'static str, Value) {
+        let body = Self::logpage_body();
+        (
+            "logpage_0x85",
+            obj(vec![
+                ("type", json!(Msg::LogPage as u8)),
+                (
+                    "authentication",
+                    json!(
+                        "this is the inner body; on the wire it is key 1 of the wrapper, whose key 2 is a MAC under session_key with the label 'km43/v1/rsp'"
+                    ),
+                ),
+                (
+                    "body_readable",
+                    json!("{1:entries, 2:next_seq=1218, 3:oldest_seq=1, 4:complete=false}"),
+                ),
+                (
+                    "entries_readable",
+                    json!(
+                        "two records answering readlog_0x05: seq 1216, a boot (0x0601) written before the clock was ever set, so it carries no key 2 at all rather than an at of 0; then seq 1217 at the same instant as macs.event, kind 0x0201 with the same body"
+                    ),
+                ),
+                (
+                    "values_readable",
+                    json!(
+                        "next_seq is one past the highest seq the page carries (P-029), oldest_seq 1 is what the controller still holds, and complete is false so the client passes 1218 back"
+                    ),
+                ),
+                ("body_cbor", json!(hex(&body))),
+                ("body_len", json!(body.len())),
+            ]),
+        )
     }
 
     fn discover_entry(&self) -> (&'static str, Value) {
@@ -1888,7 +2130,7 @@ impl Builder {
 
     /// Read-only requests carry no counter, so they need their own label.
     fn wrapper_request(&self) -> (&'static str, Value) {
-        let inner = cbor(&cmap! {1 => Cb::U(0x04C0), 2 => Cb::U(64)});
+        let inner = Self::readlog_body();
         let preimage = [
             L_WRQ,
             &[Msg::ReadLog as u8],
@@ -1935,6 +2177,34 @@ impl Builder {
         .body(wrapped(&inner, &mac))
         .finish(&self.session_key);
         (("response", entry), Response { inner, mac })
+    }
+
+    /// The wrapped `Error 0xFF`: the shape P-142 gives a refusal from a
+    /// controller that holds a session for the `session_id`, carrying the one
+    /// kind of code that never goes bare.
+    fn error_response(&self) -> (&'static str, Value) {
+        let inner = Self::error_body(ErrorCode::BusyRetry, "four requests already in flight");
+        let preimage = [
+            L_RSP,
+            &[Msg::Error as u8],
+            &self.session_id.to_be_bytes(),
+            &self.req_id.to_be_bytes(),
+            &inner,
+        ]
+        .concat();
+        let mac = t16(hmac(&self.session_key, &preimage));
+        (
+            "error_response",
+            MacVector::new(
+                DerivedKey::Session,
+                preimage,
+                "'km43/v1/rsp' | type:u8 | session_id:u16be | req_id:u32be | payload",
+            )
+            .with("type", Msg::Error as u8)
+            .with("inner_body_cbor", hex(&inner))
+            .body(wrapped(&inner, &mac))
+            .finish(&self.session_key),
+        )
     }
 
     fn event(&self) -> (&'static str, Value) {
@@ -2079,6 +2349,7 @@ impl Builder {
             self.wrapper_request(),
             response,
             self.event(),
+            self.error_response(),
         ];
         let (crc_v, cobs_v) = edge_cases()?;
         let cobs_input = MAX_PAYLOAD + 2;

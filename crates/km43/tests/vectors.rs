@@ -10,18 +10,20 @@
 //! cites: P-011, P-013, P-016, P-001, P-038
 
 use km43::{
-    CONCERN_MAX_BYTES, Caps, CborReader, CborWriter, ClientId, ClientKind, Closed, CmdList,
-    Concern, ConcernChanged, ConcernRaised, ConcernRows, ConcernState, ConcernsBody,
+    Attempt, CONCERN_MAX_BYTES, Caps, CborReader, CborWriter, ClientId, ClientKind, Closed,
+    CmdList, Concern, ConcernChanged, ConcernRaised, ConcernRows, ConcernState, ConcernsBody,
     ConcernsHeader, ConcernsOutcome, ConcernsPage, Condition, Counter, DeviceId, DeviceSecret,
-    Discovery, ElementAt, Enrolment, Envelope, Epoch, Handshake, Header, HelloInner, HelloReport,
-    Id, InventoryHeader, InventoryOutcome, LogSeq, MAX_DISCOVER_BODY, MAX_FRAME, MAX_HELLO_INNER,
-    MAX_HELLO_REPORT, MAX_PAYLOAD, MAX_SERIES_LEN, MessageType, Page, Pair, PairAck, PairProof,
-    Part, PresenceChanged, PrintedSecret, Provenance, ReadConcerns, ReadInventory, ReadSignals,
-    ReadingsBody, ReadingsHeader, ReadingsOutcome, ReadingsPage, ReqId, Row, RowKind, RowSlots,
-    SAMPLE_MAX_BYTES, SERIES_MAX_BYTES, Sample, Sel, Series, Session, SessionId, SessionKey,
-    Severity, SignalQuality, Signed, SignedClaim, SignedKey, StateSeq, Subject,
-    TopologyChangeReason, TopologyChanged, Validity, ValidityChanged, Value, VendorCode,
-    VendorNamespace, Version, Wrapped,
+    Discovery, ElementAt, Enrolment, Envelope, Epoch, ErrorBody, ErrorBodyError, ErrorCode, Event,
+    EventKind, Handshake, Header, HelloInner, HelloReport, Id, Incoming, InventoryHeader,
+    InventoryOutcome, LogEntry, LogPage, LogSeq, MAX_DISCOVER_BODY, MAX_FRAME, MAX_HELLO_INNER,
+    MAX_HELLO_REPORT, MAX_LOG_PAGE_BYTES, MAX_PAIR_ACK_BODY, MAX_PAIR_BODY, MAX_PAYLOAD,
+    MAX_SERIES_LEN, MessageType, Outcome, Page, Pair, PairAck, PairAckClaim, PairClaim, PairProof,
+    PairRequest, PairResponse, Part, PresenceChanged, PrintedSecret, Provenance, ReadConcerns,
+    ReadInventory, ReadLog, ReadSignals, ReadingsBody, ReadingsHeader, ReadingsOutcome,
+    ReadingsPage, ReqId, Row, RowKind, RowSlots, SAMPLE_MAX_BYTES, SERIES_MAX_BYTES, Sample, Sel,
+    Series, Session, SessionId, SessionKey, Severity, SignalQuality, Signed, SignedClaim,
+    SignedKey, StateSeq, Subject, Tagged, TopologyChangeReason, TopologyChanged, Validity,
+    ValidityChanged, Value, VendorCode, VendorNamespace, Version, Wrapped, Wrapper,
 };
 
 const VECTORS: &str = include_str!("../../../docs/protocol/vectors/v1.json");
@@ -72,7 +74,7 @@ fn every_published_body_is_one_this_reader_walks_to_the_end() {
             seen += 1;
         }
     }
-    assert_eq!(seen, 19, "the vector file grew or shrank a body");
+    assert_eq!(seen, 26, "the vector file grew or shrank a body");
 }
 
 /// The envelope the generator publishes must decode here to the same four
@@ -100,12 +102,14 @@ fn every_published_tag_is_one_this_crate_recomputes() {
     let key = session_key();
 
     let tags = blobs("out16");
-    assert_eq!(tags.len(), 7, "the vector file grew or shrank a MAC");
+    assert_eq!(tags.len(), 8, "the vector file grew or shrank a MAC");
     let bodies = blobs("inner_body_cbor");
 
     // The tags, by index in the order the file writes them: pair_proof 0,
     // pair_ack 1, hello_proof 2, signed_request 3, wrapper_request 4,
-    // response 5, event 6.
+    // response 5, event 6, error_response 7. The last is recomputed by name
+    // in `the_published_wrapped_error_is_one_this_crate_signs_and_refuses_to_read_bare`,
+    // beside the receiver's rule it exists to pin.
     //
     // This comment counted from one and said wrapper_request was "the fourth
     // MAC". It is the fifth; the fourth is signed_request, the one nothing
@@ -257,8 +261,10 @@ fn the_pairing_and_hello_tags_are_ones_this_crate_recomputes_too() {
 
 /// The bodies under `bodies`, in the order the file writes them: the
 /// `Discover 0x80`, the `Hello 0x81`, the `Inventory 0x8D`, the
-/// `Readings 0x8E`, the `Concerns 0x8F`, and the five event bodies — the two
-/// concern records `0x0501` and `0x0502`, then `0x0102`, `0x0901` and `0x0902`.
+/// `Readings 0x8E`, the `Concerns 0x8F`, the five event bodies — the two
+/// concern records `0x0501` and `0x0502`, then `0x0102`, `0x0901` and `0x0902`
+/// — and the five read by name rather than by position: `Pair 0x0B`,
+/// `Pair 0x8B`, the bare `Error 0xFF`, `ReadLog 0x05` and `LogPage 0x85`.
 ///
 /// Asserted rather than assumed, so a file that lost one does not hand the
 /// wrong bytes to whichever test still finds something at index 0. The count
@@ -267,7 +273,7 @@ fn the_pairing_and_hello_tags_are_ones_this_crate_recomputes_too() {
 /// after that message was retired.
 fn published_bodies() -> Vec<Vec<u8>> {
     let found = blobs("body_cbor");
-    assert_eq!(found.len(), 10, "the vector file grew or shrank a body");
+    assert_eq!(found.len(), 15, "the vector file grew or shrank a body");
     found
 }
 
@@ -491,10 +497,10 @@ fn the_published_signed_request_is_the_one_this_crate_signs_and_reads() {
     let want_tag = tags.get(3).expect("the signed request tag");
     let operations = blobs("operation_cbor");
     let operation = operations.first().expect("the published operation");
-    // `full_body_cbor` is published by four of the seven MACs — the three
+    // `full_body_cbor` is published by five of the eight MACs — the three
     // pairing/hello tags carry no body — so in file order it is
-    // signed_request 0, wrapper_request 1, response 2, event 3. Not the same
-    // index as `out16`, which all seven carry.
+    // signed_request 0, wrapper_request 1, response 2, event 3,
+    // error_response 4. Not the same index as `out16`, which all eight carry.
     let bodies = blobs("full_body_cbor");
     let want_body = bodies.first().expect("the signed request full body");
 
@@ -1812,4 +1818,352 @@ fn link_envelopes() -> Vec<Vec<u8>> {
          the wrong blobs"
     );
     found.into_iter().skip(1).collect()
+}
+
+/// The attempt both pairing vectors are computed over: the published device,
+/// the challenge `Discover 0x80` carried, and the client's nonce.
+fn published_attempt() -> Attempt {
+    Attempt {
+        device_id: fixed("device_id"),
+        challenge: fixed("challenge"),
+        client_nonce: fixed("client_nonce"),
+    }
+}
+
+/// The published `Pair 0x0B`, both ways: the envelope this crate writes for
+/// the same fields and attempt, and the fields it reads back out of the
+/// published bytes once the proof checks out.
+///
+/// Only the tag was published before, and a tag pins the preimage, not the
+/// body. `label` at key 3 and `proof` at key 2 would have left every MAC in
+/// the file green while a controller and a phone built from two readings of
+/// the document refused each other at the panel.
+#[test]
+fn the_published_pair_request_is_the_one_this_crate_proves_and_reads() {
+    let whole = blob_under("pair_0x0B", "whole_envelope_cbor");
+    let body = blob_under("pair_0x0B", "body_cbor");
+    let pair = device().pair_key();
+    let header = Header {
+        kind: MessageType::Pair,
+        session: SessionId::from(0),
+        req_id: ReqId(17),
+    };
+
+    let mut frame = [0u8; MAX_PAYLOAD];
+    let len = PairRequest {
+        client_kind: ClientKind::App,
+        label: "kitchen phone",
+    }
+    .write(&pair, &published_attempt(), header, &mut frame)
+    .expect("the published Pair 0x0B writes");
+    assert_eq!(
+        frame.get(..len),
+        Some(whole.as_slice()),
+        "this encoder and the published Pair 0x0B have parted company"
+    );
+    assert!(
+        whole.ends_with(&body),
+        "the published body is not the one inside the published envelope"
+    );
+    assert!(
+        body.len() <= MAX_PAIR_BODY,
+        "a client sizing its buffer at MAX_PAIR_BODY refuses the published body"
+    );
+
+    let envelope = Envelope::decode(&whole).expect("the published Pair 0x0B is an envelope");
+    assert_eq!(envelope.header(), header, "the three scalars moved");
+    let claim = PairClaim::decode(envelope).expect("the published Pair 0x0B decodes");
+    let attempt = claim.attempt(fixed("device_id"), fixed("challenge"));
+    assert_eq!(
+        attempt,
+        published_attempt(),
+        "key 4 is not the published client_nonce"
+    );
+    let fields = claim
+        .verify(&pair, &attempt)
+        .expect("the published proof checks out over the fields that arrived");
+    assert_eq!(fields.client_kind, ClientKind::App, "key 1 moved");
+    assert_eq!(fields.label, "kitchen phone", "key 2 moved");
+}
+
+/// The published `Pair 0x8B`, both ways, and the one field it does not carry.
+///
+/// `epoch` is under the MAC and not in the body (P-087). A client that read it
+/// from anywhere but `Discover 0x80` gets a tag that never checks out, and the
+/// last assertion is that failure: the same published bytes, a different
+/// epoch, refused.
+#[test]
+fn the_published_pair_ack_is_the_one_this_crate_macs_and_reads() {
+    let whole = blob_under("pair_0x8B", "whole_envelope_cbor");
+    let body = blob_under("pair_0x8B", "body_cbor");
+    let pair = device().pair_key();
+    let epoch = Epoch::new(1).expect("the published epoch");
+    let header = Header {
+        kind: MessageType::PairResponse,
+        session: SessionId::from(3),
+        req_id: ReqId(17),
+    };
+    let answer = PairResponse {
+        outcome: Outcome::Enrolled(ClientId::new(7).expect("the published slot")),
+        epoch,
+        next_challenge: fixed("next_challenge"),
+    };
+
+    let mut frame = [0u8; MAX_PAYLOAD];
+    let len = answer
+        .write(&pair, &published_attempt(), header, &mut frame)
+        .expect("the published Pair 0x8B writes");
+    assert_eq!(
+        frame.get(..len),
+        Some(whole.as_slice()),
+        "this encoder and the published Pair 0x8B have parted company"
+    );
+    assert!(
+        whole.ends_with(&body),
+        "the published body is not the one inside the published envelope"
+    );
+    assert!(
+        body.len() <= MAX_PAIR_ACK_BODY,
+        "the published ack is wider than the crate budgets for"
+    );
+
+    let read = PairAckClaim::decode(Envelope::decode(&whole).expect("an envelope"))
+        .expect("the published Pair 0x8B decodes")
+        .verify(&pair, &published_attempt(), epoch)
+        .expect("the published MAC checks out");
+    assert_eq!(read, answer, "a key of the published ack moved");
+    assert_eq!(
+        read.outcome.slot(),
+        ClientId::new(7),
+        "keys 1 and 2 read as a different enrolment"
+    );
+
+    let other = Epoch::new(2).expect("a later epoch");
+    assert!(
+        PairAckClaim::decode(Envelope::decode(&whole).expect("an envelope"))
+            .expect("it decodes")
+            .verify(&pair, &published_attempt(), other)
+            .is_err(),
+        "the ack verified under an epoch it was not computed over"
+    );
+}
+
+/// The published bare `Error 0xFF`, both ways.
+///
+/// The bare shape puts the two keys straight into the envelope's map, so the
+/// crate writes it whole; the standalone map is what a wrapper carries, and
+/// both are compared. Code 4 is one the registry lets a receiver read bare,
+/// so it arrives as a hint rather than being discarded.
+#[test]
+fn the_published_bare_error_is_the_one_this_crate_writes_and_reads() {
+    let whole = blob_under("error_0xFF", "whole_envelope_cbor");
+    let body = blob_under("error_0xFF", "body_cbor");
+    let header = Header {
+        kind: MessageType::ErrorResponse,
+        session: SessionId::from(3),
+        req_id: ReqId(17),
+    };
+    let sent = ErrorBody {
+        code: Incoming::Client(ErrorCode::HelloRequiredFirst),
+        detail: "no session on this connection",
+    };
+
+    let mut frame = [0u8; MAX_PAYLOAD];
+    let len = sent
+        .write(header, &mut frame)
+        .expect("the published bare Error writes");
+    assert_eq!(
+        frame.get(..len),
+        Some(whole.as_slice()),
+        "this encoder and the published bare Error 0xFF have parted company"
+    );
+    let mut map = [0u8; MAX_PAYLOAD];
+    let len = sent.encode(&mut map).expect("the two keys encode");
+    assert_eq!(
+        map.get(..len),
+        Some(body.as_slice()),
+        "the standalone Error 0xFF map is not the published one"
+    );
+
+    let hint = ErrorBody::from_envelope(Envelope::decode(&whole).expect("an envelope"))
+        .expect("code 4 is readable bare");
+    assert_eq!(hint.code(), sent.code, "key 1 moved");
+    assert_eq!(hint.detail(), sent.detail, "key 2 moved");
+    let hint = ErrorBody::bare(&body).expect("the published map reads bare");
+    assert_eq!(hint.code(), sent.code, "key 1 moved in the standalone map");
+}
+
+/// The published wrapped `Error 0xFF`: the tag this crate computes, the
+/// wrapper it writes, the body it reads once the tag checks out — and the
+/// receiver's rule the vector exists to pin.
+///
+/// Code 7 is marked MAC'd in the registry, so the same two keys read out of a
+/// bare body are discarded (P-051, P-142). A decoder that let the body decide
+/// its own shape would read them, and the comms processor could then strip
+/// the MAC off a refusal to forge one.
+#[test]
+fn the_published_wrapped_error_is_one_this_crate_signs_and_refuses_to_read_bare() {
+    let inner = blob_under("error_response", "inner_body_cbor");
+    let full = blob_under("error_response", "full_body_cbor");
+    let tag = blob_under("error_response", "out16");
+    let key = session_key();
+    let header = Header {
+        kind: MessageType::ErrorResponse,
+        session: SessionId::from(3),
+        req_id: ReqId(17),
+    };
+    let sent = ErrorBody {
+        code: Incoming::Client(ErrorCode::BusyRetry),
+        detail: "four requests already in flight",
+    };
+
+    let mut map = [0u8; MAX_PAYLOAD];
+    let len = sent.encode(&mut map).expect("the two keys encode");
+    let payload = map.get(..len).expect("the encoder's own length");
+    assert_eq!(
+        payload,
+        inner.as_slice(),
+        "this encoder and the published wrapped Error 0xFF body have parted company"
+    );
+
+    let tagged = Tagged::over(header, payload, &key).expect("Error 0xFF is wrapped under rsp");
+    tagged
+        .mac()
+        .verify(&tag)
+        .expect("the published wrapped Error tag is not what we compute");
+    let mut frame = [0u8; MAX_PAYLOAD];
+    let len = tagged.write(&mut frame).expect("it fits a payload");
+    let written = frame.get(..len).expect("the writer's own length");
+    assert!(
+        written.ends_with(&full),
+        "the wrapper this crate writes is not the published one"
+    );
+
+    let read = Wrapper::decode(Envelope::decode(written).expect("an envelope"))
+        .expect("a wrapper")
+        .verify(&key)
+        .expect("the published tag checks out");
+    let body = ErrorBody::authenticated(read.payload()).expect("the wrapped body decodes");
+    assert_eq!(body, sent, "a key of the wrapped Error moved");
+
+    assert_eq!(
+        ErrorBody::bare(&inner),
+        Err(ErrorBodyError::BareCodeNeedsAMac(ErrorCode::BusyRetry)),
+        "a MAC'd code was read out of a bare body"
+    );
+}
+
+/// The published `ReadLog 0x05`, both ways — and the first test that calls
+/// `ReadLog::encode` at all.
+///
+/// The body inside `macs.wrapper_request` is the same request, and the tag
+/// test above reads it by position; this ties the two, so the request a tag
+/// was computed over and the one published on its own cannot drift apart.
+#[test]
+fn the_published_readlog_request_is_the_one_this_crate_writes_and_reads() {
+    let body = blob_under("readlog_0x05", "body_cbor");
+    let got = ReadLog::decode(&body).expect("the published ReadLog decodes");
+    assert_eq!(got.from_seq, LogSeq(1216), "key 1 moved");
+    assert_eq!(got.max_entries, 64, "key 2 moved");
+
+    let asked = ReadLog {
+        from_seq: LogSeq(1216),
+        max_entries: 64,
+    };
+    let mut dst = [0u8; 16];
+    let len = asked.encode(&mut dst).expect("the request encodes");
+    assert_eq!(
+        dst.get(..len),
+        Some(body.as_slice()),
+        "this encoder and the published ReadLog 0x05 have parted company"
+    );
+    // Every destination short of the published length is refused rather than
+    // written partway, which is the truncation a fixed buffer invites.
+    for short in 0..body.len() {
+        let mut dst = [0u8; 16];
+        let room = dst.get_mut(..short).expect("under sixteen");
+        assert!(
+            asked.encode(room).is_err(),
+            "a ReadLog wrote into {short} bytes"
+        );
+    }
+
+    assert_eq!(
+        blob_under("wrapper_request", "inner_body_cbor"),
+        body,
+        "macs.wrapper_request wraps a different ReadLog from the one published"
+    );
+}
+
+/// The published `LogPage 0x85`, both ways.
+///
+/// Its first record has no `at`: a boot written before the clock was ever set.
+/// A decoder that defaults an absent key 2 to zero reads a record from 1970,
+/// and an encoder that writes one puts it there. The second record carries
+/// the time, kind and body of `macs.event`, read out of that vector rather
+/// than restated here.
+#[test]
+fn the_published_logpage_is_the_one_this_crate_writes_and_reads() {
+    let body = blob_under("logpage_0x85", "body_cbor");
+    let published_event = blob_under("event", "inner_body_cbor");
+    let event = Event::decode(&published_event).expect("the published event decodes");
+
+    let mut nothing = [0u8; 1];
+    let mut cbor = CborWriter::new(&mut nothing);
+    cbor.map(0).expect("an empty map");
+    let len = cbor.finish().expect("one byte");
+    let empty = nothing.get(..len).expect("the writer's own length");
+
+    let mut page = LogPage::new(LogSeq(1216), LogSeq(1), false);
+    page.push(LogEntry::new(LogSeq(1216), None, EventKind::BOOT, empty).expect("a boot record"))
+        .expect("room for it");
+    page.push(
+        LogEntry::new(LogSeq(1217), event.at, event.kind, event.body())
+            .expect("the published event as a record"),
+    )
+    .expect("room for it");
+    assert_eq!(
+        page.next_seq(),
+        LogSeq(1218),
+        "P-029: the cursor is one past the highest seq, not at it"
+    );
+
+    let mut dst = [0u8; MAX_LOG_PAGE_BYTES];
+    let len = page.encode(&mut dst).expect("the page encodes");
+    assert_eq!(
+        dst.get(..len),
+        Some(body.as_slice()),
+        "this encoder and the published LogPage 0x85 have parted company"
+    );
+
+    let read = LogPage::decode(&body).expect("the published LogPage decodes");
+    let [boot, state] = read.entries() else {
+        panic!("the published page carries two records")
+    };
+    assert_eq!(boot.seq, LogSeq(1216), "the first record's key 1 moved");
+    assert_eq!(
+        boot.at, None,
+        "a record with no clock read back with a time"
+    );
+    assert_eq!(boot.kind, EventKind::BOOT, "the first record's key 3 moved");
+    assert_eq!(boot.body(), empty, "the boot record's body moved");
+    assert_eq!(state.seq, LogSeq(1217), "the second record's key 1 moved");
+    assert_eq!(state.at, event.at, "the second record's key 2 moved");
+    assert_eq!(
+        state.kind,
+        EventKind::GENERATOR_STATE_CHANGED,
+        "the second record's key 3 moved"
+    );
+    assert_eq!(
+        state.body(),
+        event.body(),
+        "the second record's key 4 moved"
+    );
+    assert_eq!(read.next_seq(), LogSeq(1218), "key 2 moved");
+    assert_eq!(read.oldest_seq, LogSeq(1), "key 3 moved");
+    assert!(!read.complete, "key 4 is published false");
+    assert_eq!(
+        read, page,
+        "a field the asserts above do not name has moved"
+    );
 }

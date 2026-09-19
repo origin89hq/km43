@@ -639,8 +639,9 @@ mod tests {
         }
     }
 
-    /// The seven MACs of `docs/protocol/vectors/v1.json`: what these methods
-    /// compute, beside what the file publishes.
+    /// Seven of the MACs `docs/protocol/vectors/v1.json` publishes, the ones
+    /// these fixtures cover: what these methods compute, beside what the file
+    /// publishes.
     fn published() -> [([u8; Tag::LEN], [u8; Tag::LEN]); 7] {
         let pair = PairKey::new(PAIR_KEY);
         let client = ClientKey::new(CLIENT_KEY);
@@ -766,7 +767,8 @@ mod tests {
         );
     }
 
-    /// Every MAC in `v1.json`, byte for byte.
+    /// Seven of the MACs in `v1.json`, byte for byte. The wrapped `Error 0xFF`
+    /// tag is read only by `tests/vectors.rs`, which is the reading that counts.
     ///
     /// That file is produced by a tool forbidden from importing this crate. The
     /// reading of it that counts is `tests/vectors.rs`, which drives the public
