@@ -4,10 +4,11 @@
 //! the file to what the generator would write today. What it cannot see is a
 //! generator that was changed on purpose and now folds a table wrongly: a
 //! `granted` that drops the cloud row, a `METRIC_UNITS` sorted by name so the
-//! bisect misses, a `TryFrom` that keeps a retired number. Each of those would
-//! regenerate cleanly and ship. So these read `protocol.toml` with the same
-//! scan `admission.rs` uses and ask the bindings the question a consumer will,
-//! never retyping a number: the file is the only opinion.
+//! bisect misses, a `TryFrom` that keeps a retired number or hands two names
+//! each other's. Each of those would regenerate cleanly and ship. So these
+//! read `protocol.toml` with the same scan `admission.rs` uses and ask the
+//! bindings the question a consumer will, never retyping a number: the file
+//! is the only opinion.
 
 use km43::{
     BootReason, Bucket, CapabilityBit, ClientCapability, ClientConnected, ClientDisconnected,
@@ -195,7 +196,9 @@ fn capability_rows() -> Vec<(u16, Vec<String>)> {
     rows
 }
 
-/// Every client kind, as its wire value and its registry name.
+/// Every client kind, as its wire value and its registry name. The variant
+/// the value decodes to must carry that name, or the grant checks below would
+/// compare `cloud`'s column against whichever variant took its number.
 fn client_kinds() -> Vec<(ClientKind, String)> {
     blocks("enums.client_kind")
         .iter()
@@ -205,7 +208,13 @@ fn client_kinds() -> Vec<(ClientKind, String)> {
                 .expect("a client kind is a byte");
             let kind = ClientKind::try_from(value)
                 .unwrap_or_else(|()| panic!("client kind {value} is allocated and has no variant"));
-            (kind, k.field("name").expect("a kind has a name").to_owned())
+            let name = k.field("name").expect("a kind has a name").to_owned();
+            assert_eq!(
+                format!("{kind:?}"),
+                generated_name(&name),
+                "client kind {value} is {name} in the registry"
+            );
+            (kind, name)
         })
         .collect()
 }
@@ -299,36 +308,75 @@ fn first_free(allocated: impl Iterator<Item = u16>) -> u16 {
         .expect("a table cannot fill the whole space")
 }
 
-/// One allocated number of a closed set, and whether the generator emits it.
+/// The identifier the generator gives a registry name, written out again here
+/// rather than borrowed from xtask so the two can disagree: the part before any
+/// parenthetical, split on everything that is not an ASCII letter or digit,
+/// each word's first letter raised and the rest left alone, so `Bad MAC` is
+/// `BadMAC` and `Busy — retry` is `BusyRetry`.
+fn generated_name(name: &str) -> String {
+    name.split('(')
+        .next()
+        .unwrap_or(name)
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(|w| {
+            let mut c = w.chars();
+            c.next().map_or_else(String::new, |f| {
+                f.to_ascii_uppercase().to_string() + c.as_str()
+            })
+        })
+        .collect()
+}
+
+/// One allocated number of a closed set, and the variant the generator names
+/// it, or `None` when the generator drops the row.
 struct Allocated {
     number: u16,
-    emitted: bool,
+    variant: Option<String>,
 }
 
 /// The numbers a `[[messages]]`-shaped table allocates under `request` and
-/// `response`, emitted unless the row is gone.
-fn message_numbers(table: &str) -> Vec<Allocated> {
+/// `response`, emitted unless the row is gone. A request is named for the row
+/// and its response for the row plus `response_suffix`, which is `Response`
+/// for a client message and `Ack` for a link-local one.
+fn message_numbers(table: &str, response_suffix: &str) -> Vec<Allocated> {
     blocks(table)
         .iter()
         .flat_map(|m| {
-            let emitted = !is_gone(m.status());
-            [m.number("request"), m.number("response")]
+            let base = (!is_gone(m.status()))
+                .then(|| generated_name(m.field("name").expect("a message has a name")));
+            [("request", ""), ("response", response_suffix)]
                 .into_iter()
-                .flatten()
-                .map(move |number| Allocated { number, emitted })
+                .filter_map(|(key, suffix)| {
+                    Some(Allocated {
+                        number: m.number(key)?,
+                        variant: base.as_ref().map(|b| format!("{b}{suffix}")),
+                    })
+                })
                 .collect::<Vec<_>>()
         })
         .collect()
 }
 
-/// The numbers under one `key` of a table, emitted under `rule`.
-fn numbers(table: &str, key: &str, rule: fn(Option<&str>) -> bool) -> Vec<Allocated> {
+/// The numbers under one `key` of a table, emitted under `rule` and named from
+/// the `named_by` column. That column is `name` everywhere but `[[errors]]`,
+/// whose variants are named for their `meaning`.
+fn numbers(
+    table: &str,
+    key: &str,
+    named_by: &str,
+    rule: fn(Option<&str>) -> bool,
+) -> Vec<Allocated> {
     blocks(table)
         .iter()
         .filter_map(|row| {
             Some(Allocated {
                 number: row.number(key)?,
-                emitted: rule(row.status()),
+                variant: rule(row.status()).then(|| {
+                    generated_name(row.field(named_by).unwrap_or_else(|| {
+                        panic!("a {table} row numbered by {key} has no {named_by}")
+                    }))
+                }),
             })
         })
         .collect()
@@ -352,18 +400,21 @@ fn with_status_unless_gone(status: Option<&str>) -> bool {
     status.is_some_and(|s| !is_gone(Some(s)))
 }
 
-/// Every allocated number of a closed set round-trips through its `TryFrom`,
-/// every gone number is refused, and so is the first number the table never
-/// allocated. A generator that dropped a live row, kept a retired one, or
-/// emitted a discriminant off by one is caught by whichever of the three it
-/// broke.
+/// Every allocated number of a closed set decodes through its `TryFrom` to the
+/// variant named for its registry row, every gone number is refused, and so is
+/// the first number the table never allocated. A generator that dropped a live
+/// row, kept a retired one, or emitted a discriminant off by one is caught by
+/// whichever of the three it broke. The name is what catches two rows whose
+/// numbers were swapped: each number still decodes to a variant carrying it,
+/// so the round trip passes while every caller that writes `Hello` sends the
+/// opcode of something else.
 macro_rules! closed_set {
     ($test:ident, $ty:ty, $repr:ty, $rows:expr) => {
         #[test]
         fn $test() {
             let rows: Vec<Allocated> = $rows;
             assert!(
-                rows.iter().any(|r| r.emitted),
+                rows.iter().any(|r| r.variant.is_some()),
                 "{} has no emitted row, so nothing here was compared",
                 stringify!($ty)
             );
@@ -372,7 +423,7 @@ macro_rules! closed_set {
                     panic!("{} does not fit a {}", row.number, stringify!($repr))
                 });
                 let got = <$ty>::try_from(number);
-                if row.emitted {
+                if let Some(expected) = &row.variant {
                     let variant = got.unwrap_or_else(|()| {
                         panic!(
                             "{} {number:#x} is allocated and has no variant",
@@ -383,6 +434,12 @@ macro_rules! closed_set {
                         variant as $repr,
                         number,
                         "{} {number:#x} decodes to a variant numbered otherwise",
+                        stringify!($ty)
+                    );
+                    assert_eq!(
+                        format!("{variant:?}"),
+                        *expected,
+                        "{} {number:#x} is {expected} in the registry",
                         stringify!($ty)
                     );
                 } else {
@@ -408,303 +465,333 @@ closed_set!(
     message_type_carries_every_allocated_opcode_and_refuses_the_rest,
     MessageType,
     u8,
-    message_numbers("messages")
+    message_numbers("messages", "Response")
 );
 closed_set!(
     link_message_type_carries_every_allocated_opcode_and_refuses_the_rest,
     LinkMessageType,
     u8,
-    message_numbers("link_messages")
+    message_numbers("link_messages", "Ack")
 );
 closed_set!(
     error_code_carries_every_live_code_and_refuses_the_withdrawn,
     ErrorCode,
     u16,
-    numbers("errors", "code", live_only)
+    numbers("errors", "code", "meaning", live_only)
 );
 closed_set!(
     link_error_code_carries_every_live_code_and_refuses_the_rest,
     LinkErrorCode,
     u16,
-    numbers("link_errors", "code", live_only)
+    numbers("link_errors", "code", "name", live_only)
 );
 
 closed_set!(
     command_outcome_matches_the_registry,
     Command,
     u8,
-    numbers("outcomes.command", "value", unless_gone)
+    numbers("outcomes.command", "value", "name", unless_gone)
 );
 closed_set!(
     concerns_outcome_matches_the_registry,
     Concerns,
     u8,
-    numbers("outcomes.concerns", "value", unless_gone)
+    numbers("outcomes.concerns", "value", "name", unless_gone)
 );
 closed_set!(
     firmware_outcome_matches_the_registry,
     Firmware,
     u8,
-    numbers("outcomes.firmware", "value", unless_gone)
+    numbers("outcomes.firmware", "value", "name", unless_gone)
 );
 closed_set!(
     history_outcome_matches_the_registry,
     History,
     u8,
-    numbers("outcomes.history", "value", unless_gone)
+    numbers("outcomes.history", "value", "name", unless_gone)
 );
 closed_set!(
     inventory_outcome_matches_the_registry,
     Inventory,
     u8,
-    numbers("outcomes.inventory", "value", unless_gone)
+    numbers("outcomes.inventory", "value", "name", unless_gone)
 );
 closed_set!(
     pair_outcome_matches_the_registry,
     Pair,
     u8,
-    numbers("outcomes.pair", "value", unless_gone)
+    numbers("outcomes.pair", "value", "name", unless_gone)
 );
 closed_set!(
     readings_outcome_matches_the_registry,
     Readings,
     u8,
-    numbers("outcomes.readings", "value", unless_gone)
+    numbers("outcomes.readings", "value", "name", unless_gone)
 );
 closed_set!(
     set_config_outcome_matches_the_registry,
     SetConfig,
     u8,
-    numbers("outcomes.set_config", "value", unless_gone)
+    numbers("outcomes.set_config", "value", "name", unless_gone)
 );
 closed_set!(
     time_outcome_matches_the_registry,
     Time,
     u8,
-    numbers("outcomes.time", "value", unless_gone)
+    numbers("outcomes.time", "value", "name", unless_gone)
 );
 
 closed_set!(
     boot_reason_matches_the_registry,
     BootReason,
     u8,
-    numbers("enums.boot_reason", "value", unless_gone)
+    numbers("enums.boot_reason", "value", "name", unless_gone)
 );
 closed_set!(
     bucket_matches_the_registry,
     Bucket,
     u8,
-    numbers("enums.bucket", "value", unless_gone)
+    numbers("enums.bucket", "value", "name", unless_gone)
 );
 closed_set!(
     client_kind_matches_the_registry,
     ClientKind,
     u8,
-    numbers("enums.client_kind", "value", unless_gone)
+    numbers("enums.client_kind", "value", "name", unless_gone)
 );
 closed_set!(
     concern_state_matches_the_registry,
     ConcernState,
     u8,
-    numbers("enums.concern_state", "value", unless_gone)
+    numbers("enums.concern_state", "value", "name", unless_gone)
 );
 closed_set!(
     control_owner_matches_the_registry,
     ControlOwner,
     u8,
-    numbers("enums.control_owner", "value", unless_gone)
+    numbers("enums.control_owner", "value", "name", unless_gone)
 );
 closed_set!(
     direction_matches_the_registry,
     Direction,
     u8,
-    numbers("enums.direction", "value", unless_gone)
+    numbers("enums.direction", "value", "name", unless_gone)
 );
 closed_set!(
     generator_selector_matches_the_registry,
     GeneratorSelector,
     u8,
-    numbers("enums.generator_selector", "value", unless_gone)
+    numbers("enums.generator_selector", "value", "name", unless_gone)
 );
 closed_set!(
     generator_state_matches_the_registry,
     GeneratorState,
     u8,
-    numbers("enums.generator_state", "value", unless_gone)
+    numbers("enums.generator_state", "value", "name", unless_gone)
 );
 closed_set!(
     history_source_matches_the_registry,
     HistorySource,
     u8,
-    numbers("enums.history_source", "value", unless_gone)
+    numbers("enums.history_source", "value", "name", unless_gone)
 );
 closed_set!(
     history_stop_reason_matches_the_registry,
     HistoryStopReason,
     u8,
-    numbers("enums.history_stop_reason", "value", unless_gone)
+    numbers("enums.history_stop_reason", "value", "name", unless_gone)
 );
 closed_set!(
     inventory_kind_matches_the_registry,
     InventoryKind,
     u8,
-    numbers("enums.inventory_kind", "value", unless_gone)
+    numbers("enums.inventory_kind", "value", "name", unless_gone)
 );
 closed_set!(
     presence_matches_the_registry,
     Presence,
     u8,
-    numbers("enums.presence", "value", unless_gone)
+    numbers("enums.presence", "value", "name", unless_gone)
 );
 closed_set!(
     provenance_matches_the_registry,
     Provenance,
     u8,
-    numbers("enums.provenance", "value", unless_gone)
+    numbers("enums.provenance", "value", "name", unless_gone)
 );
 closed_set!(
     quality_matches_the_registry,
     Quality,
     u8,
-    numbers("enums.quality", "value", unless_gone)
+    numbers("enums.quality", "value", "name", unless_gone)
 );
 closed_set!(
     severity_matches_the_registry,
     Severity,
     u8,
-    numbers("enums.severity", "value", unless_gone)
+    numbers("enums.severity", "value", "name", unless_gone)
 );
 closed_set!(
     shape_matches_the_registry,
     Shape,
     u8,
-    numbers("enums.shape", "value", unless_gone)
+    numbers("enums.shape", "value", "name", unless_gone)
 );
 closed_set!(
     signal_domain_matches_the_registry,
     SignalDomain,
     u8,
-    numbers("enums.signal_domain", "value", unless_gone)
+    numbers("enums.signal_domain", "value", "name", unless_gone)
 );
 closed_set!(
     time_source_matches_the_registry,
     TimeSource,
     u8,
-    numbers("enums.time_source", "value", unless_gone)
+    numbers("enums.time_source", "value", "name", unless_gone)
 );
 closed_set!(
     topology_change_reason_matches_the_registry,
     TopologyChangeReason,
     u8,
-    numbers("enums.topology_change_reason", "value", unless_gone)
+    numbers("enums.topology_change_reason", "value", "name", unless_gone)
 );
 closed_set!(
     transport_matches_the_registry,
     Transport,
     u8,
-    numbers("enums.transport", "value", unless_gone)
+    numbers("enums.transport", "value", "name", unless_gone)
 );
 closed_set!(
     unit_matches_the_registry,
     Unit,
     u8,
-    numbers("enums.unit", "value", unless_gone)
+    numbers("enums.unit", "value", "name", unless_gone)
 );
 closed_set!(
     validity_matches_the_registry,
     Validity,
     u8,
-    numbers("enums.validity", "value", unless_gone)
+    numbers("enums.validity", "value", "name", unless_gone)
 );
 closed_set!(
     vtype_matches_the_registry,
     Vtype,
     u8,
-    numbers("enums.vtype", "value", unless_gone)
+    numbers("enums.vtype", "value", "name", unless_gone)
 );
 
 closed_set!(
     capability_bit_matches_the_registry,
     CapabilityBit,
     u16,
-    numbers("codes.capability_bit", "number", with_status_unless_gone)
+    numbers(
+        "codes.capability_bit",
+        "number",
+        "name",
+        with_status_unless_gone
+    )
 );
 closed_set!(
     command_kind_matches_the_registry,
     CommandKind,
     u16,
-    numbers("codes.command_kind", "number", with_status_unless_gone)
+    numbers(
+        "codes.command_kind",
+        "number",
+        "name",
+        with_status_unless_gone
+    )
 );
 closed_set!(
     config_section_matches_the_registry,
     ConfigSection,
     u16,
-    numbers("codes.config_section", "number", with_status_unless_gone)
+    numbers(
+        "codes.config_section",
+        "number",
+        "name",
+        with_status_unless_gone
+    )
 );
 
 closed_set!(
     client_connected_outcome_matches_the_registry,
     ClientConnected,
     u8,
-    numbers("link_outcomes.client_connected", "value", unless_gone)
+    numbers(
+        "link_outcomes.client_connected",
+        "value",
+        "name",
+        unless_gone
+    )
 );
 closed_set!(
     client_disconnected_outcome_matches_the_registry,
     ClientDisconnected,
     u8,
-    numbers("link_outcomes.client_disconnected", "value", unless_gone)
+    numbers(
+        "link_outcomes.client_disconnected",
+        "value",
+        "name",
+        unless_gone
+    )
 );
 closed_set!(
     close_connection_outcome_matches_the_registry,
     CloseConnection,
     u8,
-    numbers("link_outcomes.close_connection", "value", unless_gone)
+    numbers(
+        "link_outcomes.close_connection",
+        "value",
+        "name",
+        unless_gone
+    )
 );
 closed_set!(
     comms_release_outcome_matches_the_registry,
     CommsRelease,
     u8,
-    numbers("link_outcomes.comms_release", "value", unless_gone)
+    numbers("link_outcomes.comms_release", "value", "name", unless_gone)
 );
 closed_set!(
     net_config_outcome_matches_the_registry,
     NetConfig,
     u8,
-    numbers("link_outcomes.net_config", "value", unless_gone)
+    numbers("link_outcomes.net_config", "value", "name", unless_gone)
 );
 closed_set!(
     time_offer_outcome_matches_the_registry,
     TimeOffer,
     u8,
-    numbers("link_outcomes.time_offer", "value", unless_gone)
+    numbers("link_outcomes.time_offer", "value", "name", unless_gone)
 );
 closed_set!(
     close_reason_matches_the_registry,
     CloseReason,
     u8,
-    numbers("link_enums.close_reason", "value", unless_gone)
+    numbers("link_enums.close_reason", "value", "name", unless_gone)
 );
 closed_set!(
     comms_release_op_matches_the_registry,
     CommsReleaseOp,
     u8,
-    numbers("link_enums.comms_release_op", "value", unless_gone)
+    numbers("link_enums.comms_release_op", "value", "name", unless_gone)
 );
 closed_set!(
     disconnect_reason_matches_the_registry,
     DisconnectReason,
     u8,
-    numbers("link_enums.disconnect_reason", "value", unless_gone)
+    numbers("link_enums.disconnect_reason", "value", "name", unless_gone)
 );
 closed_set!(
     link_transport_matches_the_registry,
     LinkTransport,
     u8,
-    numbers("link_enums.link_transport", "value", unless_gone)
+    numbers("link_enums.link_transport", "value", "name", unless_gone)
 );
 closed_set!(
     net_config_op_matches_the_registry,
     NetConfigOp,
     u8,
-    numbers("link_enums.net_config_op", "value", unless_gone)
+    numbers("link_enums.net_config_op", "value", "name", unless_gone)
 );
