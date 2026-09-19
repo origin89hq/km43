@@ -795,8 +795,8 @@ impl Checks {
         // A block is read when the test file scans it — names it, or a key inside
         // it, as a quoted string — or when the file argues in prose why it does not
         // need to, which is a backticked mention. `derived_keys` is the second
-        // kind: the three derivations are pinned transitively by the seven MAC
-        // tags, because a wrong key gives a wrong tag, and that argument is written
+        // kind: the three derivations are pinned transitively by the MAC tags,
+        // because a wrong key gives a wrong tag, and that argument is written
         // down where somebody reading the file will meet it.
         //
         // Quoted rather than a bare substring, because a bare one is satisfied by

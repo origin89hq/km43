@@ -111,7 +111,12 @@ impl Bodies {
         if let Some(name) = name
             && !fields.is_empty()
         {
-            into.insert(name, std::mem::take(fields));
+            // The first definition wins. `Error 0xFF` is the one message the
+            // document defines twice: the two keys of the body, then the
+            // wrapper those keys travel inside once a session exists. Last
+            // wins compared the published body to `{1:payload, 2:mac}`, which
+            // is the shape of every wrapped message and the fields of none.
+            into.entry(name).or_insert_with(|| std::mem::take(fields));
         }
         fields.clear();
     }
