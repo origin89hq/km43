@@ -1432,9 +1432,11 @@ pub struct ReleaseRequest<'a> {
 
 impl<'a> ReleaseRequest<'a> {
     /// # Errors
-    /// A `version` past the link's text cap, or a `dst` too small.
+    /// A `version` past the link's text cap or outside L-034's format, or a
+    /// `dst` too small. The decoder carries any version that fits.
     pub fn write(&self, header: LinkHeader, dst: &mut [u8]) -> Result<usize, LinkError> {
         bounded(LinkField::ReleaseVersion, self.version)?;
+        versioned(LinkField::ReleaseVersion, self.version)?;
         let mut cbor = header
             .write(4, dst)
             .map_err(|_| LinkError::Cbor(CborError::DestinationTooSmall))?;
@@ -1514,9 +1516,11 @@ pub struct ReleaseVerdict<'a> {
 
 impl<'a> ReleaseVerdict<'a> {
     /// # Errors
-    /// A `version` past the link's text cap, or a `dst` too small.
+    /// A `version` past the link's text cap or outside L-034's format, or a
+    /// `dst` too small. The decoder carries any version that fits.
     pub fn write(&self, header: LinkHeader, dst: &mut [u8]) -> Result<usize, LinkError> {
         bounded(LinkField::ReleaseVersion, self.version)?;
+        versioned(LinkField::ReleaseVersion, self.version)?;
         let mut cbor = header
             .write(3, dst)
             .map_err(|_| LinkError::Cbor(CborError::DestinationTooSmall))?;
@@ -3056,6 +3060,68 @@ mod tests {
             image_len: 1_048_576,
             digest: [0xA5; DIGEST_BYTES],
         }
+    }
+
+    /// **Both release writers refuse a version outside L-034's format**, and
+    /// refuse it before a byte is written. A release that names `0.2.0` has
+    /// lost the commit the version exists to carry, and the controller records
+    /// what it authorised against that text.
+    #[test]
+    fn l_034_a_release_version_uses_the_format_or_the_writer_refuses_it() {
+        for version in [
+            "0.2.0",
+            "o89-esp32 0.2.0",
+            "0.2.0+g1a2b3c4",
+            "0.2.0+G1A2B3C4D",
+        ] {
+            let mut dst = [0u8; 128];
+            assert_eq!(
+                ReleaseRequest {
+                    version,
+                    ..an_authorise()
+                }
+                .write(link_header(LinkMessageType::CommsRelease), &mut dst),
+                Err(LinkError::NotAVersion(LinkField::ReleaseVersion)),
+                "an authorise naming {version:?} was written"
+            );
+            assert!(dst.iter().all(|&b| b == 0), "a refused request wrote bytes");
+            assert_eq!(
+                ReleaseVerdict {
+                    outcome: CommsRelease::Installed,
+                    version,
+                    bytes_have: 0,
+                }
+                .write(link_header(LinkMessageType::CommsReleaseAck), &mut dst),
+                Err(LinkError::NotAVersion(LinkField::ReleaseVersion)),
+                "an ack naming {version:?} was written"
+            );
+            assert!(dst.iter().all(|&b| b == 0), "a refused ack wrote bytes");
+        }
+    }
+
+    /// **A release ack whose version has another shape is still read.** The
+    /// check is the sender's (L-034); a controller that dropped the ack over
+    /// the text would lose the outcome and the resume point with it.
+    #[test]
+    fn l_034_a_release_ack_in_another_shape_is_still_read() {
+        let mut bytes = [0u8; 128];
+        let mut cbor = link_header(LinkMessageType::CommsReleaseAck)
+            .write(3, &mut bytes)
+            .expect("the envelope opens");
+        cbor.key(1).expect("outcome");
+        cbor.u64(u64::from(CommsRelease::Installed as u8))
+            .expect("value");
+        cbor.key(2).expect("version");
+        cbor.text("bench build").expect("value");
+        cbor.key(3).expect("bytes_have");
+        cbor.u64(0).expect("value");
+        let len = cbor.finish().expect("it closes");
+        let envelope = crate::envelope::LinkEnvelope::decode(bytes.get(..len).expect("the frame"))
+            .expect("an envelope");
+        assert_eq!(
+            ReleaseVerdict::decode(envelope).expect("it reads").version,
+            "bench build"
+        );
     }
 
     /// All four ops round-trip through the decoder a peer would use, and the

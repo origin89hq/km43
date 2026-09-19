@@ -1018,11 +1018,11 @@
 # specification gained a rule. L-034 says what the version and board texts on
 # the link look like, that the widest legal version fits the field, and that a
 # receiver carries a text in another shape rather than refusing it. The width,
-# the receiver and the `LinkUp` encoder's refusal of an `fw` outside the format
-# are tested in `linklocal.rs`. The rest of the sender half is the firmware's:
-# nothing in this tree knows a board's name, builds the `Hello` that carries
-# `fw_controller`, or has a `CommsRelease` body, so a test named after any of
-# them here would stand over nothing. Its `[[clauses]]` entry is what keeps the
+# the receiver, and the refusal of a version outside the format by the `LinkUp`
+# and both release encoders are tested in `linklocal.rs`. The rest of the
+# sender half is the firmware's: nothing in this tree knows a board's name or
+# builds the `Hello` that carries `fw_controller`, so a test named after either
+# here would stand over nothing. Its `[[clauses]]` entry is what keeps the
 # tests that exist from reading as the whole rule.
 uncovered = 126
 
@@ -1337,9 +1337,10 @@ Six things with one number, and they fail in different places. The limits fail \
 on paper: a version legal under the format but past 32 bytes is one a unit \
 stores and cannot send. The `LinkUp` encoder fails in this crate: one that \
 writes `0.1.0` with no commit leaves a bench log nothing can match to a unit, \
-and the peer has to carry it. A board name the hardware repository does not \
-write, a `fw_controller` that is not the controller's own `fw`, and a release \
-`version` in another shape each fail somewhere this tree has no code for yet, \
-and a test for the encoder leaves all three looking checked. The receiver \
+and the peer has to carry it. The release encoders fail the same way and are \
+tested beside it. A board name the hardware repository does not write and a \
+`fw_controller` that is not the controller's own `fw` each fail somewhere this \
+tree has no code for yet, and a test for the encoders leaves both looking \
+checked. The receiver \
 clause fails on the link: a controller that refuses a text in another shape \
 takes every client off the air over a label."""
