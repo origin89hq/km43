@@ -190,7 +190,7 @@ which is the subject of the next section.
 |---|---|---|
 | Outstanding link-local requests, per side | **4** | L-014 |
 | Response timeout | 500 ms | L-015 |
-| Attempts before the link is treated as down | 3 | L-015 |
+| Attempts before a request is given up | 3 | L-015 |
 | `EnterDownload` repeat period, exempt from L-015 | 100 ms | L-192 |
 | `EnterDownload` given up after | 3 000 ms | L-192 |
 
@@ -203,11 +203,15 @@ learn which.
 
 **L-015** — A sender MUST treat a request unanswered after 500 ms as failed and
 MUST retry it with the same `req_id`, up to 3 attempts; after the third it MUST
-treat the link as down and follow the heartbeat ladder. Reusing the `req_id` is
-what lets the peer recognise a retry instead of answering a request it has
-already answered, and it is only safe because nothing in this range carries a MAC
-or a counter. Retrying forever is the alternative, and it hides a link that has
-stopped carrying traffic behind a sender that looks busy.
+give the request up and report it failed to whatever asked. Whether the link is
+down is not this rule's to decide: that is L-100's timer alone, which a peer
+that answers nothing reaches six seconds after its last answer whatever was
+outstanding. A `Heartbeat` is not retried either, because the next beat two
+seconds later is its retry and a missed one is what L-100 measures. Reusing the
+`req_id` is what lets the peer recognise a retry instead of answering a request
+it has already answered, and it is only safe because nothing in this range
+carries a MAC or a counter. Retrying forever is the alternative, and it hides a
+link that has stopped carrying traffic behind a sender that looks busy.
 
 Nothing in this range is cryptographic, so its vectors in
 [vectors/v1.json](vectors/v1.json) are wire bytes only, and they are a subset
@@ -1106,7 +1110,7 @@ it MUST NOT act on an `EnterDownload` that arrived on a client transport.
 L-002 already refuses the frame there with code 257; this says the action is
 never taken, so that the refusal being lost to a bug in the routing does not
 become a reboot. The refusal outside the window is an answer rather than
-silence because L-015 reads silence as a dead link, and a controller that
+silence because L-015 gives an unanswered request up, and a controller that
 asked too late must learn it asked too late, not that the module is gone.
 
 **L-192** — The controller MUST send `EnterDownload` only after it has itself
