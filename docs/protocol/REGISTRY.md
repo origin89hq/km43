@@ -511,9 +511,9 @@ from an applied one cannot audit the thing the shadow deployment exists to prove
 
 `0x08xx` is the link to the comms processor. [LINK.md](LINK.md) L-023 and
 L-110 through L-112 require the controller to log every one of these — the heartbeat ladder ends in a rail
-switched off — and had no numbers to log them under, which is how a number gets
+that stops being cycled — and had no numbers to log them under, which is how a number gets
 invented at a bench by whoever hit it first. *Comms power cycled* carries the
-cycle count, because *three power cycles in an hour, rail left off* is a sentence
+cycle count, because *three power cycles in an hour, cycling stopped* is a sentence
 somebody has to be able to read at a client: a link that goes quiet leaving no
 record behind looks exactly like a site that is fine.
 

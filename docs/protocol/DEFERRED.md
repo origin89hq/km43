@@ -621,7 +621,7 @@ promise with no key number is a promise no implementer can keep, and all four ar
 load-bearing — the first turns a hole in `seq` into a number, the second is the
 whole audit trail of shadow mode, the third is how somebody works out whether a
 schedule fired twice, and the fourth is the one [LINK.md](LINK.md) leans on: the
-rail goes off after three cycles in an hour, and without the count nobody reading
+ladder stops cycling after three in an hour, and without the count nobody reading
 the log can tell the first cycle from the one that gave up.
 
 **A fifth promise is made in [REGISTRY](REGISTRY.md#client-capability-mask--u16)

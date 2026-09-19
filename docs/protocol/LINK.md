@@ -1125,7 +1125,7 @@ them evicts:
 | Outstanding link-local requests, per side | 4 | The sender does not issue a fifth; a peer that does gets code 262 (L-014) |
 | Cached Wi-Fi network | 1 | A `set` replaces — a value, not a table (L-136) |
 | Authorised comms release | 1 | A new `authorise` replaces the previous one; both are logged (L-174) |
-| ESP32 power cycles | 3 per hour | Rail off for 15 minutes, comms unrecoverable (`0x0803`) raised (L-112) |
+| ESP32 power cycles | 3 per hour | No cycling for 15 minutes, rail off, or on where the board cannot switch it back on after that long; comms unrecoverable (`0x0803`) raised (L-112) |
 
 ---
 
