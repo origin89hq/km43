@@ -363,12 +363,15 @@ pub struct LinkUp<'a> {
     pub version: Version,
     /// Key 3.
     pub role: Side,
-    /// Key 4, this sender's own firmware version. The controller stores it and
-    /// reports it as `fw_comms` in every client `Hello` (L-031).
+    /// Key 4, this sender's own firmware version, with the commit it was built
+    /// from in its build metadata (L-034). The controller stores it and reports
+    /// it as `fw_comms` in every client `Hello` (L-031). Only its length is
+    /// checked here: a version in another shape is carried, not refused.
     pub fw: &'a str,
     /// Key 5, redrawn randomly on every boot.
     pub boot_id: u32,
-    /// Key 6, board revision.
+    /// Key 6, the board name and revision as the hardware repository writes
+    /// them (L-034).
     pub hw: &'a str,
     /// Key 7, comms only: the credential version it has cached, 0 if none.
     pub net_version: Option<u32>,
@@ -1895,6 +1898,55 @@ mod tests {
                 Err(LinkError::UnknownRole(unallocated))
             );
         }
+    }
+
+    /// **The version format L-034 names fits the field it travels in.** Three
+    /// three-digit components, a three-digit pre-release and eight digits of
+    /// commit come to 28 bytes. If the format ever grows past 32, this goes red
+    /// before a unit has stored a version it cannot send.
+    #[test]
+    fn l_034_the_widest_version_the_format_allows_fits_and_reads_back() {
+        const WIDEST: &str = "999.999.999-rc.999+g0123abcd";
+        const BOARD: &str = "controller-a rev B";
+        assert!(
+            WIDEST.len() <= MAX_LINK_TEXT,
+            "the format's widest version is past the field"
+        );
+        let sent = LinkUp {
+            fw: WIDEST,
+            hw: BOARD,
+            ..a_link_up()
+        };
+        let mut bytes = [0u8; 256];
+        let len = sent
+            .write(link_header(LinkMessageType::LinkUp), &mut bytes)
+            .expect("the widest version fits");
+        let envelope = crate::envelope::LinkEnvelope::decode(bytes.get(..len).expect("the frame"))
+            .expect("an envelope");
+        let read = LinkUp::decode(envelope).expect("it reads");
+        assert_eq!(read.fw, WIDEST);
+        assert_eq!(read.hw, BOARD);
+    }
+
+    /// **A version in another shape is carried, not refused** (L-034). The text
+    /// is diagnostic (L-032), and a controller that dropped the link over a
+    /// bench build's label would take every client off the air for a string.
+    #[test]
+    fn l_034_a_version_in_another_shape_still_brings_the_link_up() {
+        let sent = LinkUp {
+            fw: "bench build",
+            ..a_link_up()
+        };
+        let mut bytes = [0u8; 256];
+        let len = sent
+            .write(link_header(LinkMessageType::LinkUp), &mut bytes)
+            .expect("it encodes");
+        let envelope = crate::envelope::LinkEnvelope::decode(bytes.get(..len).expect("the frame"))
+            .expect("an envelope");
+        assert_eq!(
+            LinkUp::decode(envelope).expect("it reads").fw,
+            "bench build"
+        );
     }
 
     /// A text field past the cap is refused at the field, which is the lesson
