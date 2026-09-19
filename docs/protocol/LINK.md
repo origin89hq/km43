@@ -683,7 +683,7 @@ moment later.
 |---|---|
 | 6 s | Link down. Drop every connection and session, log comms link lost (`0x0801`). Control is unaffected (L-110) |
 | 60 s | Cut the ESP32 power rail for 5 s, restore it, log comms power cycled (`0x0802`) with the count (L-111) |
-| 3 power cycles inside an hour | Leave the rail **off** for 15 minutes, raise comms unrecoverable (`0x0803`) (L-112) |
+| 3 power cycles inside an hour | Stop cycling for 15 minutes with the rail **off**, or **on** on a board that cannot switch it back on after that long; raise comms unrecoverable (`0x0803`) (L-112) |
 | A comms firmware install is in flight | The ladder is suspended until the install finishes or its window lapses (L-113) |
 
 **L-110** — Six seconds after the comms processor last answered one of the
@@ -702,11 +702,30 @@ carrying the count. A wedged Wi-Fi stack has no other recovery. The count is in
 the record because the rung below is counted on it, and a power cycle nobody
 counts is a boot loop nobody can name afterwards from the log.
 
-**L-112** — After 3 power cycles inside an hour the controller MUST leave the
-rail off for 15 minutes and MUST raise comms unrecoverable (`0x0803`). A comms
-processor in a boot loop draws power continuously on the weakest bank in February
-and delivers nothing, and hammering a load switch every minute is how somebody
-finds out about its thermal limit in a place nobody can reach.
+**L-112** — After 3 power cycles inside an hour the controller MUST stop
+cycling the rail for 15 minutes, MUST raise comms unrecoverable (`0x0803`), and
+MUST leave the rail off for those 15 minutes, unless its board cannot switch the
+rail back on after that long. Such a board MUST leave the rail on and uncycled
+for the 15 minutes instead. The `0x0803` record MUST say which of the two the
+controller did. A comms processor in a boot loop draws power continuously on the
+weakest bank in February and delivers nothing, and hammering a load switch every
+minute is how somebody finds out about its thermal limit in a place nobody can
+reach.
+
+The exception is a property of the board, written in the board's own document,
+never a firmware preference. It exists because one board has it: on controller
+board A revision A, switching `V3V3_ESP` on after minutes off corrupts the
+STM32's control flow within milliseconds, every time it has been tried, while
+switch-ons seconds apart pass by the hundreds (origin89hq/hardware#5). Off for
+15 minutes is the one pattern that board cannot survive, and a controller that
+crashes itself to rest the radio has broken L-110 to keep L-112. Leaving the
+rail on costs the power a boot loop draws; it keeps control running, and it
+stops the cycling that was wearing the switch. A board whose switch passes
+long off-times, as revision B's slew-limited switch is built to
+(origin89hq/hardware#48), takes the rail-off branch. Which branch a unit took
+is in the record, so a log never has to be read against a guess about which
+board it came from. That field lands with the `0x0803` body, which
+[DEFERRED.md](DEFERRED.md) entry 10 still owns.
 
 **L-113** — While a comms firmware install is in flight the controller MUST
 suspend the ladder, and MUST resume it only when the install finishes or its
@@ -1239,7 +1258,7 @@ them evicts:
 | Outstanding link-local requests, per side | 4 | The sender does not issue a fifth; a peer that does gets code 262 (L-014) |
 | Cached Wi-Fi network | 1 | A `set` replaces — a value, not a table (L-136) |
 | Authorised comms release | 1 | A new `authorise` replaces the previous one; both are logged (L-174) |
-| ESP32 power cycles | 3 per hour | Rail off for 15 minutes, comms unrecoverable (`0x0803`) raised (L-112) |
+| ESP32 power cycles | 3 per hour | No cycling for 15 minutes, rail off, or on where the board cannot switch it back on after that long; comms unrecoverable (`0x0803`) raised (L-112) |
 
 ---
 
