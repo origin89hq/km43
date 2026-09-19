@@ -1778,15 +1778,11 @@ mod tests {
     const REQ_ID: u32 = 17;
     const CLIENT_VERSION: &str = "o89-cli 0.1.0";
 
-    /// `hello_proof.inner_body_cbor` from `docs/protocol/vectors/v1.json`.
-    const PUBLISHED_INNER: [u8; 40] =
-        hex("a5010102000307046d6f38392d636c6920302e312e300550b0b1b2b3b4b5b6b7b8b9babbbcbdbebf");
+    /// Sixteen bytes that are not any proof. For the frames below that are
+    /// refused before the proof is ever checked.
+    const NOT_A_PROOF: [u8; Tag::LEN] = [0x5a; Tag::LEN];
 
-    /// `hello_proof.out16` from the same file.
-    const PUBLISHED_PROOF: [u8; Tag::LEN] = hex("8418a3ffb064b88022622123ce6a4f01");
-
-    /// The `inputs` block of the vector file, as the pair every key on this unit
-    /// descends from.
+    /// The device every key below descends from.
     fn device() -> DeviceSecret {
         DeviceSecret::new(DeviceId::new(DEVICE_ID), PrintedSecret::new(PRINTED_SECRET))
     }
@@ -1823,41 +1819,6 @@ mod tests {
             session: SessionId::from(SESSION),
             req_id: ReqId(REQ_ID),
         }
-    }
-
-    /// The published `hello_proof`, reached through the real derivation ladder
-    /// and this module's own encoder.
-    ///
-    /// Handing `hello_proof` a key pins the preimage and leaves both the ladder
-    /// and the encoder free to move. Coming through `DeviceSecret` means a
-    /// dropped `epoch`, a swapped HKDF argument, a key written out of order and
-    /// a text head one byte wide all arrive as the same red line — and the
-    /// vector file is produced by a tool forbidden from importing this crate, so
-    /// it is an outside opinion rather than a restatement.
-    #[test]
-    fn the_published_hello_proof_is_what_this_module_encodes_and_then_proves() {
-        let mut scratch = [0u8; MAX_HELLO_INNER];
-        let request = inner()
-            .prove(&enrolment().client_key(), &CHALLENGE, &mut scratch)
-            .expect("the vector's inner body encodes and proves");
-        assert_eq!(
-            request.payload(),
-            &PUBLISHED_INNER[..],
-            "this encoder and the published inner body have parted company"
-        );
-        request
-            .proof()
-            .verify(&PUBLISHED_PROOF)
-            .expect("the published hello_proof is not what this module computes");
-    }
-
-    /// The other direction over the same bytes: the published inner body decodes
-    /// to the fields the file names, so the encoder and the decoder are not
-    /// simply wrong together.
-    #[test]
-    fn the_published_inner_body_decodes_to_the_fields_the_vector_names() {
-        let decoded = HelloInner::decode(&PUBLISHED_INNER).expect("the published body decodes");
-        assert_eq!(decoded, inner());
     }
 
     /// `Discover 0x80` at session 3, `req_id` 17, written out by hand so the tests
@@ -2236,8 +2197,8 @@ mod tests {
         }
     }
 
-    /// The same five fields as [`PUBLISHED_INNER`] with `client_id` written in
-    /// long form: identical meaning, different bytes.
+    /// The five fields of [`inner`] with `client_id` written in long form:
+    /// identical meaning, and not the bytes the encoder writes.
     const LONG_FORM_INNER: [u8; 41] =
         hex("a501010200031807046d6f38392d636c6920302e312e300550b0b1b2b3b4b5b6b7b8b9babbbcbdbebf");
 
@@ -2339,14 +2300,20 @@ mod tests {
     #[test]
     fn a_re_encoded_inner_body_is_not_the_inner_body_that_arrived() {
         let key = enrolment().client_key();
+        let mut scratch = [0u8; MAX_HELLO_INNER];
+        let short_form = inner()
+            .prove(&key, &CHALLENGE, &mut scratch)
+            .expect("the inner body encodes and proves");
         assert_eq!(
             HelloInner::decode(&LONG_FORM_INNER).expect("long form decodes"),
-            HelloInner::decode(&PUBLISHED_INNER).expect("short form decodes"),
-            "the two fixtures must mean the same thing, or this test proves nothing"
+            inner(),
+            "the two encodings must mean the same thing, or this test proves nothing"
         );
-        assert_ne!(&LONG_FORM_INNER[..], &PUBLISHED_INNER[..]);
+        assert_ne!(&LONG_FORM_INNER[..], short_form.payload());
 
-        let wire = hello_wire(&LONG_FORM_INNER, &PUBLISHED_PROOF);
+        // A genuine proof, computed over the short form, presented with the
+        // long form underneath it.
+        let wire = hello_wire(&LONG_FORM_INNER, short_form.proof().as_bytes());
         assert_eq!(
             wire.claimed()
                 .expect("the frame parses")
@@ -2465,7 +2432,7 @@ mod tests {
     fn a_hello_claiming_client_id_zero_names_no_slot() {
         let zeroed: [u8; 40] =
             hex("a5010102000300046d6f38392d636c6920302e312e300550b0b1b2b3b4b5b6b7b8b9babbbcbdbebf");
-        let wire = hello_wire(&zeroed, &PUBLISHED_PROOF);
+        let wire = hello_wire(&zeroed, &NOT_A_PROOF);
         assert_eq!(wire.claimed().err(), Some(HandshakeError::NoSuchSlot));
     }
 
@@ -2623,7 +2590,7 @@ mod tests {
             kind: MessageType::CommandResponse,
             session: head.session,
             req_id: ReqId(REQ_ID),
-            payload: &PUBLISHED_INNER,
+            payload: &[0x42; 24],
         };
         session
             .key()
@@ -3155,11 +3122,16 @@ mod tests {
 
         let mut scratch = [0u8; MAX_HELLO_INNER];
         let key = enrolment().client_key();
-        for short in 0..PUBLISHED_INNER.len() {
+        let whole = inner()
+            .prove(&key, &CHALLENGE, &mut scratch)
+            .expect("the fixture fits")
+            .payload()
+            .len();
+        for short in 0..whole {
             let dst = scratch.get_mut(..short).expect("short is below the cap");
             assert!(
                 inner().prove(&key, &CHALLENGE, dst).is_err(),
-                "a {short}-byte scratch for a 44-byte inner body"
+                "a {short}-byte scratch for a {whole}-byte inner body"
             );
         }
     }

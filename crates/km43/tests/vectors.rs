@@ -13,14 +13,14 @@ use km43::{
     CONCERN_MAX_BYTES, Caps, CborReader, CborWriter, ClientId, ClientKind, Closed, CmdList,
     Concern, ConcernChanged, ConcernRaised, ConcernRows, ConcernState, ConcernsBody,
     ConcernsHeader, ConcernsOutcome, ConcernsPage, Condition, Counter, DeviceId, DeviceSecret,
-    Discovery, ElementAt, Enrolment, Envelope, Epoch, Handshake, Header, HelloInner, HelloReport,
-    Id, InventoryHeader, InventoryOutcome, LogSeq, MAX_DISCOVER_BODY, MAX_FRAME, MAX_HELLO_INNER,
-    MAX_HELLO_REPORT, MAX_PAYLOAD, MAX_SERIES_LEN, MessageType, Page, Pair, PairAck, PairProof,
-    Part, PresenceChanged, PrintedSecret, Provenance, ReadConcerns, ReadInventory, ReadSignals,
-    ReadingsBody, ReadingsHeader, ReadingsOutcome, ReadingsPage, ReqId, Row, RowKind, RowSlots,
-    SAMPLE_MAX_BYTES, SERIES_MAX_BYTES, Sample, Sel, Series, Session, SessionId, SessionKey,
-    Severity, SignalQuality, Signed, SignedClaim, SignedKey, StateSeq, Subject,
-    TopologyChangeReason, TopologyChanged, Validity, ValidityChanged, Value, VendorCode,
+    Discovery, ElementAt, Enrolment, Envelope, Epoch, Handshake, Header, HelloClaim, HelloInner,
+    HelloReport, Id, InventoryHeader, InventoryOutcome, LogSeq, MAX_DISCOVER_BODY, MAX_FRAME,
+    MAX_HELLO_INNER, MAX_HELLO_REPORT, MAX_PAYLOAD, MAX_SERIES_LEN, MessageType, Page, Pair,
+    PairAck, PairProof, Part, PresenceChanged, PrintedSecret, Provenance, ReadConcerns,
+    ReadInventory, ReadSignals, ReadingsBody, ReadingsHeader, ReadingsOutcome, ReadingsPage, ReqId,
+    Row, RowKind, RowSlots, SAMPLE_MAX_BYTES, SERIES_MAX_BYTES, Sample, Sel, Series, Session,
+    SessionId, SessionKey, Severity, SignalQuality, Signed, SignedClaim, SignedKey, StateSeq,
+    Subject, TopologyChangeReason, TopologyChanged, Validity, ValidityChanged, Value, VendorCode,
     VendorNamespace, Version, Wrapped,
 };
 
@@ -90,11 +90,11 @@ fn the_published_envelope_decodes_to_the_fields_the_generator_wrote() {
 
 /// The published MAC tags, recomputed by this crate.
 ///
-/// The crate's own MAC tests compare against hex literals transcribed into
-/// `mac.rs`, which are a restatement rather than an outside opinion — change the
-/// generator to truncate from the right, regenerate, and every one of those
-/// tests stays green while the controller and the published vectors disagree
-/// about every tag on the wire. This is the test that goes red.
+/// The crate's own MAC tests compare one tag against another and never against
+/// the file — the hex literals `mac.rs` once carried were a restatement rather
+/// than an outside opinion, green while the generator truncated from the
+/// right. Change the generator that way, regenerate, and this is the test that
+/// goes red.
 #[test]
 fn every_published_tag_is_one_this_crate_recomputes() {
     let key = session_key();
@@ -244,15 +244,47 @@ fn the_pairing_and_hello_tags_are_ones_this_crate_recomputes_too() {
     .prove(&enrolment().client_key(), &challenge, &mut scratch)
     .expect("the published inner body encodes");
 
+    let published = bodies.first().expect("the hello body");
     assert_eq!(
         request.payload(),
-        bodies.first().expect("the hello body").as_slice(),
+        published.as_slice(),
         "this encoder and the published inner body have parted company"
     );
     request
         .proof()
         .verify(tags.get(2).expect("the hello proof tag"))
         .expect("the published hello proof is not what we compute");
+
+    // And the other direction over the same bytes. The frame written here
+    // carries the payload just asserted equal to the published body, so
+    // decoding it back through the claim is decoding the published bytes: the
+    // fields come out as the generator wrote them, and the encoder and the
+    // decoder are not simply wrong together.
+    let header = Header {
+        kind: MessageType::Hello,
+        session: SessionId::from(3),
+        req_id: ReqId(17),
+    };
+    let mut frame = [0u8; MAX_PAYLOAD];
+    let len = request
+        .write(header, &mut frame)
+        .expect("the published hello fits a payload");
+    let envelope = Envelope::decode(frame.get(..len).expect("the writer's own length"))
+        .expect("the frame this crate wrote decodes");
+    let accepted = HelloClaim::decode(envelope)
+        .expect("the frame names a Hello")
+        .verify(&enrolment().client_key(), &challenge, Version::V1_0)
+        .expect("the published proof verifies over the published body");
+    assert_eq!(
+        accepted.inner,
+        HelloInner {
+            version: Version::V1_0,
+            client_id: ClientId::new(7).expect("the published slot"),
+            client_version: "o89-cli 0.1.0",
+            client_nonce,
+        },
+        "the published inner body does not decode to the fields the generator wrote"
+    );
 }
 
 /// The bodies under `bodies`, in the order the file writes them: the
