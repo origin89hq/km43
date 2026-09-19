@@ -617,7 +617,10 @@ peer's immediately rather than on its own next tick. A link is alive while the
 peer answers: 6 seconds since the peer last answered any request of this
 side's, three heartbeat periods, MUST be treated as a dead link. The timer is
 the whole of the condition, and any answer restarts it, a heartbeat's or
-another request's. The peer's own heartbeats do not count toward it: a
+another request's. It runs only on a linked side: a side that has not been
+answered since it booted is unlinked, which is already the state a dead link
+leads to (L-110, L-120), and the controller counts its sixty seconds to a cut
+from the rail's last coming up until the first answer arrives (L-111). The peer's own heartbeats do not count toward it: a
 heartbeat received proves the peer can talk, not that it can hear, and a peer
 whose receiver has hung keeps talking. Only an answer proves both directions.
 
@@ -697,7 +700,8 @@ ask why.
 ### When the comms processor stops hearing the controller
 
 **L-120** — Six seconds after the controller last answered one of the comms
-processor's requests the comms processor MUST close every client connection, stop advertising over BLE, refuse
+processor's requests, and from its boot until the controller first answers,
+the comms processor MUST close every client connection, stop advertising over BLE, refuse
 new connections, and retry `LinkUp` every 2 seconds until the controller answers.
 
 Refusing and un-advertising is what makes the outage visible at the phone instead
