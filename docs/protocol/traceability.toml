@@ -988,6 +988,21 @@
 # things, wherever that test lives, and deleting them would let the controller's
 # copy read a half-built rule as covered.
 #
+# 126 -> 126, and L-170 is why the number did not move. The rule says an
+# `authorise` carries the version, the image length and the digest, and that
+# the controller records the digest in FRAM. The first half is what
+# `CommsRelease 0x67` looks like on the cable, and until this commit nothing
+# in the tree could encode or decode one -- `arriving()` admitted the opcode
+# and no body type existed behind it. The body exists now, with the digest a
+# fixed 32-byte array a caller cannot build short, and a test named after the
+# rule is an authorise arriving without its digest being refused rather than
+# read as thirty-two zeroes. On that test alone the count would read 121, and
+# that reading is the half-built rule this file warns about: the FRAM half is
+# the controller's, this tree holds no persistent store, and a rule counted
+# covered on its wire clause is one the controller's copy never goes looking
+# for. So L-170 takes a `[[clauses]]` entry naming both halves and stays in
+# the count until the controller names the second.
+
 # 122 -> 125: LINK.md gained the download window, L-190 to L-192, for the
 # request that puts the module into its ROM's serial download mode from the
 # controller and nowhere else (origin89hq/km43#30, origin89hq/firmware#1). All
@@ -1003,11 +1018,11 @@
 # specification gained a rule. L-034 says what the version and board texts on
 # the link look like, that the widest legal version fits the field, and that a
 # receiver carries a text in another shape rather than refusing it. The width,
-# the receiver and the `LinkUp` encoder's refusal of an `fw` outside the format
-# are tested in `linklocal.rs`. The rest of the sender half is the firmware's:
-# nothing in this tree knows a board's name, builds the `Hello` that carries
-# `fw_controller`, or has a `CommsRelease` body, so a test named after any of
-# them here would stand over nothing. Its `[[clauses]]` entry is what keeps the
+# the receiver, and the refusal of a version outside the format by the `LinkUp`
+# and both release encoders are tested in `linklocal.rs`. The rest of the
+# sender half is the firmware's: nothing in this tree knows a board's name or
+# builds the `Hello` that carries `fw_controller`, so a test named after either
+# here would stand over nothing. Its `[[clauses]]` entry is what keeps the
 # tests that exist from reading as the whole rule.
 uncovered = 126
 
@@ -1281,6 +1296,20 @@ Counting only the rows still going wrong, `total` comes back smaller than the \
 number of rows the same walk delivers, and a client cannot tell a short page \
 from a torn one. Both pass every other assertion on the page."""
 
+# The FRAM half is the controller's: this tree holds no persistent store and no
+# authorisation table, so the fragment stays unnamed here until it does.
+[[clauses]]
+id = "L-170"
+each = ["carries_the_digest", "records_the_digest_in_fram"]
+reason = """
+What goes on the wire and what survives a reboot are two ways for one \
+authorisation to come apart. An authorise without its digest is an image \
+nothing can check, and a decoder that filled in zeroes would let it through \
+looking checked. A digest that lived only in RAM is gone after the brown-out \
+mid-install that is the ordinary case on a weak bank, leaving the comms \
+processor holding bytes nothing authorised. The first is refused where the \
+body is read; the second needs a controller with FRAM behind it."""
+
 # The client half — restart a walk whose `seq` moved — is a client rule and stays
 # uncounted, like P-208's.
 [[clauses]]
@@ -1308,9 +1337,10 @@ Six things with one number, and they fail in different places. The limits fail \
 on paper: a version legal under the format but past 32 bytes is one a unit \
 stores and cannot send. The `LinkUp` encoder fails in this crate: one that \
 writes `0.1.0` with no commit leaves a bench log nothing can match to a unit, \
-and the peer has to carry it. A board name the hardware repository does not \
-write, a `fw_controller` that is not the controller's own `fw`, and a release \
-`version` in another shape each fail somewhere this tree has no code for yet, \
-and a test for the encoder leaves all three looking checked. The receiver \
+and the peer has to carry it. The release encoders fail the same way and are \
+tested beside it. A board name the hardware repository does not write and a \
+`fw_controller` that is not the controller's own `fw` each fail somewhere this \
+tree has no code for yet, and a test for the encoders leaves both looking \
+checked. The receiver \
 clause fails on the link: a controller that refuses a text in another shape \
 takes every client off the air over a label."""

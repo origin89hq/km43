@@ -9,7 +9,7 @@
 use anyhow::{Result, bail};
 use hmac::{Hmac, KeyInit, Mac};
 use serde_json::{Value, json, map::Map};
-use sha2::Sha256;
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 
 type HmacSha256 = Hmac<Sha256>;
@@ -787,8 +787,22 @@ enum Link {
     TimeOffer = 0x66,
     TimeOfferAck = 0xe6,
     NetConfigAck = 0xe5,
+    CommsRelease = 0x67,
+    CommsReleaseAck = 0xe7,
     EnterDownload = 0x68,
     EnterDownloadAck = 0xe8,
+}
+
+/// One published link frame before it is framed: the envelope's three header
+/// fields, the body, and the body in words for whoever reads the file without a
+/// CBOR decoder.
+struct LinkCase {
+    name: &'static str,
+    kind: Link,
+    session: u16,
+    req_id: u32,
+    body: Cb,
+    readable: String,
 }
 
 /// The six capacities this controller reports in `Hello 0x81` keys 12 to 17.
@@ -1806,104 +1820,17 @@ impl Builder {
     /// `cargo xtask check` refuses that edge, and it is the whole point: a
     /// generator that imports the thing it checks publishes the implementation's
     /// opinion of itself.
-    /// The link frames the file publishes: eight of the eighteen opcodes,
-    /// chosen for the bodies with the most keys, with the refusal of
-    /// `TimeOffer` and of `EnterDownload` rather than their acceptance.
-    fn link_cases() -> Vec<(&'static str, Link, u16, u32, Cb, &'static str)> {
-        vec![
-            (
-                "link_up_0x60",
-                Link::Up,
-                0,
-                1,
-                cmap! {
-                    1 => Cb::U(1),
-                    2 => Cb::U(0),
-                    3 => Cb::U(2),
-                    4 => Cb::T(SelfReport::new().fw_comms.into()),
-                    5 => Cb::U(0x5eed_face),
-                    6 => Cb::T("controller-a rev A".into()),
-                    7 => Cb::U(0),
-                },
-                "{1:protocol_major=1, 2:protocol_minor=0, 3:role=comms, 4:fw, 5:boot_id, 6:hw, 7:net_version=0}",
-            ),
-            (
-                "client_connected_0x62",
-                Link::ClientConnected,
-                0,
-                2,
-                cmap! {1 => Cb::U(7), 2 => Cb::U(2), 3 => Cb::T("192.168.4.2".into())},
-                "{1:conn=7, 2:transport=wifi_local, 3:peer}",
-            ),
-            (
-                "client_connected_ack_0xe2",
-                Link::ClientConnectedAck,
-                0,
-                2,
-                cmap! {1 => Cb::U(1)},
-                "{1:outcome=accepted}",
-            ),
-            (
-                "time_offer_0x66",
-                Link::TimeOffer,
-                0,
-                3,
-                cmap! {
-                    1 => Cb::U(1_786_802_653_000),
-                    2 => Cb::U(1),
-                    3 => Cb::U(40),
-                    4 => Cb::T("0.pool.ntp.org".into()),
-                },
-                "{1:unix_ms, 2:source=ntp, 3:accuracy_ms=40, 4:server}",
-            ),
-            (
-                // **The refusal, not the acceptance.** An implementation that
-                // only ever encodes `accepted` has never exercised the arm that
-                // matters, and this is the one the rate limit produces.
-                "time_offer_ack_0xe6",
-                Link::TimeOfferAck,
-                0,
-                3,
-                cmap! {1 => Cb::U(5)},
-                "{1:outcome=refused_rate_limited}",
-            ),
-            (
-                // Version 0 from a board holding nothing, which is L-132's
-                // honest answer and the one that gets it provisioned.
-                "net_config_ack_0xe5",
-                Link::NetConfigAck,
-                0,
-                4,
-                cmap! {1 => Cb::U(1), 2 => Cb::U(0)},
-                "{1:outcome=stored, 2:version=0}",
-            ),
-            (
-                // The bench's reason, which is the one a controller sends on
-                // every unit before it leaves the bench.
-                "enter_download_0x68",
-                Link::EnterDownload,
-                0,
-                5,
-                cmap! {1 => Cb::U(1)},
-                "{1:reason=bench}",
-            ),
-            (
-                // The refusal, not the acceptance: `entering` is the frame a
-                // module sends once and then resets, and the refusal is the
-                // one a controller that knocked late has to read.
-                "enter_download_ack_0xe8",
-                Link::EnterDownloadAck,
-                0,
-                5,
-                cmap! {1 => Cb::U(2)},
-                "{1:outcome=refused_outside_window}",
-            ),
-        ]
-    }
-
     fn link() -> Result<Value> {
         let mut out = Vec::new();
-        for (name, kind, session, req_id, body, readable) in Self::link_cases() {
+        for LinkCase {
+            name,
+            kind,
+            session,
+            req_id,
+            body,
+            readable,
+        } in Self::link_cases()?
+        {
             let envelope = cbor(&Cb::A(vec![
                 Cb::U(kind as u64),
                 Cb::U(u64::from(session)),
@@ -1940,6 +1867,148 @@ impl Builder {
             ));
         }
         Ok(obj(out))
+    }
+
+    /// The link bodies, one per published frame.
+    fn link_cases() -> Result<Vec<LinkCase>> {
+        let mut cases = vec![
+            LinkCase {
+                name: "link_up_0x60",
+                kind: Link::Up,
+                session: 0,
+                req_id: 1,
+                body: cmap! {
+                    1 => Cb::U(1),
+                    2 => Cb::U(0),
+                    3 => Cb::U(2),
+                    4 => Cb::T(SelfReport::new().fw_comms.into()),
+                    5 => Cb::U(0x5eed_face),
+                    6 => Cb::T("controller-a rev A".into()),
+                    7 => Cb::U(0),
+                },
+                readable: "{1:protocol_major=1, 2:protocol_minor=0, 3:role=comms, 4:fw, 5:boot_id, 6:hw, 7:net_version=0}"
+                    .into(),
+            },
+            LinkCase {
+                name: "client_connected_0x62",
+                kind: Link::ClientConnected,
+                session: 0,
+                req_id: 2,
+                body: cmap! {1 => Cb::U(7), 2 => Cb::U(2), 3 => Cb::T("192.168.4.2".into())},
+                readable: "{1:conn=7, 2:transport=wifi_local, 3:peer}".into(),
+            },
+            LinkCase {
+                name: "client_connected_ack_0xe2",
+                kind: Link::ClientConnectedAck,
+                session: 0,
+                req_id: 2,
+                body: cmap! {1 => Cb::U(1)},
+                readable: "{1:outcome=accepted}".into(),
+            },
+            LinkCase {
+                name: "time_offer_0x66",
+                kind: Link::TimeOffer,
+                session: 0,
+                req_id: 3,
+                body: cmap! {
+                    1 => Cb::U(1_786_802_653_000),
+                    2 => Cb::U(1),
+                    3 => Cb::U(40),
+                    4 => Cb::T("0.pool.ntp.org".into()),
+                },
+                readable: "{1:unix_ms, 2:source=ntp, 3:accuracy_ms=40, 4:server}".into(),
+            },
+            // **The refusal, not the acceptance.** An implementation that only
+            // ever encodes `accepted` has never exercised the arm that matters,
+            // and this is the one the rate limit produces.
+            LinkCase {
+                name: "time_offer_ack_0xe6",
+                kind: Link::TimeOfferAck,
+                session: 0,
+                req_id: 3,
+                body: cmap! {1 => Cb::U(5)},
+                readable: "{1:outcome=refused_rate_limited}".into(),
+            },
+            // Version 0 from a board holding nothing, which is L-132's honest
+            // answer and the one that gets it provisioned.
+            LinkCase {
+                name: "net_config_ack_0xe5",
+                kind: Link::NetConfigAck,
+                session: 0,
+                req_id: 4,
+                body: cmap! {1 => Cb::U(1), 2 => Cb::U(0)},
+                readable: "{1:outcome=stored, 2:version=0}".into(),
+            },
+            LinkCase {
+                // The bench's reason, which is the one a controller sends on
+                // every unit before it leaves the bench.
+                name: "enter_download_0x68",
+                kind: Link::EnterDownload,
+                session: 0,
+                req_id: 5,
+                body: cmap! {1 => Cb::U(1)},
+                readable: "{1:reason=bench}".into(),
+            },
+            LinkCase {
+                // The refusal, not the acceptance: `entering` is the frame a
+                // module sends once and then resets, and the refusal is the
+                // one a controller that knocked late has to read.
+                name: "enter_download_ack_0xe8",
+                kind: Link::EnterDownloadAck,
+                session: 0,
+                req_id: 5,
+                body: cmap! {1 => Cb::U(2)},
+                readable: "{1:outcome=refused_outside_window}".into(),
+            },
+        ];
+        cases.extend(Self::release_cases()?);
+        Ok(cases)
+    }
+
+    /// The comms firmware release pair, apart because its digest is computed
+    /// rather than written down.
+    fn release_cases() -> Result<Vec<LinkCase>> {
+        /// What the published `CommsRelease` authorises: not a firmware, but a
+        /// fixed run of bytes whose SHA-256 anybody can recompute. The text is
+        /// quoted in `body_readable` so an outside implementation can.
+        const IMAGE: &str = "km43 comms release vector image";
+        Ok(vec![
+            // An `authorise` over a real SHA-256 rather than a pattern of
+            // bytes, so the published digest is one a firmware could have
+            // computed from the image named in `body_readable`.
+            LinkCase {
+                name: "comms_release_0x67",
+                kind: Link::CommsRelease,
+                session: 0,
+                req_id: 6,
+                body: cmap! {
+                    1 => Cb::U(1),
+                    2 => Cb::T("0.2.0+g1a2b3c4d".into()),
+                    3 => Cb::U(u64::try_from(IMAGE.len())?),
+                    4 => Cb::B(Sha256::digest(IMAGE.as_bytes()).to_vec()),
+                },
+                readable: format!(
+                    "{{1:op=authorise, 2:version, 3:image_len={}, 4:digest=sha256 of the ASCII text \"{IMAGE}\"}}",
+                    IMAGE.len()
+                ),
+            },
+            // **The refusal, not the acceptance.** A digest mismatch is the
+            // outcome L-171 exists for, and `version` names what it will boot
+            // next, which after a refusal is still the old image.
+            LinkCase {
+                name: "comms_release_ack_0xe7",
+                kind: Link::CommsReleaseAck,
+                session: 0,
+                req_id: 6,
+                body: cmap! {
+                    1 => Cb::U(4),
+                    2 => Cb::T("0.1.0+g9f8e7d6c".into()),
+                    3 => Cb::U(524_288),
+                },
+                readable: "{1:outcome=refused_digest_mismatch, 2:version, 3:bytes_have=524288}"
+                    .into(),
+            },
+        ])
     }
 
     fn bodies(&self) -> Value {
