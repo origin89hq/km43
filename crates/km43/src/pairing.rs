@@ -1092,22 +1092,7 @@ mod tests {
     const SESSION: u16 = 3;
     const REQ_ID: u32 = 17;
 
-    /// `macs.pair_proof.out16` from `docs/protocol/vectors/v1.json`, **retyped**.
-    ///
-    /// So it is a restatement rather than an outside opinion: change a nibble in
-    /// that file and this stays green. What pins these two encoders to the
-    /// artefact is `tests/vectors.rs`, which reads it. This is here because it
-    /// splits the diagnosis — a wrong tag with the fields assembled here says
-    /// the module composed the preimage wrongly, and the same tag wrong there
-    /// says the file moved.
-    const PUBLISHED_PROOF: [u8; Tag::LEN] = hex("22171c0449d848381e6d99ed7c92d1bd");
-
-    /// `macs.pair_ack_mac.out16` from the same file, retyped for the same
-    /// reason.
-    const PUBLISHED_ACK: [u8; Tag::LEN] = hex("4a7937d934b87b750a254a05289f030b");
-
-    /// The `inputs` block of the vector file, as the pair every key on this unit
-    /// descends from.
+    /// The device every key below descends from.
     fn device() -> DeviceSecret {
         DeviceSecret::new(DeviceId::new(DEVICE_ID), PrintedSecret::new(PRINTED_SECRET))
     }
@@ -1319,24 +1304,19 @@ mod tests {
             .pair(4, &bstr16(&NEXT_CHALLENGE))
     }
 
-    /// The published `pair_proof`, reached through the real derivation ladder
-    /// and this module's own encoder.
+    /// A `Pair 0x0B` from fields to wire and back, verifying under the key the
+    /// real derivation ladder produces.
     ///
-    /// Coming through `DeviceSecret` rather than handing `proof` a key means a
-    /// dropped `epoch`, a swapped HKDF argument and a field composed in the
-    /// wrong order all arrive as the same red line. The tag on the wire is read
-    /// back out of the frame rather than off the return value, so an encoder
-    /// that proved one `client_kind` and wrote another would show here.
+    /// The tag is read back out of the frame rather than off the return value,
+    /// so an encoder that proved one `client_kind` and wrote another fails at
+    /// the `verify`. Whether that tag is the one the vectors publish is
+    /// `tests/vectors.rs`'s question, asked of the file rather than of a copy.
     #[test]
-    fn the_published_pair_proof_is_what_this_module_writes_on_the_wire() {
+    fn a_pair_proof_written_on_the_wire_reads_back_and_verifies_under_the_derived_key() {
         let frame = sent(&request(), &attempt());
         let claim = frame
             .claimed()
             .expect("the frame this module wrote decodes");
-        assert_eq!(
-            claim.proof, PUBLISHED_PROOF,
-            "this encoder and the published pair proof have parted company"
-        );
         assert_eq!(claim.attempt(DEVICE_ID, CHALLENGE), attempt());
         assert_eq!(
             claim
@@ -1346,16 +1326,12 @@ mod tests {
         );
     }
 
-    /// The published `pair_ack_mac`, through the same ladder and this module's
-    /// ack encoder — including the `epoch` the body does not carry.
+    /// The ack the same way, through the same ladder and this module's ack
+    /// encoder — including the `epoch` the body does not carry.
     #[test]
-    fn the_published_pair_ack_mac_is_what_this_module_writes_on_the_wire() {
+    fn a_pair_ack_written_on_the_wire_reads_back_and_verifies_under_the_derived_key() {
         let frame = answered(&answer(Outcome::Enrolled(slot())), &attempt());
         let claim = frame.acked().expect("the ack this module wrote decodes");
-        assert_eq!(
-            claim.mac, PUBLISHED_ACK,
-            "this encoder and the published pair-ack MAC have parted company"
-        );
         assert_eq!(
             claim
                 .verify(&device().pair_key(), &attempt(), Epoch::FIRST)
