@@ -29,8 +29,9 @@ use sha2::{Digest as _, Sha256};
 
 use crate::cbor::{CborError, CborReader, CborWriter};
 use crate::concerns::ElementAt;
+use crate::envelope::Refusal;
 use crate::generated::{
-    Bucket, Direction, Inventory, InventoryKind, Shape, SignalDomain, Transport, Vtype,
+    Bucket, Direction, ErrorCode, Inventory, InventoryKind, Shape, SignalDomain, Transport, Vtype,
 };
 use crate::limits::{
     MAX_COMPONENT_CMDS, MAX_INVENTORY_PAGE_BYTES, MAX_INVENTORY_PAGE_ROWS, MAX_ROW_BYTES,
@@ -1608,6 +1609,43 @@ impl From<CborError> for InventoryError {
     }
 }
 
+impl InventoryError {
+    /// What to answer. A row past [`MAX_ROW_BYTES`] is error 5, as a wrapper too
+    /// large to write is; too many `cmds` is not, because the bytes fit and it
+    /// is the shape that is wrong. Everything else is a body whose meaning
+    /// cannot be trusted, which is what error 1 says.
+    #[must_use]
+    pub const fn refusal(self) -> Refusal {
+        match self {
+            Self::RowTooLong(_) => Refusal::Client(ErrorCode::PayloadTooLarge),
+            Self::RowShape { .. }
+            | Self::MissingRequired { .. }
+            | Self::WrongType { .. }
+            | Self::EmptyCmds
+            | Self::TooManyCmds(_)
+            | Self::DuplicateRowKey { .. }
+            | Self::ReservedZero { .. }
+            | Self::PositionPastSeries { .. }
+            | Self::NotAMember { .. }
+            | Self::SeriesTooShort(_)
+            | Self::SeriesTooLong(_)
+            | Self::LabelPastRange { .. }
+            | Self::MissingConditional { .. }
+            | Self::UnexpectedConditional { .. }
+            | Self::WrongKind { .. }
+            | Self::Missing(_)
+            | Self::MissingResponse(_)
+            | Self::AnsweredNothing(_)
+            | Self::DigestMidWalk
+            | Self::DigestWidth(_)
+            | Self::UnknownOutcome(_)
+            | Self::RowsOutOfOrder { .. }
+            | Self::Duplicate(_)
+            | Self::Cbor(_) => Refusal::Client(ErrorCode::MalformedFrame),
+        }
+    }
+}
+
 impl fmt::Display for InventoryError {
     fn fmt(&self, w: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -1680,10 +1718,98 @@ impl fmt::Display for InventoryError {
     }
 }
 
+impl core::error::Error for InventoryError {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::limits::{MAX_ADDR, MAX_COMPONENT_CMDS, MAX_IDENT, MAX_LABEL, MAX_SERIES_LEN};
+    use crate::render::Rendering;
+
+    /// No two refusals read as one sentence, and each carries the code P-141
+    /// leaves for a body that never reached a handler: error 5 for a row past
+    /// its byte bound, error 1 for the rest, too many `cmds` included, because
+    /// its bytes fit and it is the shape that is wrong.
+    #[test]
+    fn every_refusal_says_something_of_its_own() {
+        const EVERY: [InventoryError; 25] = [
+            InventoryError::RowShape {
+                kind: RowKind::Bus,
+                want: 5,
+                got: 4,
+            },
+            InventoryError::MissingRequired {
+                kind: RowKind::Device,
+                key: 2,
+            },
+            InventoryError::WrongType {
+                kind: RowKind::Component,
+                key: 3,
+            },
+            InventoryError::EmptyCmds,
+            InventoryError::TooManyCmds(9),
+            InventoryError::DuplicateRowKey {
+                kind: RowKind::Signal,
+                key: 4,
+            },
+            InventoryError::ReservedZero {
+                kind: RowKind::Param,
+                key: 1,
+            },
+            InventoryError::PositionPastSeries {
+                at: 17,
+                elements: 16,
+            },
+            InventoryError::NotAMember {
+                kind: RowKind::Bus,
+                key: 2,
+                space: Closed::Transport,
+                value: 9,
+            },
+            InventoryError::SeriesTooShort(1),
+            InventoryError::SeriesTooLong(40),
+            InventoryError::LabelPastRange {
+                base: u16::MAX,
+                at: 2,
+            },
+            InventoryError::MissingConditional {
+                kind: RowKind::Signal,
+                key: 8,
+                when: When::ShapeIsASeries,
+            },
+            InventoryError::UnexpectedConditional {
+                kind: RowKind::Signal,
+                key: 8,
+                when: When::KindIsAVendorsOwn,
+            },
+            InventoryError::WrongKind {
+                page: RowKind::Bus,
+                row: RowKind::Device,
+            },
+            InventoryError::RowTooLong(300),
+            InventoryError::Missing(ReadInventoryKey::What),
+            InventoryError::MissingResponse(InventoryKey::Rev),
+            InventoryError::AnsweredNothing(InventoryOutcome::OutOfRange),
+            InventoryError::DigestMidWalk,
+            InventoryError::DigestWidth(7),
+            InventoryError::UnknownOutcome(9),
+            InventoryError::RowsOutOfOrder {
+                after: RowKind::Signal,
+                got: RowKind::Bus,
+            },
+            InventoryError::Duplicate(ReadInventoryKey::Rev),
+            InventoryError::Cbor(CborError::WrongType),
+        ];
+        Rendering::<128>::each_says_something_of_its_own(&EVERY);
+        for why in EVERY {
+            let want = if matches!(why, InventoryError::RowTooLong(_)) {
+                5
+            } else {
+                1
+            };
+            assert_eq!(why.refusal().code(), want, "{why}");
+        }
+    }
 
     const LABEL: &str = "01234567890123456789012345678901"; // MAX_LABEL
     const IDENT: &str = "012345678901234567890123"; // MAX_IDENT
