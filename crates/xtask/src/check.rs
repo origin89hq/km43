@@ -651,6 +651,12 @@ impl Checks {
         {
             stale.push(crate::codegen::Codegen::PATH.to_owned());
         }
+        if crate::index::Index::load(&self.root)
+            .map_err(|e| fail(e.to_string()))?
+            .stale(&self.root)
+        {
+            stale.push(crate::index::Index::PATH.to_owned());
+        }
         if stale.is_empty() {
             Ok(())
         } else {

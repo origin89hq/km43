@@ -46,6 +46,8 @@ mod readings;
 mod readlog;
 #[cfg(test)]
 mod render;
+mod requirement;
+mod requirements;
 mod routing;
 mod signed;
 mod subscribe;
@@ -74,6 +76,8 @@ pub use pairing::*;
 pub use reading::*;
 pub use readings::*;
 pub use readlog::*;
+pub use requirement::*;
+pub use requirements::*;
 pub use routing::*;
 pub use signed::*;
 pub use subscribe::*;
