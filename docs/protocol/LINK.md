@@ -360,7 +360,10 @@ measurement.
 answer carries the peer's statement, and answering proves the peer holds this
 side's. A `LinkUp` from the peer is answered with this side's statement and
 recorded, and a side that is not linked sends its own at once; the peer's
-`LinkUp` does not link the side that receives it. Until linked, the comms
+`LinkUp` does not link the side that receives it. A `LinkUp` whose `boot_id`
+differs from the one this side last saw unlinks it before anything else, because
+the new boot has answered nothing of this side's: the side sends its own at
+once and is linked again only when the new boot answers. Until linked, the comms
 processor MUST NOT forward a client frame and the controller MUST NOT accept
 one; a client frame arriving before that MUST be answered with code 258. A comms
 processor that starts routing before it knows the controller's protocol version
@@ -607,11 +610,12 @@ Heartbeat  0x61  ·  Heartbeat  0xE1
 
 **L-100** — Each side MUST send a `Heartbeat` every 2 seconds and MUST answer the
 peer's immediately rather than on its own next tick. A link is alive while the
-peer answers: three of this side's heartbeats unanswered in a row — 6 seconds
-since the peer last answered one of this side's requests — MUST be treated as a
-dead link. The peer's own heartbeats do not count toward it: a heartbeat
-received proves the peer can talk, not that it can hear, and a peer whose
-receiver has hung keeps talking. Only an answer proves both directions.
+peer answers: 6 seconds since the peer last answered any request of this
+side's, three heartbeat periods, MUST be treated as a dead link. The timer is
+the whole of the condition, and any answer restarts it, a heartbeat's or
+another request's. The peer's own heartbeats do not count toward it: a
+heartbeat received proves the peer can talk, not that it can hear, and a peer
+whose receiver has hung keeps talking. Only an answer proves both directions.
 
 Every rung of the ladder below is measured from that one number, so the 2 seconds
 is not a comfort setting. Answering immediately rather than folding the answer
