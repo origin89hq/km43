@@ -15,11 +15,12 @@ use km43::{
     ClientKind, CloseConnection, CloseReason, Command, CommandKind, CommsRelease, CommsReleaseOp,
     ConcernState, Concerns, ConfigSection, ControlOwner, Direction, DisconnectReason, ErrorCode,
     EventKind, Firmware, GeneratorSelector, GeneratorState, History, HistorySource,
-    HistoryStopReason, Inventory, InventoryKind, LinkErrorCode, LinkMessageType, LinkTransport,
-    MessageType, MetricKind, NetConfig, NetConfigOp, Pair, Presence, Provenance, Quality, Readings,
-    SetConfig, Severity, Shape, SignalDomain, Time, TimeOffer, TimeSource, TopologyChangeReason,
-    Transport, Unit, Validity, Vtype,
+    HistoryStopReason, Inventory, InventoryKind, LinkDirection, LinkErrorCode, LinkMessageType,
+    LinkTransport, MessageType, MetricKind, NetConfig, NetConfigOp, Pair, Presence, Provenance,
+    Quality, Readings, SetConfig, Severity, Shape, SignalDomain, Time, TimeOffer, TimeSource,
+    TopologyChangeReason, Transport, Unit, Validity, Vtype,
 };
+use std::collections::BTreeSet;
 
 const REGISTRY: &str = include_str!("../protocol.toml");
 
@@ -139,11 +140,18 @@ fn is_class_a_answers_the_registry_s_class_column_for_every_event() {
 
 /// A kind the registry never allocated is `None`, not `false`: a controller
 /// that shed an unknown record as droppable sheds the ones a newer firmware
-/// added because they mattered.
+/// added because they mattered. Every free kind, because a stray row at
+/// `0xffff` answers for a kind nobody defined and a check of the smallest
+/// free one never looks there.
 #[test]
-fn is_class_a_says_nothing_about_a_kind_the_registry_never_allocated() {
-    let free = first_free(blocks("events").iter().filter_map(|e| e.number("kind")));
-    assert_eq!(EventKind(free).is_class_a(), None);
+fn is_class_a_says_nothing_about_any_kind_the_registry_never_allocated() {
+    for free in every_free(blocks("events").iter().filter_map(|e| e.number("kind"))) {
+        assert_eq!(
+            EventKind(free).is_class_a(),
+            None,
+            "event kind {free:#06x} is not in the registry and the bindings classify it"
+        );
+    }
 }
 
 /// Every metric answers the unit and decade the registry gives it. Bisected
@@ -174,11 +182,17 @@ fn unit_and_scale_answers_the_registry_s_unit_and_decade_for_every_metric() {
 }
 
 /// A kind with no row is `None`, never a default unit: a value rendered in
-/// the wrong unit is a number a person acts on.
+/// the wrong unit is a number a person acts on. Every free kind, for the
+/// reason the event check above gives.
 #[test]
-fn unit_and_scale_has_no_answer_for_a_kind_the_registry_never_allocated() {
-    let free = first_free(blocks("metrics").iter().filter_map(|m| m.number("kind")));
-    assert_eq!(MetricKind(free).unit_and_scale(), None);
+fn unit_and_scale_has_no_answer_for_any_kind_the_registry_never_allocated() {
+    for free in every_free(blocks("metrics").iter().filter_map(|m| m.number("kind"))) {
+        assert_eq!(
+            MetricKind(free).unit_and_scale(),
+            None,
+            "metric kind {free:#06x} is not in the registry and the bindings give it a unit"
+        );
+    }
 }
 
 /// The live capability rows: bit and the kinds each is granted to.
@@ -280,32 +294,90 @@ fn allows_agrees_with_the_registry_bit_by_bit_and_refuses_a_mask_with_one_bit_to
 }
 
 /// An unallocated bit is granted to nobody: a capability nobody has defined
-/// is not one a client can hold.
+/// is not one a client can hold. Both ends of the range and everything
+/// between, since a mask with bit 9 set passes a check of bit 5.
 #[test]
-fn no_client_kind_is_granted_a_bit_the_registry_has_not_allocated() {
-    let unallocated = blocks("client_capability")
+fn no_client_kind_is_granted_any_bit_the_registry_has_not_allocated() {
+    let (first, last) = blocks("client_capability")
         .iter()
         .find_map(|c| {
-            let range = c.field("range")?;
-            let (first, _) = range.split_once('–')?;
-            parse_number(first.trim())
+            let (first, last) = c.field("range")?.split_once('–')?;
+            Some((parse_number(first.trim())?, parse_number(last.trim())?))
         })
-        .expect("the capability table names its unallocated range");
+        .expect("the capability table names its unallocated range by both ends");
+    assert!(
+        first <= last,
+        "the unallocated range {first}–{last} is empty"
+    );
     for (kind, _) in client_kinds() {
-        assert!(
-            !ClientCapability::granted(kind).allows(ClientCapability(1 << unallocated)),
-            "{kind:?} holds bit {unallocated}, which the registry leaves unallocated"
-        );
+        for bit in first..=last {
+            let one = 1u16
+                .checked_shl(u32::from(bit))
+                .unwrap_or_else(|| panic!("bit {bit} does not fit a u16 mask"));
+            assert!(
+                !ClientCapability::granted(kind).allows(ClientCapability(one)),
+                "{kind:?} holds bit {bit}, which the registry leaves unallocated"
+            );
+        }
     }
 }
 
-/// The smallest number no row of a table carries, so the refusal below is of
-/// a number the file says is free rather than one somebody guessed.
-fn first_free(allocated: impl Iterator<Item = u16>) -> u16 {
-    let taken: Vec<u16> = allocated.collect();
-    (0..=u16::MAX)
-        .find(|n| !taken.contains(n))
-        .expect("a table cannot fill the whole space")
+/// Every number no row of a table carries, gone rows included since those
+/// are checked on their own, so a refusal covers the whole space the file
+/// says is free rather than the one number somebody thought to try.
+fn every_free(allocated: impl Iterator<Item = u16>) -> impl Iterator<Item = u16> {
+    let taken: BTreeSet<u16> = allocated.collect();
+    (0..=u16::MAX).filter(move |n| !taken.contains(n))
+}
+
+/// The side the registry's `direction` column names, spelled out here rather
+/// than borrowed from xtask so the two can disagree. A value this match has
+/// never seen fails rather than falling through to a guess.
+fn registry_direction(column: &str) -> LinkDirection {
+    match column {
+        "either" => LinkDirection::Either,
+        "comms-to-controller" => LinkDirection::CommsToController,
+        "controller-to-comms" => LinkDirection::ControllerToComms,
+        other => panic!("link direction {other:?} is not one this test knows"),
+    }
+}
+
+/// Every link-local request and its acknowledgement answer the side the
+/// registry's `direction` column gives the row. L-001 refuses a message from
+/// the wrong side, and its test takes the expectation from `direction()`
+/// itself, so a generator that put `NetConfig` on the comms side would have a
+/// controller refusing its own configuration with every test green.
+#[test]
+fn link_direction_answers_the_registry_s_direction_column_for_every_request_and_ack() {
+    let mut sides = BTreeSet::new();
+    for row in blocks("link_messages") {
+        if is_gone(row.status()) {
+            continue;
+        }
+        let column = row
+            .field("direction")
+            .expect("a link message has a direction");
+        let expected = registry_direction(column);
+        for key in ["request", "response"] {
+            let number = row
+                .number(key)
+                .and_then(|n| u8::try_from(n).ok())
+                .unwrap_or_else(|| panic!("a link message has a one-byte {key}"));
+            let message = LinkMessageType::try_from(number)
+                .unwrap_or_else(|()| panic!("link opcode {number:#04x} has no variant"));
+            assert_eq!(
+                message.direction(),
+                expected,
+                "{message:?} ({number:#04x}) is sent {column} in the registry"
+            );
+        }
+        sides.insert(column.to_owned());
+    }
+    assert_eq!(
+        sides.len(),
+        3,
+        "the rows named only {sides:?}, so not every side was compared"
+    );
 }
 
 /// The identifier the generator gives a registry name, written out again here
