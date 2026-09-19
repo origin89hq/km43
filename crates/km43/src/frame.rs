@@ -49,6 +49,7 @@ const _: () = {
 /// Why a frame was refused. Every variant means the frame is gone: there is no
 /// NAK at this layer (P-031), so a caller counts these and answers nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum FrameError {
     /// More envelope than [`MAX_PAYLOAD`], on the way out or on the way in.
     PayloadTooLong,
@@ -160,6 +161,7 @@ impl FrameWriter {
 /// What one byte did. A frame borrows the reader until the next byte goes in,
 /// which is what saves copying it out again.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[must_use = "a dropped frame and a dropped refusal look the same to a caller that ignores this"]
 pub enum Received<'a> {
     /// Nothing to hand up: the frame is still arriving, or the line is idle.

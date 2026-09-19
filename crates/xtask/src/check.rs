@@ -795,8 +795,8 @@ impl Checks {
         // A block is read when the test file scans it — names it, or a key inside
         // it, as a quoted string — or when the file argues in prose why it does not
         // need to, which is a backticked mention. `derived_keys` is the second
-        // kind: the three derivations are pinned transitively by the seven MAC
-        // tags, because a wrong key gives a wrong tag, and that argument is written
+        // kind: the three derivations are pinned transitively by the MAC tags,
+        // because a wrong key gives a wrong tag, and that argument is written
         // down where somebody reading the file will meet it.
         //
         // Quoted rather than a bare substring, because a bare one is satisfied by
@@ -912,6 +912,11 @@ impl Checks {
     fn every_no_std_crate_builds_for_the_target(&self) -> Result<(), Failure> {
         const CHECK: &str = "every no_std crate builds for the target";
         const TARGETS: [&str; 2] = ["thumbv6m-none-eabi", "riscv32imac-unknown-none-elf"];
+        // Twice per target: once as a consumer that asked for nothing, once
+        // with every feature on. The features exist for the target and nowhere
+        // else — `defmt` is a logger for a part with no console — so a host
+        // build with them on says nothing about the derive that matters.
+        const FEATURE_SETS: [&[&str]; 2] = [&[], &["--all-features"]];
         let fail = |detail: String| Failure {
             check: CHECK,
             detail,
@@ -944,27 +949,34 @@ impl Checks {
         }
 
         for target in TARGETS {
-            let mut cargo =
-                Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned()));
-            cargo
-                .current_dir(&self.root)
-                .args(["check", "--locked", "--target", target]);
-            for name in &crates {
-                cargo.args(["-p", name]);
-            }
-            let out = cargo
-                .output()
-                .map_err(|e| fail(format!("running cargo check --target {target}: {e}")))?;
-            if !out.status.success() {
-                let why = String::from_utf8_lossy(&out.stderr);
-                return Err(fail(format!(
-                    "the no_std crates ({}) do not all build for {target}. A green host build \
-                     says nothing about this: there `std` is present, `usize` is 64 bits and \
-                     the enum layouts differ. If the target is not installed, `rustup target \
-                     add {target}`.\n\n{}",
-                    crates.join(", "),
-                    why.trim()
-                )));
+            for features in FEATURE_SETS {
+                let mut cargo =
+                    Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned()));
+                cargo
+                    .current_dir(&self.root)
+                    .args(["check", "--locked", "--target", target])
+                    .args(features);
+                for name in &crates {
+                    cargo.args(["-p", name]);
+                }
+                let out = cargo.output().map_err(|e| {
+                    fail(format!(
+                        "running cargo check --target {target} {}: {e}",
+                        features.join(" ")
+                    ))
+                })?;
+                if !out.status.success() {
+                    let why = String::from_utf8_lossy(&out.stderr);
+                    return Err(fail(format!(
+                        "the no_std crates ({}) do not all build for {target} with `{}`. A \
+                         green host build says nothing about this: there `std` is present, \
+                         `usize` is 64 bits and the enum layouts differ. If the target is not \
+                         installed, `rustup target add {target}`.\n\n{}",
+                        crates.join(", "),
+                        features.join(" "),
+                        why.trim()
+                    )));
+                }
             }
         }
         Ok(())

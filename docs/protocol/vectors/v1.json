@@ -24,8 +24,8 @@
     "model": "Origin89 CTRL-1 (G0B1)",
     "provisioned": false,
     "pairing_open": true,
-    "fw_controller": "o89-stm32 0.1.0+1a2b3c",
-    "fw_comms": "esp32c6 0.2.0-unverified",
+    "fw_controller": "0.1.0-beta.12+g1a2b3c4d",
+    "fw_comms": "0.2.0-alpha.12+g5e6f7a8b",
     "capabilities": 247,
     "log_oldest_seq": 1,
     "log_newest_seq": 256,
@@ -131,6 +131,15 @@
       "preimage_readable": "'km43/v1/evt' | type:u8 | session_id:u16be | 0x00000000 | payload",
       "out16": "98b7711ad5f1162b6eb7d2dc41d863ef",
       "full_body_cbor": "a2015819a4011904d2021b0000018f1e2a3b400319020104a201030201025098b7711ad5f1162b6eb7d2dc41d863ef"
+    },
+    "error_response": {
+      "key": "session_key",
+      "type": 255,
+      "inner_body_cbor": "a2010702781f666f757220726571756573747320616c726561647920696e20666c69676874",
+      "preimage": "6b6d34332f76312f727370ff000300000011a2010702781f666f757220726571756573747320616c726561647920696e20666c69676874",
+      "preimage_readable": "'km43/v1/rsp' | type:u8 | session_id:u16be | req_id:u32be | payload",
+      "out16": "bbfca8a2579b037c13d1564686fc6768",
+      "full_body_cbor": "a2015825a2010702781f666f757220726571756573747320616c726561647920696e20666c696768740250bbfca8a2579b037c13d1564686fc6768"
     }
   },
   "bodies": {
@@ -148,8 +157,8 @@
       "capabilities_readable": "bit 0 log readable, 1 config writable, 2 commands accepted, 4 clock settable, 5 counted state of charge, 6 AC metering, 7 a behaviour is in shadow mode; bit 3 firmware update is clear",
       "counter_readable": "the highest counter already accepted from client_id 7, which is why the signed_request vector's 0x42 is the next value that is not a replay",
       "sequence_spaces": "keys 7 and 8 are log positions and key 9 is the state store's own counter; the two spaces must never be compared, and 255 sitting beside 256 here is what that trap looks like",
-      "body_cbor": "b81d01010200030304766f38392d73746d333220302e312e302b3161326233630578186573703332633620302e322e302d756e76657269666965640618f70701081901000918ff0af50b18410c080d18200e080f10100411182012001348000000000000000014081518181618a017190180181819020018191860181a1830181b0c181c1818181d04",
-      "body_len": 137
+      "body_cbor": "b81d0101020003030477302e312e302d626574612e31322b673161326233633464057818302e322e302d616c7068612e31322b6735653666376138620618f70701081901000918ff0af50b18410c080d18200e080f10100411182012001348000000000000000014081518181618a017190180181819020018191860181a1830181b0c181c1818181d04",
+      "body_len": 138
     },
     "inventory_0x8D": {
       "type": 141,
@@ -286,6 +295,58 @@
       "body_len": 20,
       "body_readable": "{1:rev, 2:e}",
       "values_readable": "rev 41, device 3 gone from 1 online to 3 offline and device 5 from 1 online to 2 degraded. Presence does not move rev (P-155), which is why this event carries the current one rather than a new one"
+    },
+    "pair_0x0B": {
+      "type": 11,
+      "authentication": "key 3 is macs.pair_proof.out16, computed over keys 1 and 2 and the trio the Discover above fixed; no wrapper, the proof is the authentication",
+      "session_id": 0,
+      "req_id": 17,
+      "body_readable": "{1:client_kind=1, 2:label, 3:proof, 4:client_nonce}",
+      "body_cbor": "a40101026d6b69746368656e2070686f6e65035022171c0449d848381e6d99ed7c92d1bd0450b0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+      "body_len": 54,
+      "envelope_readable": "[type:0x0B, session_id:0, req_id:17, {1:client_kind, 2:label, 3:proof, 4:client_nonce}]",
+      "whole_envelope_cbor": "840b0011a40101026d6b69746368656e2070686f6e65035022171c0449d848381e6d99ed7c92d1bd0450b0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+      "whole_envelope_len": 58
+    },
+    "pair_0x8B": {
+      "type": 139,
+      "authentication": "key 3 is macs.pair_ack_mac.out16, computed over keys 1, 2 and 4, the trio, and an epoch the body does not carry (P-087); no wrapper",
+      "session_id": 3,
+      "req_id": 17,
+      "body_readable": "{1:outcome=enrolled, 2:client_id=7, 3:mac, 4:next_challenge}",
+      "body_cbor": "a40101020703504a7937d934b87b750a254a05289f030b0450c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+      "body_len": 41,
+      "envelope_readable": "[type:0x8B, session_id:3, req_id:17, {1:outcome, 2:client_id, 3:mac, 4:next_challenge}]",
+      "whole_envelope_cbor": "84188b0311a40101020703504a7937d934b87b750a254a05289f030b0450c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+      "whole_envelope_len": 46
+    },
+    "error_0xFF": {
+      "type": 255,
+      "authentication": "none; this is the bare shape, and the wrapped one is macs.error_response",
+      "session_id": 3,
+      "req_id": 17,
+      "body_readable": "{1:code=4, 2:detail}",
+      "body_cbor": "a2010402781d6e6f2073657373696f6e206f6e207468697320636f6e6e656374696f6e",
+      "body_len": 35,
+      "envelope_readable": "[type:0xFF, session_id:3, req_id:17, {1:code, 2:detail}]",
+      "whole_envelope_cbor": "8418ff0311a2010402781d6e6f2073657373696f6e206f6e207468697320636f6e6e656374696f6e",
+      "whole_envelope_len": 40
+    },
+    "readlog_0x05": {
+      "type": 5,
+      "authentication": "this is the inner body; on the wire it is key 1 of the wrapper, whose key 2 is a MAC under session_key with the label 'km43/v1/wrq' — macs.wrapper_request wraps these same bytes",
+      "body_readable": "{1:from_seq=1216, 2:max_entries=64}",
+      "body_cbor": "a2011904c0021840",
+      "body_len": 8
+    },
+    "logpage_0x85": {
+      "type": 133,
+      "authentication": "this is the inner body; on the wire it is key 1 of the wrapper, whose key 2 is a MAC under session_key with the label 'km43/v1/rsp'",
+      "body_readable": "{1:entries, 2:next_seq=1218, 3:oldest_seq=1, 4:complete=false}",
+      "entries_readable": "two records answering readlog_0x05: seq 1216, a boot (0x0601) written before the clock was ever set, so it carries no key 2 at all rather than an at of 0; then seq 1217 at the same instant as macs.event, kind 0x0201 with the same body",
+      "values_readable": "next_seq is one past the highest seq the page carries (P-029), oldest_seq 1 is what the controller still holds, and complete is false so the client passes 1218 back",
+      "body_cbor": "a40182a3011904c00319060104a0a4011904c1021b0000018f1e2a3b400319020104a201030201021904c2030104f4",
+      "body_len": 47
     }
   },
   "crc16": [
@@ -363,10 +424,10 @@
       "session_id": 0,
       "req_id": 1,
       "body_readable": "{1:protocol_major=1, 2:protocol_minor=0, 3:role=comms, 4:fw, 5:boot_id, 6:hw, 7:net_version=0}",
-      "envelope_cbor": "8418600001a7010102000302046f6f38392d657370333220302e312e30051a5eedface0671657370333263362d6465766b6974632d310700",
-      "crc16_ccitt_false": "0x3fee",
-      "encoded_with_delimiter": "048418600601a70101022e0302046f6f38392d657370333220302e312e30051a5eedface0671657370333263362d6465766b6974632d310703ee3f00",
-      "encoded_len": 60
+      "envelope_cbor": "8418600001a7010102000302047818302e322e302d616c7068612e31322b673565366637613862051a5eedface0672636f6e74726f6c6c65722d612072657620410700",
+      "crc16_ccitt_false": "0x9d70",
+      "encoded_with_delimiter": "048418600601a7010102390302047818302e322e302d616c7068612e31322b673565366637613862051a5eedface0672636f6e74726f6c6c65722d612072657620410703709d00",
+      "encoded_len": 71
     },
     "client_connected_0x62": {
       "type": 98,

@@ -38,6 +38,7 @@ use crate::envelope::{Header, ReqId, SessionId};
 /// Never zero — zero is the link itself, which is what makes *no connection*
 /// and *connection 0* decidable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Conn(u16);
 
 impl Conn {
@@ -60,6 +61,7 @@ impl Conn {
 
 /// What a refusal is about, which is what decides how it is addressed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum About {
     /// A client frame whose envelope parsed. Its `session_id` and `req_id` are
     /// echoed, and they are what the `rsp` preimage covers.
@@ -92,6 +94,7 @@ pub enum About {
 
 /// Where a refusal goes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Route {
     /// Out to this connection.
     ToClient(Conn),
@@ -101,6 +104,7 @@ pub enum Route {
 
 /// How a refusal is stamped and where it is sent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Addressed {
     /// What goes in the envelope's `session_id`.
     pub session: SessionId,

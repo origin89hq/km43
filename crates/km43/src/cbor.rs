@@ -31,6 +31,7 @@ const NESTING: usize = MAX_DEPTH as usize;
 /// there is no partial read and no repair, because a body that is not exactly
 /// what this protocol describes is a body whose meaning is not knowable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum CborError {
     /// The item runs past the bytes there are, which is what a truncated frame
     /// looks like from the inside.

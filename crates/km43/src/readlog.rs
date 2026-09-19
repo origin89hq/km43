@@ -28,6 +28,7 @@ use crate::limits::{MAX_LOG_PAGE_BYTES, MAX_LOG_PAGE_ENTRIES};
 
 /// The two keys of `ReadLog 0x05`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ReadLogKey {
     /// Key 1, clamped up to `oldest_seq` by P-099.
     FromSeq,
@@ -69,6 +70,7 @@ impl fmt::Display for ReadLogKey {
 
 /// The four keys of `LogPage 0x85`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum PageKey {
     /// Key 1.
     Entries,
@@ -120,6 +122,7 @@ impl fmt::Display for PageKey {
 
 /// A key of either body here, so one refusal can name either.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ReadLogBodyKey {
     /// A key of `ReadLog 0x05`.
     Request(ReadLogKey),
@@ -218,6 +221,7 @@ impl<'a> LogEntry<'a> {
 
 /// The body of `ReadLog 0x05`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ReadLog {
     /// Key 1.
     pub from_seq: LogSeq,
@@ -487,6 +491,7 @@ fn once<T>(
 
 /// Why a log read was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ReadLogError {
     /// A required key never arrived (P-015).
     Missing(ReadLogBodyKey),

@@ -20,6 +20,7 @@ use crate::generated::MessageType;
 
 /// What a type needs before a controller can answer it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Admits {
     /// The exchange that creates a session. No session is needed and none is
     /// looked for — `Discover` has no key to look one up with, `Hello` is what

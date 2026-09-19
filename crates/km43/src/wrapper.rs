@@ -32,6 +32,7 @@ use crate::mac::{MacError, SessionKey, Tag, Wrapped};
 /// number. Named `WrapperKey` and not `Key` because this crate is full of keys
 /// and none of the others are integers on a wire.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum WrapperKey {
     /// Key 1, the inner body — and the only thing the MAC covers.
     Payload,
@@ -423,6 +424,7 @@ impl fmt::Debug for Tagged<'_> {
 /// garbled and error 10 says the key was wrong, and a client told the first
 /// about the second retries the same frame until it gives up.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum WrapperError {
     /// A key that is neither 1 nor 2 (P-050), refused rather than skipped —
     /// P-013 does not reach inside this map.

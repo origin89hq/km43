@@ -5,6 +5,12 @@
 //! "nothing here allocates" is enforced by the compiler on every build rather
 //! than by a rule somebody remembers. Nothing here names a peripheral either —
 //! a caller hands it bytes.
+//!
+//! One feature, `defmt`, off by default: it derives `defmt::Format` on the
+//! identifiers, counters, enums, verdicts and errors, so a consumer logging on
+//! the target can derive it on a row that holds a [`ClientId`] instead of
+//! writing the impl by hand. Never on a key or a tag, which have no `Debug`
+//! for the same reason.
 
 #![no_std]
 #![deny(unsafe_code)]
