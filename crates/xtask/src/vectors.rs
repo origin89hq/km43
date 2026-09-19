@@ -1804,9 +1804,6 @@ impl Builder {
                 body: cmap! {1 => Cb::U(1), 2 => Cb::U(0)},
                 readable: "{1:outcome=stored, 2:version=0}".into(),
             },
-            // An `authorise` over a real SHA-256 rather than a pattern of
-            // bytes, so the published digest is one a firmware could have
-            // computed from the image named in `body_readable`.
             LinkCase {
                 // The bench's reason, which is the one a controller sends on
                 // every unit before it leaves the bench.
@@ -1841,6 +1838,9 @@ impl Builder {
         /// quoted in `body_readable` so an outside implementation can.
         const IMAGE: &str = "km43 comms release vector image";
         Ok(vec![
+            // An `authorise` over a real SHA-256 rather than a pattern of
+            // bytes, so the published digest is one a firmware could have
+            // computed from the image named in `body_readable`.
             LinkCase {
                 name: "comms_release_0x67",
                 kind: Link::CommsRelease,
