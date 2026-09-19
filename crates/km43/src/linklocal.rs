@@ -387,7 +387,8 @@ pub struct LinkUp<'a> {
     /// Key 6, the board name and revision as the hardware repository writes
     /// them (L-034).
     pub hw: &'a str,
-    /// Key 7, comms only: the credential version it has cached, 0 if none.
+    /// Key 7, comms only: the version of the last `NetConfig` it stored, a
+    /// clear included, and 0 only if it was never given one (L-132).
     pub net_version: Option<u32>,
 }
 
@@ -1326,19 +1327,22 @@ impl ClientDownAck {
 /// holds.
 ///
 /// **The version is not the one it was sent** (L-132). It is what is in NVS
-/// after the attempt, and 0 is the honest answer from an empty board — the
-/// controller decides whether to push by comparing it, so an ack that echoed
-/// the offered version would stop the pushes to a board with no credentials on
-/// it.
+/// after the attempt, and 0 is the honest answer from a board never given a
+/// network — the controller decides whether to push by comparing it, so an ack
+/// that echoed the offered version would stop the pushes to a board with no
+/// credentials on it. A stored `clear` is held at the version it carried and
+/// reported as such: a board that answered 0 after a clear would be sent the
+/// same clear on every link-up for the life of the unit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct NetVerdict {
     /// Key 1.
     pub outcome: NetConfig,
-    /// Key 2, what it now holds. **0 when it holds nothing**, and never
-    /// defaulted — an absent version read as 0 is a board that failed to store
-    /// reporting itself empty, which happens to be right for the wrong reason
-    /// and stops being right the moment a write fails over an old credential.
+    /// Key 2, the version of what it now holds, a clear included. **0 only
+    /// when it was never given a network**, and never defaulted — an absent
+    /// version read as 0 is a board that failed to store reporting itself
+    /// never provisioned, which happens to be right for the wrong reason and
+    /// stops being right the moment a write fails over an old credential.
     pub version: u32,
 }
 
@@ -1929,9 +1933,10 @@ mod tests {
         assert_eq!(NetVerdict::decode(envelope).expect("it reads"), stored);
     }
 
-    /// **A board with an empty NVS answers 0, and 0 is a value.** L-132 makes it
-    /// the honest answer from a board holding nothing, and it is what gets that
-    /// board provisioned — the controller pushes when the versions differ.
+    /// **A board never given a network answers 0, and 0 is a value.** L-132
+    /// makes it the honest answer from a board nobody has provisioned, and it
+    /// is what gets that board provisioned — the controller pushes when the
+    /// versions differ.
     #[test]
     fn an_empty_board_reports_version_zero_and_gets_provisioned() {
         let empty = NetVerdict {
@@ -1947,10 +1952,45 @@ mod tests {
         assert_eq!(NetVerdict::decode(envelope).expect("it reads").version, 0);
     }
 
+    /// **An ack answering a clear carries the clear's version through the
+    /// codec.** L-132 has the comms processor report the version a clear
+    /// carried rather than 0, and this is only the wire's half of that: the
+    /// number survives the encoder and the decoder. What a board stores after a
+    /// clear is the comms firmware's, and no code in this crate stores one, so
+    /// this test is not named after the rule and does not count as covering it.
+    #[test]
+    fn an_ack_to_a_clear_carries_the_clears_version_not_zero() {
+        let cleared = NetChange::Clear {
+            version: 2,
+            country: "CA",
+            hostname: "cabin",
+        };
+        let NetChange::Clear { version, .. } = cleared else {
+            panic!("the fixture is a clear");
+        };
+        let ack = NetVerdict {
+            outcome: NetConfig::Stored,
+            version,
+        };
+        let mut bytes = [0u8; 64];
+        let len = ack
+            .write(link_header(LinkMessageType::NetConfigAck), &mut bytes)
+            .expect("it writes");
+        let envelope = crate::envelope::LinkEnvelope::decode(bytes.get(..len).expect("the frame"))
+            .expect("an envelope");
+        let reported = NetVerdict::decode(envelope).expect("it reads").version;
+        assert_eq!(reported, 2, "the ack carries the version of the clear");
+        assert_ne!(
+            reported, 0,
+            "0 is a board never given a network, not this one"
+        );
+    }
+
     /// **An absent version is not 0.** They look the same and they are opposite
-    /// claims: 0 is a board saying it holds nothing, and absent is a board that
-    /// did not say. Read as 0, a failed write over an existing credential
-    /// reports an empty board — right by accident until the moment it matters.
+    /// claims: 0 is a board saying it was never provisioned, and absent is a
+    /// board that did not say. Read as 0, a failed write over an existing
+    /// credential reports a board nobody provisioned — right by accident until
+    /// the moment it matters.
     #[test]
     fn a_net_ack_without_a_version_is_refused_not_read_as_empty() {
         let mut bytes = [0u8; 64];
