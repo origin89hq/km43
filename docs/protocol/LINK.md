@@ -1076,10 +1076,14 @@ start, the half-open interval from the start to the start plus 1 500 ms, and
 MUST honour one arriving inside it: answer `entering`, set the ROM's
 force-download flag, and reset into the ROM within 100 ms of the answer,
 forwarding and answering nothing else meanwhile. One received at or after the
-close is outside the window (L-191). The window runs before any code that can
-crash for a reason of ours, which is what keeps an application in a crash loop
-offering it on every cycle, and the 1.5 s it costs every boot is spent while
-the link is coming up anyway.
+close is outside the window (L-191). The start, the moment it listens, MUST come
+within 1 000 ms of its reset being released, the boot chain before it included,
+ROM and bootloader and any image verification they do: the window then closes
+at most 2 500 ms after the release, inside the controller's 3 000 ms of repeats
+(L-192). Board A's bench measured 270 ms. The window runs before any code that
+can crash for a reason of ours, which is what keeps an application in a crash
+loop offering it on every cycle, and the 1.5 s it costs every boot is spent
+while the link is coming up anyway.
 
 **L-191** — Outside that window the comms processor MUST answer
 `refused_outside_window` and MUST NOT set the flag; and whatever the window,
