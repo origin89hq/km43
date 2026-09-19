@@ -658,9 +658,33 @@ suspend the ladder, and MUST resume it only when the install finishes or its
 turns an update into a brick.
 
 **L-114** — The rail's declared fail state MUST be on, so that a controller
-reaching a state it did not plan for comes up with the radio powered. A
-controller that comes up with its radio off is a controller nobody can reach to
-ask why.
+reset is not also a comms reset. Every time the rail goes off, it is because
+running firmware decided so and logged it (L-111, L-112), never as a side effect
+of the controller restarting.
+
+The cost of the other choice is counted in rail cycles. With a fail state of
+off, the rail is off whenever the STM32 is not driving it on, and that includes
+every reset: on controller board A revision A, `PC5` is high-impedance through
+reset and `R19` holds `Q2` off. Each controller reset then reboots the ESP32,
+costs a Wi-Fi association, and is a rail switch-on of the kind
+origin89hq/hardware#5 is open on. A crash loop at the 8-second watchdog is 450
+of those an hour, against the three deliberate ones L-112 allows. A fail state
+of on removes all of them, and removes a separate inrush event at cold boot as
+well (origin89hq/hardware#48, its rule A-23). Revision B is built this way.
+
+The rule used to rest on reachability: a controller that comes up with its
+radio off is one nobody can reach to ask why. That reason does not hold on its
+own. L-120 and L-121 make a comms processor that has lost its controller close
+every client and answer nothing, so a powered radio with no controller behind it
+cannot be asked anything. What it does buy is that the box still shows up on
+the access point. That is a real benefit, and a minor one.
+
+One case argues the other way. After a brown-out on a weak bank, the module's
+first Wi-Fi burst comes before the controller's policy runs, and that burst
+could pull the bank back under. It lasts under a second, and it is being
+measured on the revision A rework (origin89hq/hardware#48, item 9). If that
+measurement shows the burst tipping a recovering bank back into brown-out, the
+fail state is the thing to revisit.
 
 ### When the comms processor stops hearing the controller
 
