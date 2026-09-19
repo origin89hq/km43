@@ -154,15 +154,18 @@ fn is_class_a_says_nothing_about_any_kind_the_registry_never_allocated() {
     }
 }
 
-/// Every metric answers the unit and decade the registry gives it. Bisected
-/// on a table the generator sorts, so a table emitted in file order would
-/// miss every kind after the first one out of place.
+/// Every metric answers the unit and decade the registry gives it, retired
+/// ones included: the generator keeps their units so a record written under a
+/// retired kind still reads in the unit it was taken in. Bisected on a table
+/// the generator sorts, so a table emitted in file order would miss every kind
+/// after the first one out of place.
 #[test]
 fn unit_and_scale_answers_the_registry_s_unit_and_decade_for_every_metric() {
     let mut compared = 0;
+    let mut retired = 0;
     for metric in blocks("metrics") {
         if is_gone(metric.status()) {
-            continue;
+            retired += 1;
         }
         let kind = MetricKind(metric.number("kind").expect("a metric has a kind"));
         let unit = metric.field("unit").expect("a metric has a unit");
@@ -179,6 +182,10 @@ fn unit_and_scale_answers_the_registry_s_unit_and_decade_for_every_metric() {
         compared += 1;
     }
     assert!(compared >= 20, "only {compared} metrics were compared");
+    assert!(
+        retired > 0,
+        "no retired metric was compared, so their units are pinned by nothing"
+    );
 }
 
 /// A kind with no row is `None`, never a default unit: a value rendered in
