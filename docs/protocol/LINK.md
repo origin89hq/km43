@@ -191,6 +191,8 @@ which is the subject of the next section.
 | Outstanding link-local requests, per side | **4** | L-014 |
 | Response timeout | 500 ms | L-015 |
 | Attempts before the link is treated as down | 3 | L-015 |
+| `EnterDownload` repeat period, exempt from L-015 | 100 ms | L-192 |
+| `EnterDownload` given up after | 3 000 ms | L-192 |
 
 **L-014** — A side MUST NOT have more than 4 link-local requests outstanding,
 and a receiver MUST answer a peer's fifth with code 262. It is a fixed table on
@@ -208,11 +210,13 @@ or a counter. Retrying forever is the alternative, and it hides a link that has
 stopped carrying traffic behind a sender that looks busy.
 
 Nothing in this range is cryptographic, so its vectors in
-[vectors/v1.json](vectors/v1.json) are wire bytes only: eight frames, one per
-opcode the two firmwares exchange with the refusal wherever a verdict has one,
-because the two ends of this link are two codebases and bytes two
-implementations agree on with nothing else checking them are how a format
-drifts.
+[vectors/v1.json](vectors/v1.json) are wire bytes only, and they are a subset
+of the eighteen opcodes: `LinkUp`, `ClientConnected` and its acknowledgement,
+`TimeOffer` and its refusal, `NetConfigAck`, and `EnterDownload` and its
+refusal, chosen for the bodies with the most keys and for the refusal wherever
+a verdict has one. They exist because the two ends of this link are two
+codebases, and bytes two implementations agree on with nothing else checking
+them are how a format drifts.
 
 ---
 
@@ -1088,10 +1092,12 @@ asked too late must learn it asked too late, not that the module is gone.
 **L-192** — The controller MUST send `EnterDownload` only after it has itself
 reset the module, by cycling `EN` or the rail, MUST send the first within
 200 ms of releasing `EN`, and MUST repeat it every 100 ms with the same
-`req_id` until it is answered or 3 000 ms have passed. That is this message's
-retry and not L-015's: the window is measured from the module's start, which
+`req_id` until it is answered or 3 000 ms have passed. L-015 does not apply to
+`EnterDownload`: not its 500 ms, not its three attempts, and not its taking
+the link down, because the window is measured from the module's start, which
 the controller cannot see, and three attempts half a second apart could all
-fall before the module's UART is up or all after the window closed. Tying the
+fall before the module's UART is up or all after the window closed; giving up
+at 3 000 ms is this rule's, and it takes nothing down. Tying the
 request to a reset the controller performed is what correlates the two clocks,
 and it is also what makes the request unforgeable from the module's side: a
 comms processor cannot be talked into the ROM by anything that did not first
