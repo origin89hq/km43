@@ -2687,8 +2687,9 @@ value = 4
 name = "confirm_healthy"
 status = "live"
 
-# Why the controller asked for the download mode: for the log on both sides
-# and nothing the comms processor branches on.
+# Why the controller asked for the download mode: diagnostic, logged by the
+# controller with the verdict (L-192), since the module keeps nothing across the
+# reset; nothing either side branches on.
 [[link_enums.download_reason]]
 value = 1
 name = "bench"

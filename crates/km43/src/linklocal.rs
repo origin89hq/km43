@@ -1113,8 +1113,9 @@ impl TimeVerdict {
 ///
 /// Named `DownloadRequest` because the registry gives the message's name to
 /// the outcome its acknowledgement carries, as with every other pair here.
-/// The reason is for the log on both sides and nothing the comms processor
-/// branches on: what decides is the window, not the word.
+/// The reason is diagnostic: the controller logs it with the verdict (L-192),
+/// since the module keeps nothing across the reset it asks for, and nothing
+/// either side branches on it. What decides is the window, not the word.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DownloadRequest {
     /// Key 1.
