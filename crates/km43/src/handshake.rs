@@ -28,7 +28,7 @@ use crate::generated::{ErrorCode, MessageType};
 use crate::kdf::{ClientId, Enrolment, Epoch, Handshake};
 use crate::limits::{
     MAX_CHANNELS, MAX_CLIENTS, MAX_CMD_DEDUP, MAX_EVENT_QUEUE, MAX_INFLIGHT, MAX_PAYLOAD,
-    MAX_SESSIONS, MAX_STRING,
+    MAX_SESSIONS, MAX_STRING, REQUEST_FRAMING_BYTES, RESPONSE_FRAMING_BYTES,
 };
 use crate::mac::{ClientKey, HelloProof, MacError, SessionKey, Tag};
 use crate::wrapper::{Wrapper, WrapperError};
@@ -43,10 +43,6 @@ const_assert!(
     MAX_STRING >= 24 && MAX_STRING <= 255,
     "a CBOR text head is two bytes only between 24 and 255 — outside that range the three body caps below are each a byte out, and the frame that does not fit gets built at a fully configured site rather than on a bench"
 );
-
-/// What an envelope and a wrapper cost around an inner body: eleven bytes of
-/// `[type, session_id, req_id, …]` and twenty-three of `{1: payload, 2: mac}`.
-const CARRIAGE: usize = 34;
 
 /// The widest `Discover 0x80` **body**: eight keys, a 64-byte `model` and two
 /// `bstr16`. A controller sizes its answer buffer at this plus the eleven bytes
@@ -80,11 +76,11 @@ const TOPOLOGY_REPORT_BYTES: usize = 59;
 pub const MAX_HELLO_REPORT: usize = 81 + 2 * TEXT_MAX + TOPOLOGY_REPORT_BYTES + 1;
 
 const_assert!(
-    MAX_HELLO_REPORT + CARRIAGE <= MAX_PAYLOAD,
+    MAX_HELLO_REPORT + RESPONSE_FRAMING_BYTES <= MAX_PAYLOAD,
     "a Hello 0x81 travels under an envelope and a wrapper; a body that fills the payload is the frame a controller builds and then has to refuse with error 5, which is P-185's argument one message over"
 );
 const_assert!(
-    MAX_HELLO_INNER + CARRIAGE <= MAX_PAYLOAD,
+    MAX_HELLO_INNER + REQUEST_FRAMING_BYTES <= MAX_PAYLOAD,
     "the inner body of a Hello 0x01 rides inside its payload key inside an envelope, and a client that cannot fit its own handshake never opens a session at all"
 );
 
@@ -94,6 +90,7 @@ const_assert!(
 /// numbers are compared — a major that differs refuses, a minor that differs
 /// takes the lower.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Version {
     /// A difference here refuses the session with error 3 (P-073).
     pub major: u8,
@@ -143,6 +140,7 @@ impl fmt::Display for Version {
 /// fn behind(log: LogSeq, state: StateSeq) -> bool { log < state }
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct LogSeq(pub u64);
 
 /// The state store's own counter (P-074), which is not a position in the log.
@@ -156,10 +154,12 @@ pub struct LogSeq(pub u64);
 /// fn ahead(state: StateSeq, log: LogSeq) -> bool { state > log }
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct StateSeq(pub u64);
 
 /// The eight keys of `Discover 0x80`, by name rather than by number.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum DiscoverKey {
     /// Key 1.
     ProtocolMajor,
@@ -233,6 +233,7 @@ impl fmt::Display for DiscoverKey {
 /// The two keys of a `Hello 0x01` body: the encoded inner body, and the proof
 /// over it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum HelloKey {
     /// Key 1, the inner body exactly as the client encoded it.
     Payload,
@@ -275,6 +276,7 @@ impl fmt::Display for HelloKey {
 /// The five keys of the inner body of `Hello 0x01` — the ones P-070 puts inside
 /// the proof.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum InnerKey {
     /// Key 1.
     ProtocolMajor,
@@ -336,6 +338,7 @@ impl fmt::Display for InnerKey {
 
 /// The twenty-nine keys of `Hello 0x81`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ReportKey {
     /// Key 1.
     ProtocolMajor,
@@ -521,6 +524,7 @@ impl fmt::Display for ReportKey {
 /// `protocol_major` in a `Discover` and `payload` in a `Hello`, and a single
 /// enum would either lose that or spell every variant twice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum BodyKey {
     /// A key of `Discover 0x80`.
     Discover(DiscoverKey),
@@ -575,6 +579,7 @@ impl fmt::Display for BodyKey {
 /// descriptor without moving the revision, which is the one silent failure the
 /// topology design has — so it refetches and says so out loud.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Topology {
     /// The topology revision the digest and the caps are of.
     pub rev: u32,
@@ -680,6 +685,7 @@ const_assert!(
 /// a client told it may keep eight requests in flight collects error 7 all
 /// afternoon and tells somebody the site is busy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Caps {
     /// Key 12.
     pub sessions: u8,
@@ -1588,6 +1594,7 @@ impl<'a> ReportSlots<'a> {
 /// check out, and whatever the wrapper said — each sends a client somewhere
 /// different, and a client told the wrong one retries until it gives up.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum HandshakeError {
     /// A key the body requires that never arrived. Never defaulted: an absent
     /// `challenge` is not sixteen zero bytes.
@@ -1782,15 +1789,11 @@ mod tests {
     const REQ_ID: u32 = 17;
     const CLIENT_VERSION: &str = "o89-cli 0.1.0";
 
-    /// `hello_proof.inner_body_cbor` from `docs/protocol/vectors/v1.json`.
-    const PUBLISHED_INNER: [u8; 40] =
-        hex("a5010102000307046d6f38392d636c6920302e312e300550b0b1b2b3b4b5b6b7b8b9babbbcbdbebf");
+    /// Sixteen bytes that are not any proof. For the frames below that are
+    /// refused before the proof is ever checked.
+    const NOT_A_PROOF: [u8; Tag::LEN] = [0x5a; Tag::LEN];
 
-    /// `hello_proof.out16` from the same file.
-    const PUBLISHED_PROOF: [u8; Tag::LEN] = hex("8418a3ffb064b88022622123ce6a4f01");
-
-    /// The `inputs` block of the vector file, as the pair every key on this unit
-    /// descends from.
+    /// The device every key below descends from.
     fn device() -> DeviceSecret {
         DeviceSecret::new(DeviceId::new(DEVICE_ID), PrintedSecret::new(PRINTED_SECRET))
     }
@@ -1827,41 +1830,6 @@ mod tests {
             session: SessionId::from(SESSION),
             req_id: ReqId(REQ_ID),
         }
-    }
-
-    /// The published `hello_proof`, reached through the real derivation ladder
-    /// and this module's own encoder.
-    ///
-    /// Handing `hello_proof` a key pins the preimage and leaves both the ladder
-    /// and the encoder free to move. Coming through `DeviceSecret` means a
-    /// dropped `epoch`, a swapped HKDF argument, a key written out of order and
-    /// a text head one byte wide all arrive as the same red line — and the
-    /// vector file is produced by a tool forbidden from importing this crate, so
-    /// it is an outside opinion rather than a restatement.
-    #[test]
-    fn the_published_hello_proof_is_what_this_module_encodes_and_then_proves() {
-        let mut scratch = [0u8; MAX_HELLO_INNER];
-        let request = inner()
-            .prove(&enrolment().client_key(), &CHALLENGE, &mut scratch)
-            .expect("the vector's inner body encodes and proves");
-        assert_eq!(
-            request.payload(),
-            &PUBLISHED_INNER[..],
-            "this encoder and the published inner body have parted company"
-        );
-        request
-            .proof()
-            .verify(&PUBLISHED_PROOF)
-            .expect("the published hello_proof is not what this module computes");
-    }
-
-    /// The other direction over the same bytes: the published inner body decodes
-    /// to the fields the file names, so the encoder and the decoder are not
-    /// simply wrong together.
-    #[test]
-    fn the_published_inner_body_decodes_to_the_fields_the_vector_names() {
-        let decoded = HelloInner::decode(&PUBLISHED_INNER).expect("the published body decodes");
-        assert_eq!(decoded, inner());
     }
 
     /// `Discover 0x80` at session 3, `req_id` 17, written out by hand so the tests
@@ -2240,8 +2208,8 @@ mod tests {
         }
     }
 
-    /// The same five fields as [`PUBLISHED_INNER`] with `client_id` written in
-    /// long form: identical meaning, different bytes.
+    /// The five fields of [`inner`] with `client_id` written in long form:
+    /// identical meaning, and not the bytes the encoder writes.
     const LONG_FORM_INNER: [u8; 41] =
         hex("a501010200031807046d6f38392d636c6920302e312e300550b0b1b2b3b4b5b6b7b8b9babbbcbdbebf");
 
@@ -2343,14 +2311,20 @@ mod tests {
     #[test]
     fn a_re_encoded_inner_body_is_not_the_inner_body_that_arrived() {
         let key = enrolment().client_key();
+        let mut scratch = [0u8; MAX_HELLO_INNER];
+        let short_form = inner()
+            .prove(&key, &CHALLENGE, &mut scratch)
+            .expect("the inner body encodes and proves");
         assert_eq!(
             HelloInner::decode(&LONG_FORM_INNER).expect("long form decodes"),
-            HelloInner::decode(&PUBLISHED_INNER).expect("short form decodes"),
-            "the two fixtures must mean the same thing, or this test proves nothing"
+            inner(),
+            "the two encodings must mean the same thing, or this test proves nothing"
         );
-        assert_ne!(&LONG_FORM_INNER[..], &PUBLISHED_INNER[..]);
+        assert_ne!(&LONG_FORM_INNER[..], short_form.payload());
 
-        let wire = hello_wire(&LONG_FORM_INNER, &PUBLISHED_PROOF);
+        // A genuine proof, computed over the short form, presented with the
+        // long form underneath it.
+        let wire = hello_wire(&LONG_FORM_INNER, short_form.proof().as_bytes());
         assert_eq!(
             wire.claimed()
                 .expect("the frame parses")
@@ -2469,7 +2443,7 @@ mod tests {
     fn a_hello_claiming_client_id_zero_names_no_slot() {
         let zeroed: [u8; 40] =
             hex("a5010102000300046d6f38392d636c6920302e312e300550b0b1b2b3b4b5b6b7b8b9babbbcbdbebf");
-        let wire = hello_wire(&zeroed, &PUBLISHED_PROOF);
+        let wire = hello_wire(&zeroed, &NOT_A_PROOF);
         assert_eq!(wire.claimed().err(), Some(HandshakeError::NoSuchSlot));
     }
 
@@ -2627,7 +2601,7 @@ mod tests {
             kind: MessageType::CommandResponse,
             session: head.session,
             req_id: ReqId(REQ_ID),
-            payload: &PUBLISHED_INNER,
+            payload: &[0x42; 24],
         };
         session
             .key()
@@ -3159,11 +3133,16 @@ mod tests {
 
         let mut scratch = [0u8; MAX_HELLO_INNER];
         let key = enrolment().client_key();
-        for short in 0..PUBLISHED_INNER.len() {
+        let whole = inner()
+            .prove(&key, &CHALLENGE, &mut scratch)
+            .expect("the fixture fits")
+            .payload()
+            .len();
+        for short in 0..whole {
             let dst = scratch.get_mut(..short).expect("short is below the cap");
             assert!(
                 inner().prove(&key, &CHALLENGE, dst).is_err(),
-                "a {short}-byte scratch for a 44-byte inner body"
+                "a {short}-byte scratch for a {whole}-byte inner body"
             );
         }
     }

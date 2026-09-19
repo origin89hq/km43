@@ -16,7 +16,8 @@
 use core::fmt;
 
 use crate::cbor::{CborError, CborReader, CborWriter};
-use crate::generated::{ConcernState, Condition, Severity, VendorNamespace};
+use crate::envelope::Refusal;
+use crate::generated::{ConcernState, Condition, ErrorCode, Severity, VendorNamespace};
 use crate::ident::{Id, IdError};
 use crate::limits::{
     CONCERN_MAX_BYTES, MAX_CONCERN_PAGE_BYTES, MAX_CONCERN_PAGE_ROWS, MAX_SERIES_LEN,
@@ -31,6 +32,7 @@ use crate::limits::{
 ///
 /// Bounded above as well as below, which is what keeps it one byte on the wire.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ElementAt(u8);
 
 impl ElementAt {
@@ -63,6 +65,7 @@ impl ElementAt {
 /// namespace with no code names a vendor and says nothing about them. Two
 /// vendors both use `0x0021` for different things.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct VendorCode {
     /// Preserved verbatim. Never normalised and never mapped onto a
     /// [`Condition`] — that is what key 6 is for, and a vendor code translated
@@ -78,6 +81,7 @@ pub struct VendorCode {
 /// [`Self::device`] — so a caller cannot put a bare 0 in the component position
 /// and mean a component, which is the confusion the reservation exists against.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Part {
     dev: Id,
     cmp: u16,
@@ -125,6 +129,7 @@ impl Part {
 /// `ebase`, so a client handed a position without one cannot print the label at
 /// all — it has a number and no way to turn it into the one painted on the cell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Subject {
     /// The device or the component, and nothing narrower.
     Part(Part),
@@ -166,6 +171,7 @@ impl Subject {
 /// literal that could be typed one out, and a refusal says `cid` rather than
 /// `1`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ConcernKey {
     Cid = 1,
     Dev = 2,
@@ -522,6 +528,7 @@ impl ConcernChanged {
 /// What a `Concerns 0x8F` answers. Evaluated in ascending order, first match
 /// wins (P-199).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ConcernsOutcome {
     /// Answered, in whole or in part. **An empty table is this**, with no rows
     /// and `next = 0` — *nothing is wrong at this site* is an answer, and a
@@ -773,6 +780,7 @@ impl ConcernsBody<'_> {
 
 /// What a client reads out of a `Concerns 0x8F` before it looks at the rows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ConcernsHeader {
     /// Key 1, the revision the page is of.
     pub rev: u32,
@@ -909,6 +917,7 @@ impl Iterator for ConcernRows<'_> {
 
 /// Why a `ReadConcerns` or a `Concerns` was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ConcernsError {
     /// 0 handed to an id space that reserves it as the paging sentinel.
     ZeroId,
@@ -970,6 +979,36 @@ impl From<IdError> for ConcernsError {
     }
 }
 
+impl ConcernsError {
+    /// What to answer. A row past its byte bound is error 5, as a wrapper too
+    /// large to write is; a page past its *row* cap is not, because the bytes
+    /// fit and it is the shape that is wrong. Everything else is a body whose
+    /// meaning cannot be trusted, which is what error 1 says.
+    #[must_use]
+    pub const fn refusal(self) -> Refusal {
+        match self {
+            Self::RowTooLong(_) => Refusal::Client(ErrorCode::PayloadTooLarge),
+            Self::ZeroId
+            | Self::ZeroElement
+            | Self::ElementPastSeries(_)
+            | Self::ElementWithoutSignal
+            | Self::CodeWithoutNamespace
+            | Self::NamespaceWithoutCode
+            | Self::UnknownSeverity(_)
+            | Self::UnknownState(_)
+            | Self::MissingRequest(_)
+            | Self::MissingResponse(_)
+            | Self::MissingRow(_)
+            | Self::MissingEvent(_)
+            | Self::WentNowhere(_)
+            | Self::PagePastRowCap(_)
+            | Self::AnsweredNothing(_)
+            | Self::UnknownOutcome(_)
+            | Self::Cbor(_) => Refusal::Client(ErrorCode::MalformedFrame),
+        }
+    }
+}
+
 impl fmt::Display for ConcernsError {
     fn fmt(&self, w: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -1012,10 +1051,50 @@ impl fmt::Display for ConcernsError {
     }
 }
 
+impl core::error::Error for ConcernsError {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::limits::{CONCERNS_HEADER_BYTES, INNER_BODY_BYTES};
+    use crate::render::Rendering;
+
+    /// No two refusals read as one sentence, and each carries the code P-141
+    /// leaves for a body that never reached a handler: error 5 for a row past
+    /// its byte bound, error 1 for the rest, a page past its row cap included,
+    /// because its bytes fit and it is the shape that is wrong.
+    #[test]
+    fn every_refusal_says_something_of_its_own() {
+        const EVERY: [ConcernsError; 18] = [
+            ConcernsError::ZeroId,
+            ConcernsError::ZeroElement,
+            ConcernsError::ElementPastSeries(40),
+            ConcernsError::ElementWithoutSignal,
+            ConcernsError::CodeWithoutNamespace,
+            ConcernsError::NamespaceWithoutCode,
+            ConcernsError::UnknownSeverity(9),
+            ConcernsError::UnknownState(9),
+            ConcernsError::MissingRequest(1),
+            ConcernsError::MissingResponse(2),
+            ConcernsError::MissingRow(ConcernKey::Cond),
+            ConcernsError::MissingEvent(3),
+            ConcernsError::WentNowhere(ConcernState::Active),
+            ConcernsError::RowTooLong(200),
+            ConcernsError::PagePastRowCap(99),
+            ConcernsError::AnsweredNothing(ConcernsOutcome::OutOfRange),
+            ConcernsError::UnknownOutcome(9),
+            ConcernsError::Cbor(CborError::WrongType),
+        ];
+        Rendering::<112>::each_says_something_of_its_own(&EVERY);
+        for why in EVERY {
+            let want = if matches!(why, ConcernsError::RowTooLong(_)) {
+                Refusal::Client(ErrorCode::PayloadTooLarge)
+            } else {
+                Refusal::Client(ErrorCode::MalformedFrame)
+            };
+            assert_eq!(why.refusal(), want, "{why}");
+        }
+    }
 
     fn id(value: u16) -> Id {
         Id::new(value).expect("a non-zero id")

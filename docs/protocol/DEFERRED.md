@@ -621,7 +621,7 @@ promise with no key number is a promise no implementer can keep, and all four ar
 load-bearing — the first turns a hole in `seq` into a number, the second is the
 whole audit trail of shadow mode, the third is how somebody works out whether a
 schedule fired twice, and the fourth is the one [LINK.md](LINK.md) leans on: the
-rail goes off after three cycles in an hour, and without the count nobody reading
+ladder stops cycling after three in an hour, and without the count nobody reading
 the log can tell the first cycle from the one that gave up.
 
 **A fifth promise is made in [REGISTRY](REGISTRY.md#client-capability-mask--u16)
@@ -631,6 +631,13 @@ was newly allocated or **reclaimed** from an identical label. *Somebody was
 enrolled* and *somebody was enrolled, may push firmware, and took over the row
 called `kitchen phone`* are different sentences, and only the second one is an
 audit record.
+
+**`0x0803` comms unrecoverable owes one more, and [LINK.md](LINK.md) L-112 is
+where it is promised.** The third rung of the heartbeat ladder has two branches:
+the rail left off for fifteen minutes, or left on and uncycled on a board that
+cannot switch it back on after that long. The record has to say which, or a log
+from a site reads the same whichever board wrote it, and *the rail was off for
+fifteen minutes* is a claim about power draw somebody will act on.
 
 **The sixth is `0x0501`, and it needs a discriminator before it needs anything
 else.** Four requirements raise it and none of them is distinguishable from the
@@ -742,8 +749,8 @@ thing this entry does when it lands.
 tries to render them, so the field list is what somebody needed rather than what
 somebody could imagine. The six already promised — the dropped count, the
 applied-or-shadowed flag, the clock's old value, new value and source, the comms
-power-cycle count, the granted capability mask, and the alarm's condition — are
-the floor and not the schema.
+power-cycle count, the granted capability mask, the alarm's condition, and which
+rail branch `0x0803` took — are the floor and not the schema.
 
 **Trigger.** The first event on the wire. Until then nothing sends a body and
 nothing decodes one; the moment one is sent the shape is public, it is in

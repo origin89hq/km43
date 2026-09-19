@@ -31,6 +31,7 @@ const MAX_BLOCK_DATA: usize = 254;
 /// Why a COBS buffer was refused. Every variant means *no bytes were produced* —
 /// none of them is a shorter answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum CobsError {
     /// The destination cannot hold the result. Size it with [`max_encoded_len`]
     /// when encoding; when decoding, the frame's own length always suffices.

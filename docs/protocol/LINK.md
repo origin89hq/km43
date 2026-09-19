@@ -90,7 +90,8 @@ has to be remembered.
 | NetConfig | `0x65` | `0xE5` | controller → comms |
 | TimeOffer | `0x66` | `0xE6` | comms → controller |
 | CommsRelease | `0x67` | `0xE7` | controller → comms |
-| *reserved* | `0x68`–`0x7E` | `0xE8`–`0xFE` | — |
+| EnterDownload | `0x68` | `0xE8` | controller → comms |
+| *reserved* | `0x69`–`0x7E` | `0xE9`–`0xFE` | — |
 
 **L-001** — A receiver MUST refuse a link-local message arriving from the side
 the direction column does not permit, with code 256 — the same code as an opcode
@@ -189,7 +190,9 @@ which is the subject of the next section.
 |---|---|---|
 | Outstanding link-local requests, per side | **4** | L-014 |
 | Response timeout | 500 ms | L-015 |
-| Attempts before the link is treated as down | 3 | L-015 |
+| Attempts before a request is given up | 3 | L-015 |
+| `EnterDownload` repeat period, exempt from L-015 | 100 ms | L-192 |
+| `EnterDownload` given up after | 3 000 ms | L-192 |
 
 **L-014** — A side MUST NOT have more than 4 link-local requests outstanding,
 and a receiver MUST answer a peer's fifth with code 262. It is a fixed table on
@@ -200,14 +203,24 @@ learn which.
 
 **L-015** — A sender MUST treat a request unanswered after 500 ms as failed and
 MUST retry it with the same `req_id`, up to 3 attempts; after the third it MUST
-treat the link as down and follow the heartbeat ladder. Reusing the `req_id` is
-what lets the peer recognise a retry instead of answering a request it has
-already answered, and it is only safe because nothing in this range carries a MAC
-or a counter. Retrying forever is the alternative, and it hides a link that has
-stopped carrying traffic behind a sender that looks busy.
+give the request up and report it failed to whatever asked. Whether the link is
+down is not this rule's to decide: that is L-100's timer alone, which a peer
+that answers nothing reaches six seconds after its last answer whatever was
+outstanding. A `Heartbeat` is not retried either, because the next beat two
+seconds later is its retry and a missed one is what L-100 measures. Reusing the
+`req_id` is what lets the peer recognise a retry instead of answering a request
+it has already answered, and it is only safe because nothing in this range
+carries a MAC or a counter. Retrying forever is the alternative, and it hides a
+link that has stopped carrying traffic behind a sender that looks busy.
 
-There are no test vectors for this range because there is nothing cryptographic
-in it. That is not an omission.
+Nothing in this range is cryptographic, so its vectors in
+[vectors/v1.json](vectors/v1.json) are wire bytes only, and they are a subset
+of the eighteen opcodes: `LinkUp`, `ClientConnected` and its acknowledgement,
+`TimeOffer` and its refusal, `NetConfigAck`, and `EnterDownload` and its
+refusal, chosen for the bodies with the most keys and, for `TimeOffer` and
+`EnterDownload`, the refusal rather than the acceptance. They exist because the
+two ends of this link are two codebases, and bytes two implementations agree on
+with nothing else checking them are how a format drifts.
 
 ---
 
@@ -317,9 +330,9 @@ LinkUp  0x60  ·  LinkUp  0xE0
   1: protocol_major   u8
   2: protocol_minor   u8
   3: role             u8      1 controller · 2 comms
-  4: fw               text    ≤ 32 bytes, the sender's own firmware version
+  4: fw               text    ≤ 32 bytes, the sender's own firmware version (L-034)
   5: boot_id          u32     redrawn randomly on every boot
-  6: hw               text    ≤ 32 bytes, board revision
+  6: hw               text    ≤ 32 bytes, board name and revision (L-034)
   7: net_version      u32     *optional*, comms only: the version of the last
                               `NetConfig` it stored, a clear included; 0 if it
                               was never given one
@@ -348,12 +361,46 @@ in exactly the sense `peer` is. The answer to *whose bytes are those* comes from
 the comms processor's own secure boot, and nothing on this link carries that
 measurement.
 
-**L-033** — Until a `LinkUp` exchange has completed in both directions, the
-comms processor MUST NOT forward a client frame and the controller MUST NOT
-accept one; a client frame arriving before that MUST be answered with code 258. A
-comms processor that starts routing before it knows the controller's protocol
-version is a comms processor that will forward a v2 body to a v1 controller and
-blame the client.
+**L-033** — A side is linked once its own `LinkUp` has been answered: the
+answer carries the peer's statement, and answering proves the peer holds this
+side's. A `LinkUp` from the peer is answered with this side's statement and
+recorded, and a side that is not linked sends its own at once; the peer's
+`LinkUp` does not link the side that receives it. A `LinkUp` whose `boot_id`
+differs from the one this side last saw unlinks it before anything else, because
+the new boot has answered nothing of this side's: the side sends its own at
+once and is linked again only when the new boot answers. Until linked, the comms
+processor MUST NOT forward a client frame and the controller MUST NOT accept
+one; a client frame arriving before that MUST be answered with code 258. A comms
+processor that starts routing before it knows the controller's protocol version
+is a comms processor that will forward a v2 body to a v1 controller and blame
+the client.
+
+A statement received is not a link. A peer that can talk but cannot hear sends
+its `LinkUp` for ever and answers nothing, and a side that counted the statement
+as the link would route to a peer that never hears the reply. Only an answer
+proves both directions, which is also the property the heartbeat ladder below
+is measured on.
+
+**L-034** — `fw` in `LinkUp`, and `version` in `CommsRelease` and
+`CommsReleaseAck`, MUST be a semantic version whose build metadata names the
+commit it was built from: `MAJOR.MINOR.PATCH[-PRE]+gXXXXXXXX`, with the first
+eight lowercase hex digits of the commit id after the `g`. Each of `MAJOR`,
+`MINOR` and `PATCH` MUST be at most three decimal digits, and `PRE`, without
+its hyphen, at most eight bytes. `hw` MUST be the board name and revision as
+origin89hq/hardware writes them, such as `controller-a rev B`. The controller
+MUST send the same `fw` text as `fw_controller` in the client `Hello`. A
+receiver MUST NOT refuse a `LinkUp` whose text has another shape.
+
+Without a format, two firmwares that never met could disagree: one sending
+`0.1.0`, the other `0.1.0+g1a2b3c4d`. A client comparing them learns nothing,
+and a bench log cannot match a running unit to a commit. The commit id is what
+does that matching, and eight digits of it is what fits. A semantic version
+alone has no ceiling, so the limits are what make the field hold every legal
+text: three-digit components, an eight-byte pre-release and the commit come to
+30 bytes, under the 32 the field allows. A full 40-character hash or a build
+date does not fit, which is why the format names neither. The receiver half
+exists because these texts are diagnostic (L-032): a link taken down over a
+version string is an outage caused by a label.
 
 ### boot_id is what makes a reboot visible
 
@@ -588,15 +635,23 @@ Heartbeat  0x61  ·  Heartbeat  0xE1
 ```
 
 **L-100** — Each side MUST send a `Heartbeat` every 2 seconds and MUST answer the
-peer's immediately rather than on its own next tick. Three missed in a row —
-6 seconds — MUST be treated as a dead link.
+peer's immediately rather than on its own next tick. A link is alive while the
+peer answers: 6 seconds since the peer last answered any request of this
+side's, three heartbeat periods, MUST be treated as a dead link. The timer is
+the whole of the condition, and any answer restarts it, a heartbeat's or
+another request's. It runs only on a linked side: a side that has not been
+answered since it booted is unlinked, which is already the state a dead link
+leads to (L-110, L-120), and the controller counts its sixty seconds to a cut
+from the rail's last coming up until the first answer arrives (L-111). The peer's own heartbeats do not count toward it: a
+heartbeat received proves the peer can talk, not that it can hear, and a peer
+whose receiver has hung keeps talking. Only an answer proves both directions.
 
 Every rung of the ladder below is measured from that one number, so the 2 seconds
 is not a comfort setting. Answering immediately rather than folding the answer
 into the next scheduled beat is what keeps a healthy link off the first rung: a
 side that batches its reply can be a full period late through nothing but
 scheduling, and two of those in a row look exactly like a comms processor that
-has stopped talking.
+has stopped answering.
 
 **`conns` catches the leak nothing else would.** A `ClientDisconnected` lost to a
 CRC failure leaks a row, and a leaked row is invisible: the controller thinks a
@@ -625,15 +680,15 @@ moment later.
 
 ### When the controller stops hearing the comms processor
 
-| Since the last heartbeat | What the controller does |
+| Since the comms processor last answered | What the controller does |
 |---|---|
 | 6 s | Link down. Drop every connection and session, log comms link lost (`0x0801`). Control is unaffected (L-110) |
 | 60 s | Cut the ESP32 power rail for 5 s, restore it, log comms power cycled (`0x0802`) with the count (L-111) |
-| 3 power cycles inside an hour | Leave the rail **off** for 15 minutes, raise comms unrecoverable (`0x0803`) (L-112) |
+| 3 power cycles inside an hour | Stop cycling for 15 minutes with the rail **off**, or **on** on a board that cannot switch it back on after that long; raise comms unrecoverable (`0x0803`) (L-112) |
 | A comms firmware install is in flight | The ladder is suspended until the install finishes or its window lapses (L-113) |
 
-**L-110** — Six seconds after the last heartbeat from the comms processor the
-controller MUST treat the link as down, drop every connection and every session
+**L-110** — Six seconds after the comms processor last answered one of the
+controller's requests the controller MUST treat the link as down, drop every connection and every session
 bound to one, and log comms link lost (`0x0801`). **Control MUST be unaffected.**
 
 That second sentence is the one to write the test around. It is the
@@ -641,17 +696,37 @@ week-with-no-client acceptance test running for real, and deleting it means a
 site four hours from a road stops running its generator because a browser went
 away.
 
-**L-111** — Sixty seconds after the last heartbeat the controller MUST cut the
-ESP32 power rail for 5 seconds, restore it, and log comms power cycled (`0x0802`)
+**L-111** — Sixty seconds after the comms processor last answered one of the
+controller's requests, or after the rail last came up if it has not answered
+since, the controller MUST cut the ESP32 power rail for 5 seconds, restore it, and log comms power cycled (`0x0802`)
 carrying the count. A wedged Wi-Fi stack has no other recovery. The count is in
 the record because the rung below is counted on it, and a power cycle nobody
 counts is a boot loop nobody can name afterwards from the log.
 
-**L-112** — After 3 power cycles inside an hour the controller MUST leave the
-rail off for 15 minutes and MUST raise comms unrecoverable (`0x0803`). A comms
-processor in a boot loop draws power continuously on the weakest bank in February
-and delivers nothing, and hammering a load switch every minute is how somebody
-finds out about its thermal limit in a place nobody can reach.
+**L-112** — After 3 power cycles inside an hour the controller MUST stop
+cycling the rail for 15 minutes, MUST raise comms unrecoverable (`0x0803`), and
+MUST leave the rail off for those 15 minutes, unless its board cannot switch the
+rail back on after that long. Such a board MUST leave the rail on and uncycled
+for the 15 minutes instead. The `0x0803` record MUST say which of the two the
+controller did. A comms processor in a boot loop draws power continuously on the
+weakest bank in February and delivers nothing, and hammering a load switch every
+minute is how somebody finds out about its thermal limit in a place nobody can
+reach.
+
+The exception is a property of the board, written in the board's own document,
+never a firmware preference. It exists because one board has it: on controller
+board A revision A, switching `V3V3_ESP` on after minutes off corrupts the
+STM32's control flow within milliseconds, every time it has been tried, while
+switch-ons seconds apart pass by the hundreds (origin89hq/hardware#5). Off for
+15 minutes is the one pattern that board cannot survive, and a controller that
+crashes itself to rest the radio has broken L-110 to keep L-112. Leaving the
+rail on costs the power a boot loop draws; it keeps control running, and it
+stops the cycling that was wearing the switch. A board whose switch passes
+long off-times, as revision B's slew-limited switch is built to
+(origin89hq/hardware#48), takes the rail-off branch. Which branch a unit took
+is in the record, so a log never has to be read against a guess about which
+board it came from. That field lands with the `0x0803` body, which
+[DEFERRED.md](DEFERRED.md) entry 10 still owns.
 
 **L-113** — While a comms firmware install is in flight the controller MUST
 suspend the ladder, and MUST resume it only when the install finishes or its
@@ -659,14 +734,39 @@ suspend the ladder, and MUST resume it only when the install finishes or its
 turns an update into a brick.
 
 **L-114** — The rail's declared fail state MUST be on, so that a controller
-reaching a state it did not plan for comes up with the radio powered. A
-controller that comes up with its radio off is a controller nobody can reach to
-ask why.
+reset is not also a comms reset. Every time the rail goes off, it is because
+running firmware decided so and logged it (L-111, L-112), never as a side effect
+of the controller restarting.
+
+The cost of the other choice is counted in rail cycles. With a fail state of
+off, the rail is off whenever the STM32 is not driving it on, and that includes
+every reset: on controller board A revision A, `PC5` is high-impedance through
+reset and `R19` holds `Q2` off. Each controller reset then reboots the ESP32,
+costs a Wi-Fi association, and is a rail switch-on of the kind
+origin89hq/hardware#5 is open on. A crash loop at the 8-second watchdog is 450
+of those an hour, against the three deliberate ones L-112 allows. A fail state
+of on removes all of them, and removes a separate inrush event at cold boot as
+well (origin89hq/hardware#48, its rule A-23). Revision B is built this way.
+
+The rule used to rest on reachability: a controller that comes up with its
+radio off is one nobody can reach to ask why. That reason does not hold on its
+own. L-120 and L-121 make a comms processor that has lost its controller close
+every client and answer nothing, so a powered radio with no controller behind it
+cannot be asked anything. What it does buy is that the box still shows up on
+the access point. That is a real benefit, and a minor one.
+
+One case argues the other way. After a brown-out on a weak bank, the module's
+first Wi-Fi burst comes before the controller's policy runs, and that burst
+could pull the bank back under. It lasts under a second, and it is being
+measured on the revision A rework (origin89hq/hardware#48, item 9). If that
+measurement shows the burst tipping a recovering bank back into brown-out, the
+fail state is the thing to revisit.
 
 ### When the comms processor stops hearing the controller
 
-**L-120** — Six seconds after the last heartbeat from the controller the comms
-processor MUST close every client connection, stop advertising over BLE, refuse
+**L-120** — Six seconds after the controller last answered one of the comms
+processor's requests, and from its boot until the controller first answers,
+the comms processor MUST close every client connection, stop advertising over BLE, refuse
 new connections, and retry `LinkUp` every 2 seconds until the controller answers.
 
 Refusing and un-advertising is what makes the outage visible at the phone instead
@@ -958,7 +1058,7 @@ Two checks, and the second one is not the first one repeated.
 CommsRelease  0x67
   1: op           u8      1 authorise · 2 activate · 3 revoke
                           · 4 confirm_healthy
-  2: version      text    ≤ 32 bytes
+  2: version      text    ≤ 32 bytes (L-034)
   3: image_len    u32
   4: digest       bytes(32)   SHA-256 over the whole image
 
@@ -966,7 +1066,7 @@ CommsReleaseAck  0xE7
   1: outcome      u8      1 authorised · 2 installed · 3 activated
                           · 4 refused_digest_mismatch · 5 refused_signature
                           · 6 refused_no_space · 7 rolled_back
-  2: version      text    what it will boot next
+  2: version      text    what it will boot next (L-034)
   3: bytes_have   u32     resume point after an interruption
 ```
 
@@ -1049,6 +1149,82 @@ executing garbage after a power cut, and no drive short enough to fix it.
 
 ---
 
+## The download window
+
+On controller board A revision A the module's `IO8` is unconnected, so the
+ROM's strapping route into serial download does not work, and the one route
+that does is the register one: firmware running on the module sets the ROM's
+force-download flag and resets itself. That route exists only while firmware on
+the module runs and still honours the request, so on that board the ability to
+reprogram the module is a property of the image on it, and an image that
+crashes before it listens, or one that drops the request, takes the last
+programming path with it. The earlier bench image scanned the relayed client
+stream for a text line, which is the failure this section exists against: a
+pattern in that stream which reboots the module into download mode hands any
+client able to reach the link a way to take the product off the air.
+
+```text
+EnterDownload  0x68
+  1: reason     u8      1 bench · 2 recovery — diagnostic: the controller
+                        records it with the request, and nothing either side
+                        branches on it
+
+EnterDownloadAck  0xE8
+  1: outcome    u8      1 entering · 2 refused_outside_window
+```
+
+**L-190** — Before it forwards any client frame, the comms processor MUST
+listen on the controller UART for `EnterDownload` for 1 500 ms from its own
+start, the half-open interval from the start to the start plus 1 500 ms, and
+MUST honour one arriving inside it: answer `entering`, set the ROM's
+force-download flag, and reset into the ROM within 100 ms of the answer,
+forwarding and answering nothing else meanwhile. One received at or after the
+close is outside the window (L-191). The start, the moment it listens, MUST come
+within 1 000 ms of its reset being released, the boot chain before it included,
+ROM and bootloader and any image verification they do: the window then closes
+at most 2 500 ms after the release, inside the controller's 3 000 ms of repeats
+(L-192). Board A's bench measured 270 ms. The window runs before any code that
+can crash for a reason of ours, which is what keeps an application in a crash
+loop offering it on every cycle, and the 1.5 s it costs every boot is spent
+while the link is coming up anyway.
+
+**L-191** — Outside that window the comms processor MUST answer
+`refused_outside_window` and MUST NOT set the flag; and whatever the window,
+it MUST NOT act on an `EnterDownload` that arrived on a client transport.
+L-002 already refuses the frame there with code 257; this says the action is
+never taken, so that the refusal being lost to a bug in the routing does not
+become a reboot. The refusal outside the window is an answer rather than
+silence because L-015 gives an unanswered request up, and a controller that
+asked too late must learn it asked too late, not that the module is gone.
+
+**L-192** — The controller MUST send `EnterDownload` only after it has itself
+reset the module, by cycling `EN` or the rail, MUST send the first within
+200 ms of releasing `EN`, and MUST repeat it every 100 ms with the same
+`req_id` until it is answered or 3 000 ms have passed. It MUST log the reason it
+sent with the verdict, or with the absence of one: the module keeps nothing across
+the reset it is asked for, so the controller's log is the only account of why a
+module entered its ROM. L-015 does not apply to
+`EnterDownload`: not its 500 ms, not its three attempts, and not its taking
+the link down, because the window is measured from the module's start, which
+the controller cannot see, and three attempts half a second apart could all
+fall before the module's UART is up or all after the window closed; giving up
+at 3 000 ms is this rule's, and it takes nothing down. Tying the
+request to a reset the controller performed is what correlates the two clocks,
+and it is also what makes the request unforgeable from the module's side: a
+comms processor cannot be talked into the ROM by anything that did not first
+hold its `EN` low.
+
+Nothing here is cryptographic; the two frames are published in
+[vectors/v1.json](vectors/v1.json) beside the other link frames, because the
+two ends of this link are two codebases and the request that recovers one of
+them is the last frame that may drift. Revision B restores the strapping route
+with a pull-up on `IO8` (hardware#48), and there this message is defence in
+depth; on revision A it carries the whole recovery story, and the acceptance
+test is an image that crashes at once, delivered as an update, recovered
+through the controller with no wire on the module.
+
+---
+
 ## Error codes
 
 Link-local codes start at **256** so that a client can tell *the link failed*
@@ -1058,7 +1234,7 @@ by hoping.
 
 **L-180** — Codes 257, 258 and 259 MUST reach the client whose frame raised
 them; the other six MUST NOT appear in a client-facing frame. A client that sent
-a link-local type, or connected before the two firmwares had exchanged `LinkUp`,
+a link-local type, or connected before the comms processor was linked (L-033),
 or is holding a handle the controller has never heard of, has to be told
 something: a client answered with silence waits until its socket dies, and the
 person holding the phone says *it just stops working*, which is the one bug
@@ -1118,7 +1294,7 @@ them evicts:
 | Outstanding link-local requests, per side | 4 | The sender does not issue a fifth; a peer that does gets code 262 (L-014) |
 | Cached Wi-Fi network | 1 | A `set` replaces — a value, not a table (L-136) |
 | Authorised comms release | 1 | A new `authorise` replaces the previous one; both are logged (L-174) |
-| ESP32 power cycles | 3 per hour | Rail off for 15 minutes, comms unrecoverable (`0x0803`) raised (L-112) |
+| ESP32 power cycles | 3 per hour | No cycling for 15 minutes, rail off, or on where the board cannot switch it back on after that long; comms unrecoverable (`0x0803`) raised (L-112) |
 
 ---
 

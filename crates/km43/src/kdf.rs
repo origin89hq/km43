@@ -67,6 +67,7 @@ const_assert!(
 /// `Preimage::under(key, Domain::PairKey)` would compile — and two enums are
 /// what makes it a type error instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Derivation {
     /// The pairing key, derived from the printed secret (P-088).
     PairKey,
@@ -125,6 +126,7 @@ impl PrintedSecret {
 /// device-level derivations, and at that call site a bare array is one swap
 /// away from being the IKM.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct DeviceId([u8; DEVICE_ID_BYTES]);
 
 impl DeviceId {
@@ -142,6 +144,7 @@ impl DeviceId {
 /// nobody wrote, and deriving under it mints keys the first successful write
 /// invalidates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Epoch(NonZeroU32);
 
 impl Epoch {
@@ -172,6 +175,7 @@ impl Epoch {
 /// slot and there is no key at it. Refusing it here is what stops a refused
 /// pairing from deriving anything at all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ClientId(NonZeroU32);
 
 impl ClientId {
@@ -487,8 +491,8 @@ mod tests {
     use core::fmt::Write as _;
 
     use crate::envelope::ReqId;
-    use crate::generated::{ClientKind, MessageType};
-    use crate::mac::{HelloProof, PairProof, Tag, Wrapped};
+    use crate::generated::MessageType;
+    use crate::mac::{HelloProof, Tag, Wrapped};
 
     /// Fixtures go in as the hexadecimal the documents publish. Retyping
     /// `0x8a, 0xee, …` by hand is how a digit moves house without anybody
@@ -522,14 +526,15 @@ mod tests {
     const CLIENT_ID: u32 = 7;
     const SESSION: u16 = 3;
     const REQ_ID: u32 = 17;
-    const LABEL: &str = "kitchen phone";
 
-    const HELLO_BODY: [u8; 40] =
-        hex("a5010102000307046d6f38392d636c6920302e312e300550b0b1b2b3b4b5b6b7b8b9babbbcbdbebf");
-    const COMMAND_ACK_BODY: [u8; 26] = hex("a301182a0201037267656e657261746f72207374617274696e67");
+    /// Two bodies to sign. Every test below compares one derivation against
+    /// another, never against a published answer, so the bytes are arbitrary:
+    /// what pins each derived key to `docs/protocol/vectors/v1.json` is
+    /// `tests/vectors.rs`, which reads the file.
+    const HELLO_BODY: [u8; 40] = [0x42; 40];
+    const COMMAND_ACK_BODY: [u8; 26] = [0x43; 26];
 
-    /// The `inputs` block of `docs/protocol/vectors/v1.json`, as the pair every
-    /// key on this unit descends from.
+    /// The device every key below descends from.
     fn device() -> DeviceSecret {
         DeviceSecret::new(DeviceId::new(DEVICE_ID), PrintedSecret::new(PRINTED_SECRET))
     }
@@ -551,17 +556,6 @@ mod tests {
     /// Every key type here seals its bytes on purpose — a key with an accessor
     /// is a key in a bench log — so the only way to ask whether two derivations
     /// agree is to have each sign one fixed body and compare the tags.
-    fn pair_signs(key: &PairKey) -> [u8; Tag::LEN] {
-        *key.proof(&PairProof {
-            device_id: &DEVICE_ID,
-            challenge: &CHALLENGE,
-            client_nonce: &CLIENT_NONCE,
-            client_kind: ClientKind::App,
-            label: LABEL,
-        })
-        .as_bytes()
-    }
-
     fn client_signs(enrolment: &Enrolment) -> [u8; Tag::LEN] {
         *enrolment
             .client_key()
@@ -655,135 +649,6 @@ mod tests {
                 Expand::under(&prk, self.info).key(),
                 self.okm,
                 "RFC 5869 case {case} expands differently"
-            );
-        }
-    }
-
-    /// The `derived_keys` block of `docs/protocol/vectors/v1.json`, fed the
-    /// salt, the IKM and the `info` exactly as that file publishes them.
-    ///
-    /// **The hex below is retyped, not read**, so this is not the outside opinion
-    /// an earlier version of this comment claimed — change a nibble in the file
-    /// and every test here stays green. What actually pins the three
-    /// derivations to that artefact is `tests/vectors.rs`, which drives the
-    /// ladder and checks all seven published tags: a wrong key gives a wrong
-    /// tag, so all three are covered there transitively.
-    ///
-    /// This stays because it splits the diagnosis. Feeding the published `info`
-    /// as bytes says the primitive agrees; the test below says our own assembly
-    /// of that `info` agrees. One test covering both comes back as a single
-    /// wrong key and says nothing about which half to go and read.
-    #[test]
-    fn every_published_key_is_reproduced_byte_for_byte() {
-        const CASES: [PublishedKey; 3] = [
-            PublishedKey {
-                derivation: Derivation::PairKey,
-                salt: &DEVICE_ID,
-                ikm: &PRINTED_SECRET,
-                info: &hex::<16>("6b6d34332f76312f706169722d6b6579"),
-                out: hex("d2b669d733ae985424f2930404f5b5976fc52776deaf02a853f14d43c0b73007"),
-            },
-            PublishedKey {
-                derivation: Derivation::ClientKey,
-                salt: &DEVICE_ID,
-                ikm: &PRINTED_SECRET,
-                info: &hex::<26>("6b6d34332f76312f636c69656e742d6b65790000000100000007"),
-                out: hex("eadf9347ac95af6e8d164d90883965d670a003c52785f1052fba086b05a1a853"),
-            },
-            PublishedKey {
-                derivation: Derivation::SessionKey,
-                salt: &hex::<32>(
-                    "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
-                ),
-                ikm: &hex::<32>("eadf9347ac95af6e8d164d90883965d670a003c52785f1052fba086b05a1a853"),
-                info: &hex::<21>("6b6d34332f76312f73657373696f6e2d6b65790003"),
-                out: hex("ba9ddffe57f11ccceeb5699cbaa5e1c196b719e9e867d97b05dd3b855d0f7601"),
-            },
-        ];
-
-        for case in &CASES {
-            case.is_reproduced();
-        }
-    }
-
-    /// One entry of the `derived_keys` block: the three arguments the file
-    /// names, and the 32 bytes it publishes for them.
-    struct PublishedKey {
-        derivation: Derivation,
-        salt: &'static [u8],
-        ikm: &'static [u8],
-        info: &'static [u8],
-        out: [u8; DERIVED_KEY_BYTES],
-    }
-
-    impl PublishedKey {
-        fn is_reproduced(&self) {
-            assert_eq!(
-                Expand::under(&Prk::of(Salt(self.salt), Ikm(self.ikm)), self.info).key(),
-                self.out,
-                "the {} vector moved",
-                self.derivation
-            );
-        }
-    }
-
-    /// The keys these methods derive are the keys the published MACs were
-    /// signed with.
-    ///
-    /// This is what closes the loop through three types that seal their bytes,
-    /// and it is the only thing that would catch `pair_key` reaching for
-    /// `Derivation::ClientKey`, or `enrolment` feeding `client_id` ahead of
-    /// `epoch`. Every such slip derives 32 bytes that look exactly as good as
-    /// the right ones, and nothing says otherwise until a second implementation
-    /// refuses every frame.
-    #[test]
-    fn each_derived_key_signs_the_tag_the_vectors_publish() {
-        assert_eq!(
-            pair_signs(&device().pair_key()),
-            hex::<16>("22171c0449d848381e6d99ed7c92d1bd"),
-            "the derived pair_key does not sign the published pairing proof"
-        );
-        assert_eq!(
-            client_signs(&enrolment()),
-            hex::<16>("8418a3ffb064b88022622123ce6a4f01"),
-            "the derived client_key does not sign the published Hello proof"
-        );
-        assert_eq!(
-            session_signs(&enrolment().session_key(&handshake(), SessionId::from(SESSION))),
-            hex::<16>("879f149683b569b80d2b190a955eccba"),
-            "the derived session_key does not sign the published response"
-        );
-    }
-
-    /// Every label is the ASCII the specification prints, checked against the
-    /// head of the `info` the vectors publish rather than against a second copy
-    /// of the same list.
-    ///
-    /// A preimage in this repo once gained a label in the spec and not in the
-    /// generator, and the check meant to catch it compared descriptions while
-    /// the bytes underneath had already diverged.
-    #[test]
-    fn every_label_is_the_ascii_the_published_info_starts_with() {
-        const LABELS: [(Derivation, &[u8]); 3] = [
-            (
-                Derivation::PairKey,
-                &hex::<16>("6b6d34332f76312f706169722d6b6579"),
-            ),
-            (
-                Derivation::ClientKey,
-                &hex::<18>("6b6d34332f76312f636c69656e742d6b6579"),
-            ),
-            (
-                Derivation::SessionKey,
-                &hex::<19>("6b6d34332f76312f73657373696f6e2d6b6579"),
-            ),
-        ];
-
-        for (derivation, ascii) in LABELS {
-            assert_eq!(
-                derivation.as_str().as_bytes(),
-                ascii,
-                "{derivation} is not the label the vectors were derived under"
             );
         }
     }

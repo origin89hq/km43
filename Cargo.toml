@@ -23,3 +23,6 @@ hkdf = { version = "0.13.0", default-features = false }
 # Constant-time comparison, which a hand-rolled loop cannot promise: the
 # optimiser is free to turn one into an early return.
 subtle = { version = "2.6.1", default-features = false }
+
+# Optional, behind the crate's `defmt` feature: the target logger's `Format`.
+defmt = { version = "1.1.1", default-features = false }

@@ -30,8 +30,8 @@ use crate::envelope::SessionId;
 use crate::envelope::{LinkEnvelope, LinkHeader};
 use crate::generated::{
     ClientConnected, ClientDisconnected, CloseConnection, CloseReason, DisconnectReason,
-    LinkDirection, LinkErrorCode, LinkMessageType, LinkTransport, NetConfig, NetConfigOp,
-    TimeOffer,
+    DownloadReason, EnterDownload, LinkDirection, LinkErrorCode, LinkMessageType, LinkTransport,
+    NetConfig, NetConfigOp, TimeOffer,
 };
 use crate::handshake::Version;
 use crate::limits::MAX_LINK_TEXT;
@@ -67,6 +67,7 @@ impl LinkErrorCode {
 
 /// Which firmware is reading the frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Side {
     /// The STM32.
     Controller,
@@ -125,6 +126,7 @@ impl Side {
 
 /// What a receiver does with the frame in front of it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Intake {
     /// Act on it.
     Act(LinkMessageType),
@@ -200,6 +202,7 @@ const fn is_ack(kind: LinkMessageType) -> bool {
 /// missing `country` reported `hw`, which is the failure this type exists to
 /// prevent doing its opposite.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[non_exhaustive]
 pub enum LinkField {
     ProtocolMajor,
@@ -264,6 +267,7 @@ impl fmt::Display for LinkField {
 
 /// Why a link-local body would not read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum LinkError {
     /// A required key that never arrived. Never defaulted: an absent `boot_id`
     /// is not zero, and a zero one would compare equal across a reboot.
@@ -279,6 +283,9 @@ pub enum LinkError {
         /// How many bytes came.
         len: usize,
     },
+    /// A version text outside L-034's `MAJOR.MINOR.PATCH[-PRE]+gXXXXXXXX`,
+    /// refused only where it is written. A receiver carries one in another shape.
+    NotAVersion(LinkField),
     /// `net_version` from the controller, which only the comms processor sends.
     NetVersionFromController,
     /// A `conn` of 0 where a handle is required. L-060 never allocates 0, so it
@@ -322,6 +329,12 @@ impl fmt::Display for LinkError {
             Self::TooLong { key, len } => {
                 write!(f, "{key} is {len} bytes, past the {MAX_LINK_TEXT} allowed")
             }
+            Self::NotAVersion(key) => {
+                write!(
+                    f,
+                    "{key} is not MAJOR.MINOR.PATCH[-PRE]+g and eight hex digits"
+                )
+            }
             Self::NetVersionFromController => {
                 f.write_str("net_version arrived from the controller, and only comms sends it")
             }
@@ -363,14 +376,19 @@ pub struct LinkUp<'a> {
     pub version: Version,
     /// Key 3.
     pub role: Side,
-    /// Key 4, this sender's own firmware version. The controller stores it and
-    /// reports it as `fw_comms` in every client `Hello` (L-031).
+    /// Key 4, this sender's own firmware version, with the commit it was built
+    /// from in its build metadata (L-034). The controller stores it and reports
+    /// it as `fw_comms` in every client `Hello` (L-031). The encoder refuses a
+    /// value outside that format; the decoder checks only its length and carries
+    /// any text, because a label in another shape is no reason to drop the link.
     pub fw: &'a str,
     /// Key 5, redrawn randomly on every boot.
     pub boot_id: u32,
-    /// Key 6, board revision.
+    /// Key 6, the board name and revision as the hardware repository writes
+    /// them (L-034).
     pub hw: &'a str,
-    /// Key 7, comms only: the credential version it has cached, 0 if none.
+    /// Key 7, comms only: the version of the last `NetConfig` it stored, a
+    /// clear included, and 0 only if it was never given one (L-132).
     pub net_version: Option<u32>,
 }
 
@@ -382,10 +400,11 @@ impl<'a> LinkUp<'a> {
     /// Write the whole envelope and hand back its length.
     ///
     /// # Errors
-    /// A text field past the cap, a `net_version` from the controller, or a
-    /// `dst` that will not hold it.
+    /// A text field past the cap, an `fw` outside L-034's format, a
+    /// `net_version` from the controller, or a `dst` that will not hold it.
     pub fn write(&self, header: LinkHeader, dst: &mut [u8]) -> Result<usize, LinkError> {
         bounded(LinkField::Fw, self.fw)?;
+        versioned(LinkField::Fw, self.fw)?;
         bounded(LinkField::Hw, self.hw)?;
         if self.net_version.is_some() && matches!(self.role, Side::Controller) {
             return Err(LinkError::NetVersionFromController);
@@ -487,6 +506,61 @@ fn bounded(key: LinkField, text: &str) -> Result<&str, LinkError> {
     Ok(text)
 }
 
+/// The widest `MAJOR`, `MINOR` or `PATCH` L-034 allows, in decimal digits.
+const COMPONENT_DIGITS: usize = 3;
+/// The longest pre-release L-034 allows, without its hyphen.
+const PRE_RELEASE_LONGEST: usize = 8;
+/// How much of the commit id L-034 puts after the `+g`.
+const COMMIT_DIGITS: usize = 8;
+
+/// Refuse a version text outside L-034's `MAJOR.MINOR.PATCH[-PRE]+gXXXXXXXX`
+/// where it is written.
+///
+/// Only an encoder calls this. A receiver carries a text in another shape
+/// (L-034), so the refusal lands on the side whose firmware is wrong rather than
+/// taking the link down over a label.
+fn versioned(key: LinkField, text: &str) -> Result<&str, LinkError> {
+    // Semantic versioning's own rule for a number, which the digit cap sits on:
+    // `01` is not a version, and a component comparison would read it as `1`.
+    let number = |part: &str| part.len() == 1 || !part.starts_with('0');
+    let component = |part: &str| {
+        (1..=COMPONENT_DIGITS).contains(&part.len())
+            && part.bytes().all(|b| b.is_ascii_digit())
+            && number(part)
+    };
+    let identifier = |id: &str| {
+        !id.is_empty()
+            && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+            && (!id.bytes().all(|b| b.is_ascii_digit()) || number(id))
+    };
+    let pre_release = |pre: &str| {
+        (1..=PRE_RELEASE_LONGEST).contains(&pre.len()) && pre.split('.').all(identifier)
+    };
+
+    let Some((release, commit)) = text.split_once("+g") else {
+        return Err(LinkError::NotAVersion(key));
+    };
+    let (core, pre) = match release.split_once('-') {
+        Some((core, pre)) => (core, Some(pre)),
+        None => (release, None),
+    };
+    let mut parts = core.split('.');
+    let conforms = [parts.next(), parts.next(), parts.next()]
+        .into_iter()
+        .all(|part| part.is_some_and(component))
+        && parts.next().is_none()
+        && pre.is_none_or(pre_release)
+        && commit.len() == COMMIT_DIGITS
+        && commit
+            .bytes()
+            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
+    if conforms {
+        Ok(text)
+    } else {
+        Err(LinkError::NotAVersion(key))
+    }
+}
+
 /// Fill a slot once, refusing the second copy before either is used (P-015).
 fn once<T>(slot: &mut Option<T>, key: LinkField, value: T) -> Result<(), LinkError> {
     if slot.is_some() {
@@ -503,6 +577,7 @@ fn once<T>(slot: &mut Option<T>, key: LinkField, value: T) -> Result<(), LinkErr
 /// disagree about how many connections exist, and this is the only place either
 /// finds out (L-120).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Heartbeat {
     /// Key 1, seconds since this side's boot, saturating.
     pub uptime_s: u32,
@@ -628,6 +703,7 @@ impl<'a> ClientUp<'a> {
 
 /// `ClientDisconnected 0x63` — a transport went away, and why.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ClientDown {
     /// Key 1, the handle that is going. Never 0.
     pub conn: u16,
@@ -692,6 +768,7 @@ impl ClientDown {
 /// sends when the two sides disagree about the table, and there is no other way
 /// to say *all of them* in one message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct CloseConnections {
     /// Key 1. **0 names every connection**, not none.
     pub conn: u16,
@@ -759,6 +836,7 @@ impl CloseConnections {
 /// believed in matched the one that existed (L-090). An ack without it would
 /// answer *closed* to a resync that closed nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct CloseReport {
     /// Key 1.
     pub outcome: CloseConnection,
@@ -1085,6 +1163,7 @@ impl<'a> ClockOffer<'a> {
 /// held, which is why the generated enum has a gap at 3: it cannot be written
 /// because it does not exist, rather than because a caller remembered not to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct TimeVerdict {
     /// Key 1.
     pub outcome: TimeOffer,
@@ -1107,6 +1186,83 @@ impl TimeVerdict {
     }
 }
 
+/// `EnterDownload 0x68` — the controller asks the module to reset into its
+/// ROM's serial download mode, inside the window the comms firmware opens at
+/// its own start (L-190).
+///
+/// Named `DownloadRequest` because the registry gives the message's name to
+/// the outcome its acknowledgement carries, as with every other pair here.
+/// The reason is diagnostic: the controller logs it with the verdict (L-192),
+/// since the module keeps nothing across the reset it asks for, and nothing
+/// either side branches on it. What decides is the window, not the word.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DownloadRequest {
+    /// Key 1.
+    pub reason: DownloadReason,
+}
+
+impl DownloadRequest {
+    /// # Errors
+    /// `dst` will not hold it.
+    pub fn write(&self, header: LinkHeader, dst: &mut [u8]) -> Result<usize, LinkError> {
+        let mut cbor = header
+            .write(1, dst)
+            .map_err(|_| LinkError::Cbor(CborError::DestinationTooSmall))?;
+        cbor.key(1)?;
+        cbor.u64(u64::from(self.reason as u8))?;
+        Ok(cbor.finish()?)
+    }
+
+    /// # Errors
+    /// A reason this version does not allocate, the key absent, or CBOR that
+    /// will not read.
+    pub fn decode(envelope: LinkEnvelope<'_>) -> Result<Self, LinkError> {
+        let pairs = envelope.keys();
+        let mut body = envelope.into_body();
+        let mut reason = None;
+        for _ in 0..pairs {
+            match body.key()? {
+                1 => {
+                    let raw = body.u8()?;
+                    let why = DownloadReason::try_from(raw)
+                        .map_err(|()| LinkError::UnknownReason(raw))?;
+                    once(&mut reason, LinkField::Reason, why)?;
+                }
+                _ => body.skip()?,
+            }
+        }
+        body.finish()?;
+        Ok(Self {
+            reason: reason.ok_or(LinkError::Missing(LinkField::Reason))?,
+        })
+    }
+}
+
+/// `EnterDownloadAck 0xE8` — `entering`, sent before the module sets the flag
+/// and resets, or `refused_outside_window` (L-191).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DownloadVerdict {
+    /// Key 1.
+    pub outcome: EnterDownload,
+}
+
+impl DownloadVerdict {
+    /// # Errors
+    /// `dst` will not hold it.
+    pub fn write(&self, header: LinkHeader, dst: &mut [u8]) -> Result<usize, LinkError> {
+        outcome_only(header, dst, self.outcome as u8)
+    }
+
+    /// # Errors
+    /// An outcome this version does not allocate, the key absent, or CBOR
+    /// that will not read.
+    pub fn decode(envelope: LinkEnvelope<'_>) -> Result<Self, LinkError> {
+        Ok(Self {
+            outcome: outcome(envelope, EnterDownload::try_from)?,
+        })
+    }
+}
+
 /// `ClientConnectedAck 0xE2` — whether the controller took the handle.
 ///
 /// **This is what mints the connection's challenge** (L-070). Before it,
@@ -1114,6 +1270,7 @@ impl TimeVerdict {
 /// falls back to one device-wide challenge and the two-client livelock it
 /// exists to prevent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ClientUpAck {
     /// Key 1.
     pub outcome: ClientConnected,
@@ -1143,6 +1300,7 @@ impl ClientUpAck {
 /// the moment its socket closed would hand a brand-new client the session the
 /// old one left open.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ClientDownAck {
     /// Key 1.
     pub outcome: ClientDisconnected,
@@ -1176,6 +1334,7 @@ impl ClientDownAck {
 /// reported as such: a board that answered 0 after a clear would be sent the
 /// same clear on every link-up for the life of the unit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct NetVerdict {
     /// Key 1.
     pub outcome: NetConfig,
@@ -1270,8 +1429,10 @@ fn outcome<T>(
 mod tests {
     use super::*;
     use crate::cbor::CborError;
+    use crate::envelope::ReqId;
     use crate::envelope::{EnvelopeError, Refusal};
     use crate::generated::MessageType;
+    use crate::render::Rendering;
 
     /// **The wrong side and an unknown opcode are one code.** The comms
     /// processor answering `ClientConnected` at the controller is a bug in the
@@ -1860,7 +2021,7 @@ mod tests {
         LinkUp {
             version: Version::V1_0,
             role: Side::Comms,
-            fw: "o89-esp32 0.1.0",
+            fw: "0.2.0-alpha.12+g5e6f7a8b",
             boot_id: 0xDEAD_BEEF,
             hw: "esp32-c6-devkitc-1",
             net_version: Some(7),
@@ -1934,6 +2095,184 @@ mod tests {
                 Err(LinkError::UnknownRole(unallocated))
             );
         }
+    }
+
+    /// **The version format L-034 names fits the field it travels in.** Three
+    /// three-digit components, an eight-byte pre-release and eight digits of
+    /// commit come to 30 bytes. If the limits are ever raised past 32, this goes
+    /// red before a unit has stored a version it cannot send.
+    #[test]
+    fn l_034_the_widest_version_the_format_allows_fits_and_reads_back() {
+        const WIDEST: &str = "999.999.999-alpha.99+g0123abcd";
+        const BOARD: &str = "controller-a rev B";
+        assert!(
+            WIDEST.len() <= MAX_LINK_TEXT,
+            "the format's widest version is past the field"
+        );
+        let sent = LinkUp {
+            fw: WIDEST,
+            hw: BOARD,
+            ..a_link_up()
+        };
+        let mut bytes = [0u8; 256];
+        let len = sent
+            .write(link_header(LinkMessageType::LinkUp), &mut bytes)
+            .expect("the widest version fits");
+        let envelope = crate::envelope::LinkEnvelope::decode(bytes.get(..len).expect("the frame"))
+            .expect("an envelope");
+        let read = LinkUp::decode(envelope).expect("it reads");
+        assert_eq!(read.fw, WIDEST);
+        assert_eq!(read.hw, BOARD);
+    }
+
+    /// **A version in another shape is carried, not refused** (L-034). The text
+    /// is diagnostic (L-032), and a controller that dropped the link over a
+    /// bench build's label would take every client off the air for a string.
+    ///
+    /// Built by hand rather than through `LinkUp::write`, which refuses this
+    /// text: the frame stands for another firmware's, and the half under test
+    /// is the one that reads it.
+    #[test]
+    fn l_034_a_version_in_another_shape_still_brings_the_link_up() {
+        let mut bytes = [0u8; 256];
+        let mut cbor = link_header(LinkMessageType::LinkUp)
+            .write(6, &mut bytes)
+            .expect("the envelope opens");
+        cbor.key(1).expect("major");
+        cbor.u64(1).expect("value");
+        cbor.key(2).expect("minor");
+        cbor.u64(0).expect("value");
+        cbor.key(3).expect("role");
+        cbor.u64(1).expect("value");
+        cbor.key(4).expect("fw");
+        cbor.text("bench build").expect("value");
+        cbor.key(5).expect("boot_id");
+        cbor.u64(7).expect("value");
+        cbor.key(6).expect("hw");
+        cbor.text("controller-a rev B").expect("value");
+        let len = cbor.finish().expect("it closes");
+
+        let envelope = crate::envelope::LinkEnvelope::decode(bytes.get(..len).expect("the frame"))
+            .expect("an envelope");
+        assert_eq!(
+            LinkUp::decode(envelope).expect("it reads").fw,
+            "bench build"
+        );
+    }
+
+    /// Write `fw` in an otherwise ordinary `LinkUp` and read back what the
+    /// encoder let through, so an accepted text is also one a peer decodes.
+    fn written_fw(fw: &str) -> Result<&str, LinkError> {
+        let mut bytes = [0u8; 256];
+        let len =
+            LinkUp { fw, ..a_link_up() }.write(link_header(LinkMessageType::LinkUp), &mut bytes)?;
+        let envelope = crate::envelope::LinkEnvelope::decode(bytes.get(..len).expect("the frame"))
+            .expect("an envelope");
+        assert_eq!(LinkUp::decode(envelope).expect("it reads").fw, fw);
+        Ok(fw)
+    }
+
+    /// **Every edge of the format is written, not only the middle** (L-034). A
+    /// cap enforced one short refuses `999.999.999`, a release with no
+    /// pre-release, or an eight-byte one, and a unit built at that version could
+    /// not bring its link up from its own encoder.
+    #[test]
+    fn l_034_a_link_up_writes_only_the_version_format_at_every_edge() {
+        for (fw, what) in [
+            ("0.2.0-alpha.12+g5e6f7a8b", "the published comms version"),
+            ("0.1.0+g1a2b3c4d", "no pre-release"),
+            ("0.0.0+g00000000", "every digit zero"),
+            ("999.999.999+gffffffff", "three-digit components"),
+            ("1.2.3-rc.12345+g0123abcd", "an eight-byte pre-release"),
+            ("1.2.3-a+g0123abcd", "a one-byte pre-release"),
+            (
+                "10.20.30-beta-2+g0123abcd",
+                "a hyphen inside the pre-release",
+            ),
+        ] {
+            assert_eq!(written_fw(fw), Ok(fw), "{what} was refused");
+        }
+    }
+
+    /// **Anything outside the format is refused where it is written** (L-034).
+    /// A build that sends `0.1.0` with no commit, or a hash cut at the wrong
+    /// length, leaves a bench log nothing can match to a unit, and the peer
+    /// cannot say so because it has to carry the text. The encoder is the one
+    /// place the fault can still be named, and it names it before a byte of the
+    /// frame is written.
+    #[test]
+    fn l_034_a_link_up_writes_only_the_version_format_and_refuses_the_rest() {
+        for (fw, what) in [
+            ("1000.0.0+g1a2b3c4d", "a four-digit MAJOR"),
+            ("0.1000.0+g1a2b3c4d", "a four-digit MINOR"),
+            ("0.1.1000+g1a2b3c4d", "a four-digit PATCH"),
+            ("0.1.0-alpha.123+g1a2b3c4d", "a nine-byte pre-release"),
+            ("0.1.0-+g1a2b3c4d", "an empty pre-release"),
+            ("0.1.0-rc..1+g1a2b3c4d", "an empty pre-release identifier"),
+            (
+                "0.1.0-rc_1+g1a2b3c4d",
+                "a pre-release byte semver does not allow",
+            ),
+            ("0.1.0+g1a2b3c4", "seven hex digits"),
+            ("0.1.0+g1a2b3c4d5", "nine hex digits"),
+            ("0.1.0+g1A2B3C4D", "uppercase hex"),
+            ("0.1.0+g1a2b3c4z", "a commit digit that is not hex"),
+            ("0.1.0", "no commit at all"),
+            ("0.1.0+1a2b3c4d", "a commit without its g"),
+            ("", "an empty text"),
+            ("0.1.0+g1a2b3c4d ", "trailing garbage"),
+            (" 0.1.0+g1a2b3c4d", "leading garbage"),
+            ("0.1+g1a2b3c4d", "two components"),
+            ("0.1.0.4+g1a2b3c4d", "four components"),
+            ("01.1.0+g1a2b3c4d", "a component with a leading zero"),
+            (
+                "0.1.0-01+g1a2b3c4d",
+                "a numeric pre-release with a leading zero",
+            ),
+            ("o89-esp32 0.1.0", "the shape the fixture used to write"),
+        ] {
+            let mut bytes = [0u8; 256];
+            let sent = LinkUp { fw, ..a_link_up() };
+            assert_eq!(
+                sent.write(link_header(LinkMessageType::LinkUp), &mut bytes)
+                    .err(),
+                Some(LinkError::NotAVersion(LinkField::Fw)),
+                "{what} was written"
+            );
+            assert!(
+                bytes.iter().all(|&b| b == 0),
+                "{what} was refused after the encoder had started writing"
+            );
+        }
+    }
+
+    /// Every link refusal renders as its own sentence. The pair somebody tells
+    /// apart at a bench is "the fw text is too long" and "the fw text is not a
+    /// version", and one sentence for both sends them to the wrong fix.
+    #[test]
+    fn every_link_refusal_says_something_of_its_own() {
+        const EVERY: [LinkError; 16] = [
+            LinkError::Missing(LinkField::Fw),
+            LinkError::Duplicate(LinkField::Fw),
+            LinkError::UnknownRole(3),
+            LinkError::TooLong {
+                key: LinkField::Fw,
+                len: 33,
+            },
+            LinkError::NotAVersion(LinkField::Fw),
+            LinkError::NetVersionFromController,
+            LinkError::NoSuchConnection,
+            LinkError::UnknownTransport(9),
+            LinkError::UnknownReason(9),
+            LinkError::UnknownOutcome(9),
+            LinkError::UnknownOp(9),
+            LinkError::UnknownSource(2),
+            LinkError::PassphraseLength(7),
+            LinkError::CountryNotTwoBytes(3),
+            LinkError::ClearCarriedCredentials,
+            LinkError::Cbor(CborError::WrongType),
+        ];
+        Rendering::<96>::each_says_something_of_its_own(&EVERY);
     }
 
     /// A text field past the cap is refused at the field, which is the lesson
@@ -2588,9 +2927,9 @@ mod tests {
         );
     }
 
-    /// The seven link requests, none of which had a truncation test. The cable
-    /// inside the enclosure drops bytes like any other, and a comms processor
-    /// that resynchronises hands the controller arbitrary prefixes.
+    /// The eight link requests, none of which had a truncation test. The
+    /// cable inside the enclosure drops bytes like any other, and a comms
+    /// processor that resynchronises hands the controller arbitrary prefixes.
     #[test]
     fn every_link_request_cut_short_at_any_byte_is_refused() {
         let mut bytes = [0u8; 256];
@@ -2660,9 +2999,18 @@ mod tests {
         refused_at_every_cut(bytes.get(..len).expect("the frame"), |e| {
             ClockOffer::decode(e).map(|_| ())
         });
+
+        let len = DownloadRequest {
+            reason: DownloadReason::Recovery,
+        }
+        .write(link_header(LinkMessageType::EnterDownload), &mut bytes)
+        .expect("encodes");
+        refused_at_every_cut(bytes.get(..len).expect("the frame"), |e| {
+            DownloadRequest::decode(e).map(|_| ())
+        });
     }
 
-    /// The five acks, cut the same way.
+    /// The six acks, cut the same way.
     #[test]
     fn every_link_ack_cut_short_at_any_byte_is_refused() {
         let mut bytes = [0u8; 256];
@@ -2715,5 +3063,112 @@ mod tests {
         refused_at_every_cut(bytes.get(..len).expect("the frame"), |e| {
             NetVerdict::decode(e).map(|_| ())
         });
+
+        let len = DownloadVerdict {
+            outcome: EnterDownload::Entering,
+        }
+        .write(link_header(LinkMessageType::EnterDownloadAck), &mut bytes)
+        .expect("encodes");
+        refused_at_every_cut(bytes.get(..len).expect("the frame"), |e| {
+            DownloadVerdict::decode(e).map(|_| ())
+        });
+    }
+
+    #[test]
+    fn an_enter_download_carries_its_reason_and_reads_back() {
+        let mut dst = [0u8; 64];
+        let header = LinkHeader {
+            kind: LinkMessageType::EnterDownload,
+            session: SessionId::None,
+            req_id: ReqId(9),
+        };
+        let len = DownloadRequest {
+            reason: DownloadReason::Recovery,
+        }
+        .write(header, &mut dst)
+        .expect("writes");
+        let envelope = LinkEnvelope::decode(&dst[..len]).expect("decodes");
+        assert_eq!(envelope.opcode(), LinkMessageType::EnterDownload as u8);
+        assert_eq!(envelope.req_id(), ReqId(9));
+        let request = DownloadRequest::decode(envelope).expect("reads");
+        assert_eq!(request.reason, DownloadReason::Recovery);
+    }
+
+    #[test]
+    fn an_enter_download_with_a_reason_nobody_allocated_is_refused() {
+        // Key 1 = 7: no such reason (P-014).
+        let mut dst = [0u8; 64];
+        let header = LinkHeader {
+            kind: LinkMessageType::EnterDownload,
+            session: SessionId::None,
+            req_id: ReqId(1),
+        };
+        let mut cbor = header.write(1, &mut dst).expect("opens");
+        cbor.key(1).expect("key");
+        cbor.u64(7).expect("value");
+        let len = cbor.finish().expect("closes");
+        let envelope = LinkEnvelope::decode(&dst[..len]).expect("decodes");
+        assert_eq!(
+            DownloadRequest::decode(envelope),
+            Err(LinkError::UnknownReason(7))
+        );
+        // And one with no reason at all.
+        let mut dst = [0u8; 64];
+        let cbor = header.write(0, &mut dst).expect("opens");
+        let len = cbor.finish().expect("closes");
+        let envelope = LinkEnvelope::decode(&dst[..len]).expect("decodes");
+        assert_eq!(
+            DownloadRequest::decode(envelope),
+            Err(LinkError::Missing(LinkField::Reason))
+        );
+    }
+
+    #[test]
+    fn a_download_verdict_carries_its_outcome_and_refuses_one_nobody_allocated() {
+        let mut dst = [0u8; 64];
+        let header = LinkHeader {
+            kind: LinkMessageType::EnterDownloadAck,
+            session: SessionId::None,
+            req_id: ReqId(9),
+        };
+        for outcome in [EnterDownload::Entering, EnterDownload::RefusedOutsideWindow] {
+            let len = DownloadVerdict { outcome }
+                .write(header, &mut dst)
+                .expect("writes");
+            let envelope = LinkEnvelope::decode(&dst[..len]).expect("decodes");
+            assert_eq!(
+                DownloadVerdict::decode(envelope).expect("reads").outcome,
+                outcome
+            );
+        }
+        let len = outcome_only(header, &mut dst, 3).expect("writes");
+        let envelope = LinkEnvelope::decode(&dst[..len]).expect("decodes");
+        assert_eq!(
+            DownloadVerdict::decode(envelope),
+            Err(LinkError::UnknownOutcome(3))
+        );
+    }
+
+    #[test]
+    fn l_001_an_enter_download_is_taken_at_the_comms_processor_and_refused_at_the_controller() {
+        let request = LinkMessageType::EnterDownload as u8;
+        let ack = LinkMessageType::EnterDownloadAck as u8;
+        assert_eq!(
+            arriving(request, Side::Comms, SessionId::None),
+            Intake::Act(LinkMessageType::EnterDownload)
+        );
+        assert_eq!(
+            arriving(request, Side::Controller, SessionId::None),
+            Intake::Refuse(LinkErrorCode::WrongSide),
+            "the untrusted chip does not choose when the trusted one stops"
+        );
+        assert_eq!(
+            arriving(ack, Side::Controller, SessionId::None),
+            Intake::Act(LinkMessageType::EnterDownloadAck)
+        );
+        assert_eq!(
+            arriving(ack, Side::Comms, SessionId::None),
+            Intake::Refuse(LinkErrorCode::WrongSide)
+        );
     }
 }

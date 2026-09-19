@@ -29,8 +29,9 @@ use sha2::{Digest as _, Sha256};
 
 use crate::cbor::{CborError, CborReader, CborWriter};
 use crate::concerns::ElementAt;
+use crate::envelope::Refusal;
 use crate::generated::{
-    Bucket, Direction, Inventory, InventoryKind, Shape, SignalDomain, Transport, Vtype,
+    Bucket, Direction, ErrorCode, Inventory, InventoryKind, Shape, SignalDomain, Transport, Vtype,
 };
 use crate::limits::{
     MAX_COMPONENT_CMDS, MAX_INVENTORY_PAGE_BYTES, MAX_INVENTORY_PAGE_ROWS, MAX_ROW_BYTES,
@@ -182,6 +183,7 @@ const PARAM_FIELDS: &[Field] = &[
 /// against each other on every row: a length disagreement is a bug in the
 /// caller, not a short row on the wire.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Value<'a> {
     U8(u8),
     U16(u16),
@@ -202,6 +204,7 @@ pub enum Value<'a> {
 /// fifth command is refused at the line that built the list rather than dropped
 /// somewhere a person would have to notice a missing button to find.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct CmdList {
     /// Zero-filled past `len`, which is what makes the derived `PartialEq`
     /// compare two lists and not two lots of leftovers.
@@ -237,6 +240,7 @@ impl CmdList {
 
 /// Which of the five tables a row is read against.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum RowKind {
     Bus,
     Device,
@@ -329,6 +333,7 @@ impl RowKind {
 /// None of these has a vendor range (P-019), so a value outside the space is
 /// error 1 rather than a value to skip.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Closed {
     /// `BusRow` key 2 — what the port physically is.
     Transport,
@@ -412,6 +417,7 @@ const PARAM_MEMBERS: &[(u8, Closed)] = &[
 /// protocol version states — a sixth should be argued for against the field
 /// lists rather than passed in as a closure by whoever needs one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum When {
     /// The row's `kind` is in P-019's vendor range, so the registry cannot
     /// answer for its unit, its scale, or whose namespace it is (P-204).
@@ -782,6 +788,7 @@ impl Value<'_> {
 /// `base` 1 and 17, so element 7 of the second is cell 23 — the number painted
 /// on the rack.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ElementLabels {
     base: u16,
     elements: u8,
@@ -1072,6 +1079,7 @@ impl Page {
 
 /// The four keys of `ReadInventory 0x0D`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ReadInventoryKey {
     /// Key 1, the revision the client is assembling; 0 on the first call.
     Rev,
@@ -1126,6 +1134,7 @@ impl fmt::Display for ReadInventoryKey {
 
 /// The seven keys of `Inventory 0x8D`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum InventoryKey {
     /// Key 1, the controller's current revision — on every page, so a torn walk
     /// is detectable in a field that is already there (P-152, P-153).
@@ -1193,6 +1202,7 @@ impl fmt::Display for InventoryKey {
 /// How an `Inventory 0x8D` answered, and the only thing that decides whether
 /// keys 3, 4 and 7 carry anything (P-190).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum InventoryOutcome {
     Ok,
     /// The `rev` named was neither 0 nor current. The rows are empty and key 1
@@ -1233,6 +1243,7 @@ impl InventoryOutcome {
 
 /// The body of `ReadInventory 0x0D`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ReadInventory {
     /// Key 1, the revision the client holds.
     pub rev: u32,
@@ -1376,6 +1387,7 @@ impl InventoryBody<'_> {
 /// client that wants to check the digest concatenates exactly these, which is
 /// the half of P-173 that lives on this side of the wire.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct InventoryHeader {
     /// Key 1, the revision the page is of. Differing from the request's, the walk is torn (P-152).
     pub rev: u32,
@@ -1524,6 +1536,7 @@ impl TopoDigest {
 
 /// What a page or a row was refused for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum InventoryError {
     /// The value slice does not match the row kind's table.
     RowShape {
@@ -1608,6 +1621,43 @@ impl From<CborError> for InventoryError {
     }
 }
 
+impl InventoryError {
+    /// What to answer. A row past [`MAX_ROW_BYTES`] is error 5, as a wrapper too
+    /// large to write is; too many `cmds` is not, because the bytes fit and it
+    /// is the shape that is wrong. Everything else is a body whose meaning
+    /// cannot be trusted, which is what error 1 says.
+    #[must_use]
+    pub const fn refusal(self) -> Refusal {
+        match self {
+            Self::RowTooLong(_) => Refusal::Client(ErrorCode::PayloadTooLarge),
+            Self::RowShape { .. }
+            | Self::MissingRequired { .. }
+            | Self::WrongType { .. }
+            | Self::EmptyCmds
+            | Self::TooManyCmds(_)
+            | Self::DuplicateRowKey { .. }
+            | Self::ReservedZero { .. }
+            | Self::PositionPastSeries { .. }
+            | Self::NotAMember { .. }
+            | Self::SeriesTooShort(_)
+            | Self::SeriesTooLong(_)
+            | Self::LabelPastRange { .. }
+            | Self::MissingConditional { .. }
+            | Self::UnexpectedConditional { .. }
+            | Self::WrongKind { .. }
+            | Self::Missing(_)
+            | Self::MissingResponse(_)
+            | Self::AnsweredNothing(_)
+            | Self::DigestMidWalk
+            | Self::DigestWidth(_)
+            | Self::UnknownOutcome(_)
+            | Self::RowsOutOfOrder { .. }
+            | Self::Duplicate(_)
+            | Self::Cbor(_) => Refusal::Client(ErrorCode::MalformedFrame),
+        }
+    }
+}
+
 impl fmt::Display for InventoryError {
     fn fmt(&self, w: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -1680,10 +1730,98 @@ impl fmt::Display for InventoryError {
     }
 }
 
+impl core::error::Error for InventoryError {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::limits::{MAX_ADDR, MAX_COMPONENT_CMDS, MAX_IDENT, MAX_LABEL, MAX_SERIES_LEN};
+    use crate::render::Rendering;
+
+    /// No two refusals read as one sentence, and each carries the code P-141
+    /// leaves for a body that never reached a handler: error 5 for a row past
+    /// its byte bound, error 1 for the rest, too many `cmds` included, because
+    /// its bytes fit and it is the shape that is wrong.
+    #[test]
+    fn every_refusal_says_something_of_its_own() {
+        const EVERY: [InventoryError; 25] = [
+            InventoryError::RowShape {
+                kind: RowKind::Bus,
+                want: 5,
+                got: 4,
+            },
+            InventoryError::MissingRequired {
+                kind: RowKind::Device,
+                key: 2,
+            },
+            InventoryError::WrongType {
+                kind: RowKind::Component,
+                key: 3,
+            },
+            InventoryError::EmptyCmds,
+            InventoryError::TooManyCmds(9),
+            InventoryError::DuplicateRowKey {
+                kind: RowKind::Signal,
+                key: 4,
+            },
+            InventoryError::ReservedZero {
+                kind: RowKind::Param,
+                key: 1,
+            },
+            InventoryError::PositionPastSeries {
+                at: 17,
+                elements: 16,
+            },
+            InventoryError::NotAMember {
+                kind: RowKind::Bus,
+                key: 2,
+                space: Closed::Transport,
+                value: 9,
+            },
+            InventoryError::SeriesTooShort(1),
+            InventoryError::SeriesTooLong(40),
+            InventoryError::LabelPastRange {
+                base: u16::MAX,
+                at: 2,
+            },
+            InventoryError::MissingConditional {
+                kind: RowKind::Signal,
+                key: 8,
+                when: When::ShapeIsASeries,
+            },
+            InventoryError::UnexpectedConditional {
+                kind: RowKind::Signal,
+                key: 8,
+                when: When::KindIsAVendorsOwn,
+            },
+            InventoryError::WrongKind {
+                page: RowKind::Bus,
+                row: RowKind::Device,
+            },
+            InventoryError::RowTooLong(300),
+            InventoryError::Missing(ReadInventoryKey::What),
+            InventoryError::MissingResponse(InventoryKey::Rev),
+            InventoryError::AnsweredNothing(InventoryOutcome::OutOfRange),
+            InventoryError::DigestMidWalk,
+            InventoryError::DigestWidth(7),
+            InventoryError::UnknownOutcome(9),
+            InventoryError::RowsOutOfOrder {
+                after: RowKind::Signal,
+                got: RowKind::Bus,
+            },
+            InventoryError::Duplicate(ReadInventoryKey::Rev),
+            InventoryError::Cbor(CborError::WrongType),
+        ];
+        Rendering::<128>::each_says_something_of_its_own(&EVERY);
+        for why in EVERY {
+            let want = if matches!(why, InventoryError::RowTooLong(_)) {
+                Refusal::Client(ErrorCode::PayloadTooLarge)
+            } else {
+                Refusal::Client(ErrorCode::MalformedFrame)
+            };
+            assert_eq!(why.refusal(), want, "{why}");
+        }
+    }
 
     const LABEL: &str = "01234567890123456789012345678901"; // MAX_LABEL
     const IDENT: &str = "012345678901234567890123"; // MAX_IDENT

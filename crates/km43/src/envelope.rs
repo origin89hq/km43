@@ -99,6 +99,7 @@ const_assert!(
 /// comms processor overwrite it with the connection handle, so a 0 that reaches
 /// the controller is a comms-processor bug rather than a client to serve.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum SessionId {
     /// The client had no session to name (P-021).
     None,
@@ -128,11 +129,13 @@ impl From<SessionId> for u16 {
 /// (P-023), and so does an error about a frame whose envelope never parsed
 /// (P-025).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ReqId(pub u32);
 
 /// Everything an envelope carries except the body — what a sender fills in and
 /// what a receiver dispatches on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Header {
     /// Which message this is, and — through its high bit — whether it answers
     /// one (P-020).
@@ -297,6 +300,7 @@ impl<'a> Envelope<'a> {
 /// message cannot reach `Wrapper` or `Tagged` because it cannot be built into a
 /// `Header` at all. One shared enum would delete that guarantee to save a struct.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct LinkHeader {
     /// Which link message this is, and — through its high bit — whether it
     /// answers one.
@@ -394,6 +398,7 @@ impl<'a> LinkEnvelope<'a> {
 /// processor look like the client's own request failing, and the two want
 /// different retries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Refusal {
     /// A code the client is entitled to and can act on.
     Client(ErrorCode),
@@ -417,6 +422,7 @@ impl Refusal {
 /// which is why an envelope that is the wrong shape and one that names a message
 /// nobody allocated are not the same refusal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum EnvelopeError {
     /// The array length was not exactly four (P-028), refused before any element
     /// was read.

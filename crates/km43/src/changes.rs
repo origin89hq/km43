@@ -17,7 +17,8 @@
 use core::fmt;
 
 use crate::cbor::{CborError, CborReader, CborWriter};
-use crate::generated::{Presence, TopologyChangeReason};
+use crate::envelope::Refusal;
+use crate::generated::{ErrorCode, Presence, TopologyChangeReason};
 use crate::ident::{Id, IdError};
 use crate::limits::{
     MAX_EVENT_BODY, MAX_PRESENCE_SWEEP, MAX_VALIDITY_SWEEP, PCHANGE_MAX_BYTES, VCHANGE_MAX_BYTES,
@@ -32,6 +33,7 @@ use crate::readings::{QualityError, SignalQuality};
 /// about — and the client compares `prev` against what it holds, which is what
 /// it was last sent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct VChange {
     /// Key 1, the signal that moved.
     pub sig: Id,
@@ -80,6 +82,7 @@ impl VChange {
 
 /// One device's presence moving, inside an `0x0902`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct PChange {
     /// Key 1, the device that moved.
     pub dev: Id,
@@ -430,6 +433,7 @@ impl Iterator for PChanges<'_> {
 /// The one of the three that carries no array: a revision moves once, for one
 /// reason, however many rows it took with it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct TopologyChanged {
     /// The revision this moved **to**.
     pub rev: u32,
@@ -490,6 +494,7 @@ impl TopologyChanged {
 
 /// Why a change record was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ChangeError {
     /// 0 handed to an id space that reserves it as the paging sentinel.
     ZeroId,
@@ -536,6 +541,29 @@ impl From<IdError> for ChangeError {
     }
 }
 
+impl ChangeError {
+    /// What to answer. An entry past its own bound is error 5, as a wrapper too
+    /// large to write is; everything else is a body whose meaning cannot be
+    /// trusted, which is what error 1 says. The code lives here rather than at
+    /// the caller because a caller left to invent one once answered a rate
+    /// limit `rejected`.
+    #[must_use]
+    pub const fn refusal(self) -> Refusal {
+        match self {
+            Self::EntryTooLong(_) => Refusal::Client(ErrorCode::PayloadTooLarge),
+            Self::Quality(why) => why.refusal(),
+            Self::ZeroId
+            | Self::WentNowhere
+            | Self::NothingChanged
+            | Self::MissingEntry(_)
+            | Self::MissingBody(_)
+            | Self::UnknownPresence(_)
+            | Self::UnknownReason(_)
+            | Self::Cbor(_) => Refusal::Client(ErrorCode::MalformedFrame),
+        }
+    }
+}
+
 impl fmt::Display for ChangeError {
     fn fmt(&self, w: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -557,10 +585,43 @@ impl fmt::Display for ChangeError {
     }
 }
 
+impl core::error::Error for ChangeError {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::generated::{Provenance, Validity};
+    use crate::render::Rendering;
+
+    /// No two refusals read as one sentence, and each carries the code P-141
+    /// leaves for a body that never reached a handler: error 5 for an entry
+    /// past its bound, error 1 for the rest. Until this map existed the code
+    /// was the caller's to invent, which is how a rate-limited `Time` once came
+    /// to be answered `rejected`.
+    #[test]
+    fn every_refusal_says_something_of_its_own() {
+        const EVERY: [ChangeError; 10] = [
+            ChangeError::ZeroId,
+            ChangeError::WentNowhere,
+            ChangeError::NothingChanged,
+            ChangeError::MissingEntry(1),
+            ChangeError::MissingBody(2),
+            ChangeError::UnknownPresence(9),
+            ChangeError::UnknownReason(9),
+            ChangeError::EntryTooLong(500),
+            ChangeError::Quality(QualityError::StaleWithoutAge),
+            ChangeError::Cbor(CborError::WrongType),
+        ];
+        Rendering::<96>::each_says_something_of_its_own(&EVERY);
+        for why in EVERY {
+            let want = if matches!(why, ChangeError::EntryTooLong(_)) {
+                Refusal::Client(ErrorCode::PayloadTooLarge)
+            } else {
+                Refusal::Client(ErrorCode::MalformedFrame)
+            };
+            assert_eq!(why.refusal(), want, "{why}");
+        }
+    }
 
     fn id(value: u16) -> Id {
         Id::new(value).expect("a non-zero id")

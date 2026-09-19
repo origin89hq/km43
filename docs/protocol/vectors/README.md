@@ -83,11 +83,11 @@ produces the shorter string.
 | `limits` | `MAX_PAYLOAD` and the derivation of `MAX_FRAME` |
 | `derived_keys` | `client_key`, `session_key` and `pair_key` with every HKDF argument spelled out |
 | `qr` | The label payload P-049 counts, and its length |
-| `macs` | `pair_proof`, `pair_ack_mac`, `hello_proof`, `signed_request`, `wrapper_request`, `response`, `event` — each with its full preimage in hex |
-| `bodies` | Every published inner body, readable and as CBOR |
+| `macs` | `pair_proof`, `pair_ack_mac`, `hello_proof`, `signed_request`, `wrapper_request`, `response`, `event`, `error_response` — each with its full preimage in hex |
+| `bodies` | Every published body, readable and as CBOR; `pair_0x0B`, `pair_0x8B` and the bare `error_0xFF` also as the whole envelope, because the crate writes those only whole |
 | `crc16`, `cobs` | Edge cases: empty, a single zero, embedded zeros, the 254-byte block boundary |
 | `frame` | One complete encoded frame, envelope through delimiter |
-| `link_local` | Six controller–comms frames, envelope through delimiter, with their CRCs |
+| `link_local` | Eight controller–comms frames, envelope through delimiter, with their CRCs |
 
 The inputs are deliberately unmistakable — `printed_secret` is `00 01 02 … 1f`
 and `device_id` spells `ORIGIN89 DEMO 01` — so nobody can confuse a test vector

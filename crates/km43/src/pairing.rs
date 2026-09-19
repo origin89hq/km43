@@ -48,7 +48,7 @@ use crate::cbor::{CborError, CborReader};
 use crate::envelope::{Envelope, EnvelopeError, Header, Refusal};
 use crate::generated::{ClientKind, ErrorCode, MessageType, Pair};
 use crate::kdf::{ClientId, Epoch};
-use crate::limits::{MAX_LABEL, MAX_PAYLOAD, MAX_STRING};
+use crate::limits::{ENVELOPE_BYTES, MAX_LABEL, MAX_PAYLOAD, MAX_STRING};
 use crate::mac::{MacError, PairAck, PairKey, PairProof};
 
 /// A `device_id`, a `challenge`, a `client_nonce`, a `next_challenge` and a
@@ -57,11 +57,6 @@ const BSTR16: usize = 16;
 
 /// A `text` field at its widest: a two-byte head and [`MAX_STRING`] bytes.
 const TEXT_MAX: usize = 2 + MAX_STRING;
-
-/// What `[type, session_id, req_id, …]` costs around either body, at the widest
-/// each of the three scalars encodes to. The body map's own head is counted
-/// with the body.
-const ENVELOPE: usize = 11;
 
 const_assert!(
     MAX_STRING >= 24,
@@ -82,16 +77,17 @@ pub const MAX_PAIR_BODY: usize = 40 + TEXT_MAX;
 pub const MAX_PAIR_ACK_BODY: usize = 45;
 
 const_assert!(
-    MAX_PAIR_BODY + ENVELOPE <= MAX_PAYLOAD,
+    MAX_PAIR_BODY + ENVELOPE_BYTES <= MAX_PAYLOAD,
     "a Pair 0x0B carries the one variable-width field in either pairing preimage; a body that fills the payload is a frame the client builds and the controller then refuses with error 5, at the one moment somebody is standing in front of the panel"
 );
 const_assert!(
-    MAX_PAIR_ACK_BODY + ENVELOPE <= MAX_PAYLOAD,
+    MAX_PAIR_ACK_BODY + ENVELOPE_BYTES <= MAX_PAYLOAD,
     "the ack is fixed width, so this can only fail by somebody adding a key to it — which is the review this line is asking for, because every key of this body is inside the MAC and a new one would not be"
 );
 
 /// The four keys of `Pair 0x0B`, by name rather than by number.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum PairRequestKey {
     /// Key 1, which P-105 fixes the capability mask from and which is attested
     /// by the proof rather than by the comms processor.
@@ -146,6 +142,7 @@ impl fmt::Display for PairRequestKey {
 
 /// The four keys of `Pair 0x8B`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum PairAckKey {
     /// Key 1, the registry number of what the controller decided.
     Outcome,
@@ -203,6 +200,7 @@ impl fmt::Display for PairAckKey {
 /// gives about `BodyKey`: key 1 is `client_kind` going out and `outcome` coming
 /// back, and a single enum would either lose that or spell every variant twice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum PairBodyKey {
     /// A key of the request.
     Request(PairRequestKey),
@@ -279,6 +277,7 @@ impl fmt::Debug for Attempt {
 /// let refused = Outcome::WindowClosed(ClientId::new(1).expect("a slot"));
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Outcome {
     /// Outcome 1: a free row was allocated, at P-086's lowest free index.
     Enrolled(ClientId),
@@ -535,6 +534,7 @@ impl fmt::Debug for PairClaim<'_> {
 /// standing at the panel that they mis-scanned a label they scanned correctly,
 /// and the only cure they can think of is pressing the button again.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct BadProof;
 
 impl BadProof {
@@ -564,6 +564,7 @@ impl core::error::Error for BadProof {}
 /// it**: P-087 puts it in `Discover 0x80`, and both ends supply it from what
 /// they already know.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct PairResponse {
     /// Keys 1 and 2, which are one decision and so one value.
     pub outcome: Outcome,
@@ -935,6 +936,7 @@ fn expected(header: Header, kind: MessageType) -> Result<(), PairError> {
 /// because P-051's exception answers it with an outcome rather than with a code
 /// from this list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum PairError {
     /// A key the body requires that never arrived. Never defaulted: an absent
     /// `next_challenge` is not sixteen zero bytes.
@@ -1092,22 +1094,7 @@ mod tests {
     const SESSION: u16 = 3;
     const REQ_ID: u32 = 17;
 
-    /// `macs.pair_proof.out16` from `docs/protocol/vectors/v1.json`, **retyped**.
-    ///
-    /// So it is a restatement rather than an outside opinion: change a nibble in
-    /// that file and this stays green. What pins these two encoders to the
-    /// artefact is `tests/vectors.rs`, which reads it. This is here because it
-    /// splits the diagnosis — a wrong tag with the fields assembled here says
-    /// the module composed the preimage wrongly, and the same tag wrong there
-    /// says the file moved.
-    const PUBLISHED_PROOF: [u8; Tag::LEN] = hex("22171c0449d848381e6d99ed7c92d1bd");
-
-    /// `macs.pair_ack_mac.out16` from the same file, retyped for the same
-    /// reason.
-    const PUBLISHED_ACK: [u8; Tag::LEN] = hex("4a7937d934b87b750a254a05289f030b");
-
-    /// The `inputs` block of the vector file, as the pair every key on this unit
-    /// descends from.
+    /// The device every key below descends from.
     fn device() -> DeviceSecret {
         DeviceSecret::new(DeviceId::new(DEVICE_ID), PrintedSecret::new(PRINTED_SECRET))
     }
@@ -1319,24 +1306,19 @@ mod tests {
             .pair(4, &bstr16(&NEXT_CHALLENGE))
     }
 
-    /// The published `pair_proof`, reached through the real derivation ladder
-    /// and this module's own encoder.
+    /// A `Pair 0x0B` from fields to wire and back, verifying under the key the
+    /// real derivation ladder produces.
     ///
-    /// Coming through `DeviceSecret` rather than handing `proof` a key means a
-    /// dropped `epoch`, a swapped HKDF argument and a field composed in the
-    /// wrong order all arrive as the same red line. The tag on the wire is read
-    /// back out of the frame rather than off the return value, so an encoder
-    /// that proved one `client_kind` and wrote another would show here.
+    /// The tag is read back out of the frame rather than off the return value,
+    /// so an encoder that proved one `client_kind` and wrote another fails at
+    /// the `verify`. Whether that tag is the one the vectors publish is
+    /// `tests/vectors.rs`'s question, asked of the file rather than of a copy.
     #[test]
-    fn the_published_pair_proof_is_what_this_module_writes_on_the_wire() {
+    fn a_pair_proof_written_on_the_wire_reads_back_and_verifies_under_the_derived_key() {
         let frame = sent(&request(), &attempt());
         let claim = frame
             .claimed()
             .expect("the frame this module wrote decodes");
-        assert_eq!(
-            claim.proof, PUBLISHED_PROOF,
-            "this encoder and the published pair proof have parted company"
-        );
         assert_eq!(claim.attempt(DEVICE_ID, CHALLENGE), attempt());
         assert_eq!(
             claim
@@ -1346,16 +1328,12 @@ mod tests {
         );
     }
 
-    /// The published `pair_ack_mac`, through the same ladder and this module's
-    /// ack encoder — including the `epoch` the body does not carry.
+    /// The ack the same way, through the same ladder and this module's ack
+    /// encoder — including the `epoch` the body does not carry.
     #[test]
-    fn the_published_pair_ack_mac_is_what_this_module_writes_on_the_wire() {
+    fn a_pair_ack_written_on_the_wire_reads_back_and_verifies_under_the_derived_key() {
         let frame = answered(&answer(Outcome::Enrolled(slot())), &attempt());
         let claim = frame.acked().expect("the ack this module wrote decodes");
-        assert_eq!(
-            claim.mac, PUBLISHED_ACK,
-            "this encoder and the published pair-ack MAC have parted company"
-        );
         assert_eq!(
             claim
                 .verify(&device().pair_key(), &attempt(), Epoch::FIRST)
@@ -2283,7 +2261,7 @@ mod tests {
             MAX_LABEL,
             "the fixture is the row's cap exactly"
         );
-        let mut exact = [0u8; MAX_PAIR_BODY + ENVELOPE];
+        let mut exact = [0u8; MAX_PAIR_BODY + ENVELOPE_BYTES];
         let len = PairRequest {
             client_kind: ClientKind::App,
             label: WIDEST,
@@ -2295,9 +2273,9 @@ mod tests {
             &mut exact,
         )
         .expect("the widest label fits the buffer the constant promises");
-        assert!(len <= MAX_PAIR_BODY + ENVELOPE);
+        assert!(len <= MAX_PAIR_BODY + ENVELOPE_BYTES);
 
-        let mut ack = [0u8; MAX_PAIR_ACK_BODY + ENVELOPE];
+        let mut ack = [0u8; MAX_PAIR_ACK_BODY + ENVELOPE_BYTES];
         let widest_slot = ClientId::new(u32::MAX).expect("the top of the counter is a slot");
         let len = answer(Outcome::Enrolled(widest_slot))
             .write(
@@ -2307,7 +2285,7 @@ mod tests {
                 &mut ack,
             )
             .expect("the widest client_id fits too");
-        assert!(len <= MAX_PAIR_ACK_BODY + ENVELOPE);
+        assert!(len <= MAX_PAIR_ACK_BODY + ENVELOPE_BYTES);
     }
     /// Every strict prefix of a frame is refused, at the envelope or in the
     /// body it carries.

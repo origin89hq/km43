@@ -16,8 +16,12 @@ fmt-check:
     cargo fmt --all --check
     pnpm run format:check
 
+# The second pass builds the crate's tests with `defmt` on. Without it
+# `tests/defmt.rs` is compiled by nothing, because the plain pass leaves the
+# feature off and the cross-compile builds only the library.
 lint:
     cargo clippy --locked --workspace --all-targets -- -D warnings
+    cargo clippy --locked -p km43 --all-targets --features defmt -- -D warnings
     pnpm run lint
 
 typecheck:
@@ -62,8 +66,10 @@ vocabulary *args:
 
 # Consumers may still build with the compiler `rust-version` names. Not part of
 # `check` because it needs a second toolchain installed: `rustup toolchain
-# install {{msrv}} --profile minimal`.
+# install {{msrv}} --profile minimal`. Warnings are errors here because the older
+# compiler lints differently: 1.88 reported seven dead constants that 1.98 did
+# not, and a plain `check` stayed green over them.
 msrv-check:
-    cargo +{{msrv}} check --locked --workspace
+    RUSTFLAGS="-D warnings" cargo +{{msrv}} check --locked --workspace
 
 check: fmt-check lint typecheck test build doc spec

@@ -24,6 +24,7 @@ use crate::limits::MAX_EVENT_BODY;
 
 /// The four keys of `Event 0x04`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum EventKey {
     /// Key 1, strictly increasing but **not** contiguous (P-096).
     Seq,
@@ -192,6 +193,7 @@ impl<'a> Event<'a> {
 /// on a stream that is quiet for eleven months of the year that record is as
 /// likely as not the alarm somebody subscribed to find.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct EventMark(LogSeq);
 
 impl EventMark {
@@ -264,6 +266,7 @@ fn once<T>(slot: &mut Option<T>, key: EventKey, value: T) -> Result<(), EventErr
 
 /// Why an event was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum EventError {
     /// A required key never arrived (P-015). Key 2 is optional and is not here.
     Missing(EventKey),
