@@ -16,8 +16,12 @@ fmt-check:
     cargo fmt --all --check
     pnpm run format:check
 
+# The second pass builds the crate's tests with `defmt` on. Without it
+# `tests/defmt.rs` is compiled by nothing, because the plain pass leaves the
+# feature off and the cross-compile builds only the library.
 lint:
     cargo clippy --locked --workspace --all-targets -- -D warnings
+    cargo clippy --locked -p km43 --all-targets --features defmt -- -D warnings
     pnpm run lint
 
 typecheck:
