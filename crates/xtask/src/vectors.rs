@@ -630,14 +630,14 @@ impl SelfCheck {
             "0101", // 1: protocol_major = 1
             "0200", // 2: protocol_minor = 0
             "0303", // 3: session_id = 3
-            // 4: fw_controller, tstr 22
-            "0476",
-            "6f38392d73746d333220302e312e302b316132623363",
+            // 4: fw_controller, tstr 23, the last length that fits in the head
+            "0477",
+            "302e312e302d626574612e31322b673161326233633464",
             // 5: fw_comms, tstr 24 -- one longer, and the length becomes its own
             // byte. Get this wrong and key 6 starts a byte early, so the rest of
             // the map decodes as plausible numbers rather than as an error.
             "057818",
-            "6573703332633620302e322e302d756e7665726966696564",
+            "302e322e302d616c7068612e31322b673565366637613862",
             "0618f7",               // 6: capabilities, bits 0-2 and 4-7
             "0701",                 // 7: log_oldest_seq = 1
             "08190100",             // 8: log_newest_seq = 256, argument becomes two bytes
@@ -810,14 +810,16 @@ struct SelfReport {
 impl SelfReport {
     /// A fresh unit with somebody holding the button, chosen so the widths
     /// differ: `fw_controller` is 23 bytes and `fw_comms` is 24, which is the
-    /// byte where a CBOR string head gains its own length byte.
+    /// byte where a CBOR string head gains its own length byte. Both are in the
+    /// shape L-034 gives them, and `fw_comms` is what the comms `LinkUp` in the
+    /// link block carries, because L-031 makes the one the other.
     const fn new() -> Self {
         Self {
             model: "Origin89 CTRL-1 (G0B1)",
             provisioned: false,
             pairing_open: true,
-            fw_controller: "o89-stm32 0.1.0+1a2b3c",
-            fw_comms: "esp32c6 0.2.0-unverified",
+            fw_controller: "0.1.0-beta.12+g1a2b3c4d",
+            fw_comms: "0.2.0-alpha.12+g5e6f7a8b",
             // Bits 0, 1, 2, 4, 5, 6 and 7 set; bit 3 clear because there is no
             // bootloader to push an image to yet.
             capabilities: 0xF7,
@@ -1680,9 +1682,9 @@ impl Builder {
                     1 => Cb::U(1),
                     2 => Cb::U(0),
                     3 => Cb::U(2),
-                    4 => Cb::T("o89-esp32 0.1.0".into()),
+                    4 => Cb::T(SelfReport::new().fw_comms.into()),
                     5 => Cb::U(0x5eed_face),
-                    6 => Cb::T("esp32c6-devkitc-1".into()),
+                    6 => Cb::T("controller-a rev A".into()),
                     7 => Cb::U(0),
                 },
                 "{1:protocol_major=1, 2:protocol_minor=0, 3:role=comms, 4:fw, 5:boot_id, 6:hw, 7:net_version=0}",

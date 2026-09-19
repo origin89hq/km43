@@ -360,6 +360,16 @@ fn the_published_discover_body_reads_back_to_the_fields_the_generator_wrote() {
     assert_eq!(read.epoch.get(), 1, "P-087's epoch moved");
 }
 
+/// A text the `inputs` block publishes, read out of the file rather than
+/// retyped, so the firmware strings can change shape without this file
+/// quietly asserting the old ones.
+fn input_text(key: &str) -> &'static str {
+    strings_of(object("inputs"), key)
+        .first()
+        .copied()
+        .unwrap_or_else(|| panic!("`inputs` publishes no `{key}`"))
+}
+
 /// The seventeen fields the `inputs` block describes, typed.
 ///
 /// The caps come from `Caps::THIS_CONTROLLER` rather than from six literals:
@@ -371,8 +381,8 @@ fn published_report() -> HelloReport<'static> {
         topology: km43::Topology::THIS_CONTROLLER,
         version: Version::V1_0,
         session: SessionId::from(3),
-        fw_controller: "o89-stm32 0.1.0+1a2b3c",
-        fw_comms: "esp32c6 0.2.0-unverified",
+        fw_controller: input_text("fw_controller"),
+        fw_comms: input_text("fw_comms"),
         capabilities: 0xf7,
         log_oldest_seq: LogSeq(1),
         log_newest_seq: LogSeq(256),
@@ -386,9 +396,10 @@ fn published_report() -> HelloReport<'static> {
 /// The `Hello 0x81` body this crate writes, against the one the generator
 /// published.
 ///
-/// Seventeen keys, four of them `u64` and two of them 24-byte text: every one is
-/// a chance for the two implementations to have picked a different CBOR head
-/// width, and none of them is covered by a MAC in this file.
+/// Seventeen keys, four of them `u64` and two texts of 23 and 24 bytes, either
+/// side of the length where a string head grows: every one is a chance for the
+/// two implementations to have picked a different CBOR head width, and none of
+/// them is covered by a MAC in this file.
 #[test]
 fn the_published_hello_0x81_body_is_the_one_this_encoder_writes() {
     let bodies = published_bodies();
@@ -450,8 +461,12 @@ fn the_published_hello_0x81_body_reads_back_to_the_fields_the_generator_wrote() 
 
     assert_eq!(session.version(), Version::V1_0, "P-073 agreed on 1.0");
     assert_eq!(read.session, SessionId::from(3), "key 3 moved");
-    assert_eq!(read.fw_controller, "o89-stm32 0.1.0+1a2b3c", "key 4 moved");
-    assert_eq!(read.fw_comms, "esp32c6 0.2.0-unverified", "key 5 moved");
+    assert_eq!(
+        read.fw_controller,
+        input_text("fw_controller"),
+        "key 4 moved"
+    );
+    assert_eq!(read.fw_comms, input_text("fw_comms"), "key 5 moved");
     assert_eq!(read.capabilities, 0xf7, "key 6 moved");
     assert_eq!(read.log_oldest_seq, LogSeq(1), "key 7 moved");
     assert_eq!(read.log_newest_seq, LogSeq(256), "key 8 moved");
@@ -1721,6 +1736,15 @@ fn every_published_link_frame_is_one_this_crate_decodes() {
                 let up = km43::LinkUp::decode(envelope).expect("the published LinkUp reads");
                 assert_eq!(up.role, Side::Comms);
                 assert_eq!(up.boot_id, 0x5eed_face, "the boot_id the generator wrote");
+                // L-031 makes this `fw` the `fw_comms` the controller reports,
+                // so the corpus has to publish one text in both places. Two
+                // different ones would teach a second implementation that a
+                // controller reports something other than what it was sent.
+                assert_eq!(
+                    up.fw,
+                    input_text("fw_comms"),
+                    "the published comms LinkUp and the published Hello disagree about fw_comms"
+                );
                 assert_eq!(
                     up.net_version,
                     Some(0),

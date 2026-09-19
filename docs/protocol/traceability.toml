@@ -987,8 +987,17 @@
 # They say what a test must be called to stand behind a rule that says two
 # things, wherever that test lives, and deleting them would let the controller's
 # copy read a half-built rule as covered.
+#
+# 122 -> 123, and it is the one reason this number is allowed to rise: the
+# specification gained a rule. L-034 says what the version and board texts on
+# the link look like, that the widest legal version fits the field, and that a
+# receiver carries a text in another shape rather than refusing it. The width and
+# the receiver are tested in `linklocal.rs`. The sender half is the firmware's:
+# nothing in this tree builds an image or writes its own `LinkUp`, so a test
+# named after it here would stand over nothing. Its `[[clauses]]` entry is what
+# keeps the two tests from reading as the whole rule.
 
-uncovered = 122
+uncovered = 123
 
 # P-045 is the shape this file is for. Nothing can drive an implementation into
 # transmitting a key it does not have, so the thing that stands behind it reads
@@ -1271,3 +1280,16 @@ pin that never moves cannot report a torn walk at all; a pin that moves on every
 state change tears every walk in progress on the morning thirty-two per-cell \
 rows clear at once, which is the site this table was sized for. The second test \
 is the one that fails on the tempting implementation, and it passes the first."""
+
+[[clauses]]
+id = "L-034"
+each = ["fits_and_reads_back", "sender_writes_the_format", "still_brings_the_link_up"]
+reason = """
+Three things with one number, and they fail in different places. The limits \
+fail on paper: a version legal under the format but past 32 bytes is one a unit \
+stores and cannot send. The sender clause fails in the firmware: a build that \
+writes `0.1.0` with no commit, or a `fw_controller` that is not its own `fw`, \
+leaves a bench log nothing can match to a unit. The receiver clause fails on the \
+link: a controller that refuses a text in another shape takes every client off \
+the air over a label. A test for the width and the receiver leaves the sender \
+looking checked."""

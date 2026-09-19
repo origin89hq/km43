@@ -24,8 +24,8 @@
     "model": "Origin89 CTRL-1 (G0B1)",
     "provisioned": false,
     "pairing_open": true,
-    "fw_controller": "o89-stm32 0.1.0+1a2b3c",
-    "fw_comms": "esp32c6 0.2.0-unverified",
+    "fw_controller": "0.1.0-beta.12+g1a2b3c4d",
+    "fw_comms": "0.2.0-alpha.12+g5e6f7a8b",
     "capabilities": 247,
     "log_oldest_seq": 1,
     "log_newest_seq": 256,
@@ -148,8 +148,8 @@
       "capabilities_readable": "bit 0 log readable, 1 config writable, 2 commands accepted, 4 clock settable, 5 counted state of charge, 6 AC metering, 7 a behaviour is in shadow mode; bit 3 firmware update is clear",
       "counter_readable": "the highest counter already accepted from client_id 7, which is why the signed_request vector's 0x42 is the next value that is not a replay",
       "sequence_spaces": "keys 7 and 8 are log positions and key 9 is the state store's own counter; the two spaces must never be compared, and 255 sitting beside 256 here is what that trap looks like",
-      "body_cbor": "b81d01010200030304766f38392d73746d333220302e312e302b3161326233630578186573703332633620302e322e302d756e76657269666965640618f70701081901000918ff0af50b18410c080d18200e080f10100411182012001348000000000000000014081518181618a017190180181819020018191860181a1830181b0c181c1818181d04",
-      "body_len": 137
+      "body_cbor": "b81d0101020003030477302e312e302d626574612e31322b673161326233633464057818302e322e302d616c7068612e31322b6735653666376138620618f70701081901000918ff0af50b18410c080d18200e080f10100411182012001348000000000000000014081518181618a017190180181819020018191860181a1830181b0c181c1818181d04",
+      "body_len": 138
     },
     "inventory_0x8D": {
       "type": 141,
@@ -363,10 +363,10 @@
       "session_id": 0,
       "req_id": 1,
       "body_readable": "{1:protocol_major=1, 2:protocol_minor=0, 3:role=comms, 4:fw, 5:boot_id, 6:hw, 7:net_version=0}",
-      "envelope_cbor": "8418600001a7010102000302046f6f38392d657370333220302e312e30051a5eedface0671657370333263362d6465766b6974632d310700",
-      "crc16_ccitt_false": "0x3fee",
-      "encoded_with_delimiter": "048418600601a70101022e0302046f6f38392d657370333220302e312e30051a5eedface0671657370333263362d6465766b6974632d310703ee3f00",
-      "encoded_len": 60
+      "envelope_cbor": "8418600001a7010102000302047818302e322e302d616c7068612e31322b673565366637613862051a5eedface0672636f6e74726f6c6c65722d612072657620410700",
+      "crc16_ccitt_false": "0x9d70",
+      "encoded_with_delimiter": "048418600601a7010102390302047818302e322e302d616c7068612e31322b673565366637613862051a5eedface0672636f6e74726f6c6c65722d612072657620410703709d00",
+      "encoded_len": 71
     },
     "client_connected_0x62": {
       "type": 98,

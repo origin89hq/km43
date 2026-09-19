@@ -357,21 +357,23 @@ blame the client.
 **L-034** — `fw` in `LinkUp`, and `version` in `CommsRelease` and
 `CommsReleaseAck`, MUST be a semantic version whose build metadata names the
 commit it was built from: `MAJOR.MINOR.PATCH[-PRE]+gXXXXXXXX`, with the first
-eight lowercase hex digits of the commit id after the `g`. `hw` MUST be the
-board name and revision as origin89hq/hardware writes them, such as
-`controller-a rev B`. The controller MUST send the same `fw` text as
-`fw_controller` in the client `Hello`. A receiver MUST NOT refuse a `LinkUp`
-whose text has another shape.
+eight lowercase hex digits of the commit id after the `g`. Each of `MAJOR`,
+`MINOR` and `PATCH` MUST be at most three decimal digits, and `PRE`, without
+its hyphen, at most eight bytes. `hw` MUST be the board name and revision as
+origin89hq/hardware writes them, such as `controller-a rev B`. The controller
+MUST send the same `fw` text as `fw_controller` in the client `Hello`. A
+receiver MUST NOT refuse a `LinkUp` whose text has another shape.
 
 Without a format, two firmwares that never met could disagree: one sending
 `0.1.0`, the other `0.1.0+g1a2b3c4d`. A client comparing them learns nothing,
 and a bench log cannot match a running unit to a commit. The commit id is what
-does that matching, and eight digits of it is what fits. Three-digit
-components, a three-digit pre-release and the commit come to 28 bytes, under
-the 32 the field allows. A full 40-character hash or a build date does not
-fit, which is why the format names neither. The receiver half exists because
-these texts are diagnostic (L-032): a link taken down over a version string is
-an outage caused by a label.
+does that matching, and eight digits of it is what fits. A semantic version
+alone has no ceiling, so the limits are what make the field hold every legal
+text: three-digit components, an eight-byte pre-release and the commit come to
+30 bytes, under the 32 the field allows. A full 40-character hash or a build
+date does not fit, which is why the format names neither. The receiver half
+exists because these texts are diagnostic (L-032): a link taken down over a
+version string is an outage caused by a label.
 
 ### boot_id is what makes a reboot visible
 

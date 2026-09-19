@@ -1901,12 +1901,12 @@ mod tests {
     }
 
     /// **The version format L-034 names fits the field it travels in.** Three
-    /// three-digit components, a three-digit pre-release and eight digits of
-    /// commit come to 28 bytes. If the format ever grows past 32, this goes red
-    /// before a unit has stored a version it cannot send.
+    /// three-digit components, an eight-byte pre-release and eight digits of
+    /// commit come to 30 bytes. If the limits are ever raised past 32, this goes
+    /// red before a unit has stored a version it cannot send.
     #[test]
     fn l_034_the_widest_version_the_format_allows_fits_and_reads_back() {
-        const WIDEST: &str = "999.999.999-rc.999+g0123abcd";
+        const WIDEST: &str = "999.999.999-alpha.99+g0123abcd";
         const BOARD: &str = "controller-a rev B";
         assert!(
             WIDEST.len() <= MAX_LINK_TEXT,
