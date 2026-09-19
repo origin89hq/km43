@@ -1791,14 +1791,14 @@ mod tests {
         assert_eq!(NetVerdict::decode(envelope).expect("it reads").version, 0);
     }
 
-    /// **A clear is held at the version it carried, and that is what the ack
-    /// says** (L-132). A controller that cleared at version 2 holds nothing at
-    /// version 2; a board that answered 0 for that would differ from it on
-    /// every `LinkUp` afterwards, and L-133 pushes on *different*, so the
-    /// same clear would go out for the life of the unit. Reported as 2 the two
-    /// agree, and 0 is left meaning the one thing it should: never provisioned.
+    /// **An ack answering a clear carries the clear's version through the
+    /// codec.** L-132 has the comms processor report the version a clear
+    /// carried rather than 0, and this is only the wire's half of that: the
+    /// number survives the encoder and the decoder. What a board stores after a
+    /// clear is the comms firmware's, and no code in this crate stores one, so
+    /// this test is not named after the rule and does not count as covering it.
     #[test]
-    fn l_132_a_cleared_board_reports_the_version_of_the_clear_not_zero() {
+    fn an_ack_to_a_clear_carries_the_clears_version_not_zero() {
         let cleared = NetChange::Clear {
             version: 2,
             country: "CA",

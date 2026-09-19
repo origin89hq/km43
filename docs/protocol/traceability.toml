@@ -988,15 +988,7 @@
 # things, wherever that test lives, and deleting them would let the controller's
 # copy read a half-built rule as covered.
 
-# 122 -> 121. L-132 gained a sentence and a test in the same commit: the ack to
-# a `clear` reports the version the clear carried, and 0 is reserved for a
-# board never given a network. Before the sentence, a controller that cleared
-# at version 2 held nothing at 2, the cache reported 0, and L-133 pushed the
-# same clear on every link-up for the life of the unit. The test is the wire's
-# half, which is what a test here can stand behind: an ack answering a clear
-# at 2 reads back 2 and is not 0.
-
-uncovered = 121
+uncovered = 122
 
 # P-045 is the shape this file is for. Nothing can drive an implementation into
 # transmitting a key it does not have, so the thing that stands behind it reads
