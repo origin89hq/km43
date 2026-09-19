@@ -30,8 +30,8 @@ use crate::envelope::SessionId;
 use crate::envelope::{LinkEnvelope, LinkHeader};
 use crate::generated::{
     ClientConnected, ClientDisconnected, CloseConnection, CloseReason, DisconnectReason,
-    LinkDirection, LinkErrorCode, LinkMessageType, LinkTransport, NetConfig, NetConfigOp,
-    TimeOffer,
+    DownloadReason, EnterDownload, LinkDirection, LinkErrorCode, LinkMessageType, LinkTransport,
+    NetConfig, NetConfigOp, TimeOffer,
 };
 use crate::handshake::Version;
 use crate::limits::MAX_LINK_TEXT;
@@ -1107,6 +1107,83 @@ impl TimeVerdict {
     }
 }
 
+/// `EnterDownload 0x68` — the controller asks the module to reset into its
+/// ROM's serial download mode, inside the window the comms firmware opens at
+/// its own start (L-190).
+///
+/// Named `DownloadRequest` because the registry gives the message's name to
+/// the outcome its acknowledgement carries, as with every other pair here.
+/// The reason is diagnostic: the controller logs it with the verdict (L-192),
+/// since the module keeps nothing across the reset it asks for, and nothing
+/// either side branches on it. What decides is the window, not the word.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DownloadRequest {
+    /// Key 1.
+    pub reason: DownloadReason,
+}
+
+impl DownloadRequest {
+    /// # Errors
+    /// `dst` will not hold it.
+    pub fn write(&self, header: LinkHeader, dst: &mut [u8]) -> Result<usize, LinkError> {
+        let mut cbor = header
+            .write(1, dst)
+            .map_err(|_| LinkError::Cbor(CborError::DestinationTooSmall))?;
+        cbor.key(1)?;
+        cbor.u64(u64::from(self.reason as u8))?;
+        Ok(cbor.finish()?)
+    }
+
+    /// # Errors
+    /// A reason this version does not allocate, the key absent, or CBOR that
+    /// will not read.
+    pub fn decode(envelope: LinkEnvelope<'_>) -> Result<Self, LinkError> {
+        let pairs = envelope.keys();
+        let mut body = envelope.into_body();
+        let mut reason = None;
+        for _ in 0..pairs {
+            match body.key()? {
+                1 => {
+                    let raw = body.u8()?;
+                    let why = DownloadReason::try_from(raw)
+                        .map_err(|()| LinkError::UnknownReason(raw))?;
+                    once(&mut reason, LinkField::Reason, why)?;
+                }
+                _ => body.skip()?,
+            }
+        }
+        body.finish()?;
+        Ok(Self {
+            reason: reason.ok_or(LinkError::Missing(LinkField::Reason))?,
+        })
+    }
+}
+
+/// `EnterDownloadAck 0xE8` — `entering`, sent before the module sets the flag
+/// and resets, or `refused_outside_window` (L-191).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DownloadVerdict {
+    /// Key 1.
+    pub outcome: EnterDownload,
+}
+
+impl DownloadVerdict {
+    /// # Errors
+    /// `dst` will not hold it.
+    pub fn write(&self, header: LinkHeader, dst: &mut [u8]) -> Result<usize, LinkError> {
+        outcome_only(header, dst, self.outcome as u8)
+    }
+
+    /// # Errors
+    /// An outcome this version does not allocate, the key absent, or CBOR
+    /// that will not read.
+    pub fn decode(envelope: LinkEnvelope<'_>) -> Result<Self, LinkError> {
+        Ok(Self {
+            outcome: outcome(envelope, EnterDownload::try_from)?,
+        })
+    }
+}
+
 /// `ClientConnectedAck 0xE2` — whether the controller took the handle.
 ///
 /// **This is what mints the connection's challenge** (L-070). Before it,
@@ -1267,6 +1344,7 @@ fn outcome<T>(
 mod tests {
     use super::*;
     use crate::cbor::CborError;
+    use crate::envelope::ReqId;
     use crate::envelope::{EnvelopeError, Refusal};
     use crate::generated::MessageType;
 
@@ -2549,9 +2627,9 @@ mod tests {
         );
     }
 
-    /// The seven link requests, none of which had a truncation test. The cable
-    /// inside the enclosure drops bytes like any other, and a comms processor
-    /// that resynchronises hands the controller arbitrary prefixes.
+    /// The eight link requests, none of which had a truncation test. The
+    /// cable inside the enclosure drops bytes like any other, and a comms
+    /// processor that resynchronises hands the controller arbitrary prefixes.
     #[test]
     fn every_link_request_cut_short_at_any_byte_is_refused() {
         let mut bytes = [0u8; 256];
@@ -2621,9 +2699,18 @@ mod tests {
         refused_at_every_cut(bytes.get(..len).expect("the frame"), |e| {
             ClockOffer::decode(e).map(|_| ())
         });
+
+        let len = DownloadRequest {
+            reason: DownloadReason::Recovery,
+        }
+        .write(link_header(LinkMessageType::EnterDownload), &mut bytes)
+        .expect("encodes");
+        refused_at_every_cut(bytes.get(..len).expect("the frame"), |e| {
+            DownloadRequest::decode(e).map(|_| ())
+        });
     }
 
-    /// The five acks, cut the same way.
+    /// The six acks, cut the same way.
     #[test]
     fn every_link_ack_cut_short_at_any_byte_is_refused() {
         let mut bytes = [0u8; 256];
@@ -2676,5 +2763,112 @@ mod tests {
         refused_at_every_cut(bytes.get(..len).expect("the frame"), |e| {
             NetVerdict::decode(e).map(|_| ())
         });
+
+        let len = DownloadVerdict {
+            outcome: EnterDownload::Entering,
+        }
+        .write(link_header(LinkMessageType::EnterDownloadAck), &mut bytes)
+        .expect("encodes");
+        refused_at_every_cut(bytes.get(..len).expect("the frame"), |e| {
+            DownloadVerdict::decode(e).map(|_| ())
+        });
+    }
+
+    #[test]
+    fn an_enter_download_carries_its_reason_and_reads_back() {
+        let mut dst = [0u8; 64];
+        let header = LinkHeader {
+            kind: LinkMessageType::EnterDownload,
+            session: SessionId::None,
+            req_id: ReqId(9),
+        };
+        let len = DownloadRequest {
+            reason: DownloadReason::Recovery,
+        }
+        .write(header, &mut dst)
+        .expect("writes");
+        let envelope = LinkEnvelope::decode(&dst[..len]).expect("decodes");
+        assert_eq!(envelope.opcode(), LinkMessageType::EnterDownload as u8);
+        assert_eq!(envelope.req_id(), ReqId(9));
+        let request = DownloadRequest::decode(envelope).expect("reads");
+        assert_eq!(request.reason, DownloadReason::Recovery);
+    }
+
+    #[test]
+    fn an_enter_download_with_a_reason_nobody_allocated_is_refused() {
+        // Key 1 = 7: no such reason (P-014).
+        let mut dst = [0u8; 64];
+        let header = LinkHeader {
+            kind: LinkMessageType::EnterDownload,
+            session: SessionId::None,
+            req_id: ReqId(1),
+        };
+        let mut cbor = header.write(1, &mut dst).expect("opens");
+        cbor.key(1).expect("key");
+        cbor.u64(7).expect("value");
+        let len = cbor.finish().expect("closes");
+        let envelope = LinkEnvelope::decode(&dst[..len]).expect("decodes");
+        assert_eq!(
+            DownloadRequest::decode(envelope),
+            Err(LinkError::UnknownReason(7))
+        );
+        // And one with no reason at all.
+        let mut dst = [0u8; 64];
+        let cbor = header.write(0, &mut dst).expect("opens");
+        let len = cbor.finish().expect("closes");
+        let envelope = LinkEnvelope::decode(&dst[..len]).expect("decodes");
+        assert_eq!(
+            DownloadRequest::decode(envelope),
+            Err(LinkError::Missing(LinkField::Reason))
+        );
+    }
+
+    #[test]
+    fn a_download_verdict_carries_its_outcome_and_refuses_one_nobody_allocated() {
+        let mut dst = [0u8; 64];
+        let header = LinkHeader {
+            kind: LinkMessageType::EnterDownloadAck,
+            session: SessionId::None,
+            req_id: ReqId(9),
+        };
+        for outcome in [EnterDownload::Entering, EnterDownload::RefusedOutsideWindow] {
+            let len = DownloadVerdict { outcome }
+                .write(header, &mut dst)
+                .expect("writes");
+            let envelope = LinkEnvelope::decode(&dst[..len]).expect("decodes");
+            assert_eq!(
+                DownloadVerdict::decode(envelope).expect("reads").outcome,
+                outcome
+            );
+        }
+        let len = outcome_only(header, &mut dst, 3).expect("writes");
+        let envelope = LinkEnvelope::decode(&dst[..len]).expect("decodes");
+        assert_eq!(
+            DownloadVerdict::decode(envelope),
+            Err(LinkError::UnknownOutcome(3))
+        );
+    }
+
+    #[test]
+    fn l_001_an_enter_download_is_taken_at_the_comms_processor_and_refused_at_the_controller() {
+        let request = LinkMessageType::EnterDownload as u8;
+        let ack = LinkMessageType::EnterDownloadAck as u8;
+        assert_eq!(
+            arriving(request, Side::Comms, SessionId::None),
+            Intake::Act(LinkMessageType::EnterDownload)
+        );
+        assert_eq!(
+            arriving(request, Side::Controller, SessionId::None),
+            Intake::Refuse(LinkErrorCode::WrongSide),
+            "the untrusted chip does not choose when the trusted one stops"
+        );
+        assert_eq!(
+            arriving(ack, Side::Controller, SessionId::None),
+            Intake::Act(LinkMessageType::EnterDownloadAck)
+        );
+        assert_eq!(
+            arriving(ack, Side::Comms, SessionId::None),
+            Intake::Refuse(LinkErrorCode::WrongSide)
+        );
     }
 }

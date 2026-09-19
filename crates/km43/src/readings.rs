@@ -18,7 +18,8 @@
 use core::fmt;
 
 use crate::cbor::{CborError, CborReader, CborWriter};
-use crate::generated::{Provenance, Validity};
+use crate::envelope::Refusal;
+use crate::generated::{ErrorCode, Provenance, Validity};
 use crate::ident::{Id, IdError};
 use crate::limits::{
     MAX_READINGS_BYTES, MAX_SAMPLES, MAX_SELECTORS, MAX_SERIES, MAX_SERIES_LEN, SAMPLE_MAX_BYTES,
@@ -1030,6 +1031,29 @@ impl From<QualityError> for ReadingsError {
     }
 }
 
+impl ReadingsError {
+    /// What to answer. A row past its byte bound is error 5, as a wrapper too
+    /// large to write is; too many selectors is not, because the bytes fit and
+    /// it is the shape that is wrong. Everything else is a body whose meaning
+    /// cannot be trusted, which is what error 1 says.
+    #[must_use]
+    pub const fn refusal(self) -> Refusal {
+        match self {
+            Self::RowTooLong(_) => Refusal::Client(ErrorCode::PayloadTooLarge),
+            Self::Quality(why) => why.refusal(),
+            Self::ZeroId
+            | Self::SelectorNamesNotOne(_)
+            | Self::UnknownSelectorKey(_)
+            | Self::TooManySelectors
+            | Self::MissingRequest(_)
+            | Self::MissingResponse(_)
+            | Self::AnsweredNothing(_)
+            | Self::UnknownOutcome(_)
+            | Self::Cbor(_) => Refusal::Client(ErrorCode::MalformedFrame),
+        }
+    }
+}
+
 impl fmt::Display for ReadingsError {
     fn fmt(&self, w: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -1055,6 +1079,8 @@ impl fmt::Display for ReadingsError {
         }
     }
 }
+
+impl core::error::Error for ReadingsError {}
 
 /// Why a reading was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1087,6 +1113,27 @@ pub enum QualityError {
     /// carrying values. Off by one and every element after the gap reads the
     /// next one's number.
     ValueCount { want: usize, got: usize },
+}
+
+impl QualityError {
+    /// What to answer, and it is error 1 for all of them: a reading whose two
+    /// halves disagree about whether there is a number is a byte whose meaning
+    /// is not knowable, and none of these is a size.
+    #[must_use]
+    pub const fn refusal(self) -> Refusal {
+        match self {
+            Self::NoValueToCarry(_)
+            | Self::ValueOmitted(_)
+            | Self::CarryingWithoutProvenance
+            | Self::StaleWithoutAge
+            | Self::AgeWithoutStaleness(_)
+            | Self::Disagree { .. }
+            | Self::UnknownValidity(_)
+            | Self::UnknownProvenance(_)
+            | Self::SeriesLength(_)
+            | Self::ValueCount { .. } => Refusal::Client(ErrorCode::MalformedFrame),
+        }
+    }
 }
 
 impl fmt::Display for QualityError {
@@ -1122,10 +1169,75 @@ impl fmt::Display for QualityError {
     }
 }
 
+impl core::error::Error for QualityError {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::generated::{ENUM_SPACE_MEMBERS, EnumSpace};
+    use crate::render::Rendering;
+
+    /// No two refusals read as one sentence, and each carries the code P-141
+    /// leaves for a body that never reached a handler: error 5 for a row past
+    /// its byte bound, error 1 for the rest, too many selectors included,
+    /// because its bytes fit and it is the shape that is wrong.
+    #[test]
+    fn every_refusal_says_something_of_its_own() {
+        const EVERY: [ReadingsError; 12] = [
+            ReadingsError::ZeroId,
+            ReadingsError::SelectorNamesNotOne(2),
+            ReadingsError::UnknownSelectorKey(9),
+            ReadingsError::TooManySelectors,
+            ReadingsError::MissingRequest(1),
+            ReadingsError::MissingResponse(2),
+            ReadingsError::RowTooLong(300),
+            ReadingsError::AnsweredNothing(ReadingsOutcome::OutOfRange),
+            ReadingsError::UnknownOutcome(9),
+            ReadingsError::Quality(QualityError::StaleWithoutAge),
+            ReadingsError::Cbor(CborError::WrongType),
+            ReadingsError::Quality(QualityError::CarryingWithoutProvenance),
+        ];
+        Rendering::<96>::each_says_something_of_its_own(&EVERY);
+        for why in EVERY {
+            let want = if matches!(why, ReadingsError::RowTooLong(_)) {
+                Refusal::Client(ErrorCode::PayloadTooLarge)
+            } else {
+                Refusal::Client(ErrorCode::MalformedFrame)
+            };
+            assert_eq!(why.refusal(), want, "{why}");
+        }
+    }
+
+    /// A reading whose two halves disagree is a byte whose meaning is not
+    /// knowable, so every quality refusal is error 1 and none reads as
+    /// another. `Disagree` and `CarryingWithoutProvenance` are the pair that
+    /// could most easily have shared a sentence.
+    #[test]
+    fn every_quality_refusal_says_something_of_its_own() {
+        const EVERY: [QualityError; 10] = [
+            QualityError::NoValueToCarry(Validity::Absent),
+            QualityError::ValueOmitted(Validity::Ok),
+            QualityError::CarryingWithoutProvenance,
+            QualityError::StaleWithoutAge,
+            QualityError::AgeWithoutStaleness(Validity::Ok),
+            QualityError::Disagree {
+                validity: Validity::Absent,
+                provenance: Provenance::Measured,
+            },
+            QualityError::UnknownValidity(9),
+            QualityError::UnknownProvenance(9),
+            QualityError::SeriesLength(1),
+            QualityError::ValueCount { want: 3, got: 2 },
+        ];
+        Rendering::<96>::each_says_something_of_its_own(&EVERY);
+        for why in EVERY {
+            assert_eq!(
+                why.refusal(),
+                Refusal::Client(ErrorCode::MalformedFrame),
+                "{why}"
+            );
+        }
+    }
 
     fn id(value: u16) -> Id {
         Id::new(value).expect("a non-zero id")

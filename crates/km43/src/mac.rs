@@ -554,12 +554,14 @@ mod tests {
         }
     }
 
-    const PAIR_KEY: [u8; KEY_BYTES] =
-        hex("d2b669d733ae985424f2930404f5b5976fc52776deaf02a853f14d43c0b73007");
-    const CLIENT_KEY: [u8; KEY_BYTES] =
-        hex("eadf9347ac95af6e8d164d90883965d670a003c52785f1052fba086b05a1a853");
-    const SESSION_KEY: [u8; KEY_BYTES] =
-        hex("ba9ddffe57f11ccceeb5699cbaa5e1c196b719e9e867d97b05dd3b855d0f7601");
+    /// Three keys to sign under. Every test below compares one tag against
+    /// another, never against a published answer, so the bytes are arbitrary
+    /// and only have to differ: what pins the seven published tags to
+    /// `docs/protocol/vectors/v1.json` is `tests/vectors.rs`, which reads the
+    /// file and derives the real keys.
+    const PAIR_KEY: [u8; KEY_BYTES] = [0x11; KEY_BYTES];
+    const CLIENT_KEY: [u8; KEY_BYTES] = [0x22; KEY_BYTES];
+    const SESSION_KEY: [u8; KEY_BYTES] = [0x33; KEY_BYTES];
 
     const DEVICE_ID: [u8; DEVICE_ID_BYTES] = hex("4f524947494e38392044454d4f203031");
     const CHALLENGE: [u8; NONCE_BYTES] = hex("a0a1a2a3a4a5a6a7a8a9aaabacadaeaf");
@@ -572,12 +574,13 @@ mod tests {
     const LABEL: &str = "kitchen phone";
     const EPOCH: u32 = 1;
 
-    const HELLO_BODY: [u8; 40] =
-        hex("a5010102000307046d6f38392d636c6920302e312e300550b0b1b2b3b4b5b6b7b8b9babbbcbdbebf");
-    const OPERATION: [u8; 14] = hex("a301182a0219010103a101190384");
+    /// Bodies to sign, arbitrary for the same reason as the keys above.
+    const HELLO_BODY: [u8; 40] = [0x42; 40];
+    const OPERATION: [u8; 14] = [0x44; 14];
+    const COMMAND_ACK_BODY: [u8; 26] = [0x43; 26];
+    /// `{1: 1216, 2: 64}` in shortest form. Real CBOR rather than filler,
+    /// because the re-encoding test below needs a second spelling of it.
     const READ_LOG_BODY: [u8; 8] = hex("a2011904c0021840");
-    const COMMAND_ACK_BODY: [u8; 26] = hex("a301182a0201037267656e657261746f72207374617274696e67");
-    const EVENT_BODY: [u8; 25] = hex("a4011904d2021b0000018f1e2a3b400319020104a201030201");
 
     fn pair_proof_fields() -> PairProof<'static> {
         PairProof {
@@ -598,15 +601,6 @@ mod tests {
             client_id: CLIENT_ID,
             epoch: EPOCH,
             next_challenge: &NEXT_CHALLENGE,
-        }
-    }
-
-    fn hello_proof_fields() -> HelloProof<'static> {
-        HelloProof {
-            challenge: &CHALLENGE,
-            client_nonce: &CLIENT_NONCE,
-            client_id: CLIENT_ID,
-            payload: &HELLO_BODY,
         }
     }
 
@@ -637,47 +631,6 @@ mod tests {
             req_id: ReqId(REQ_ID),
             payload: &COMMAND_ACK_BODY,
         }
-    }
-
-    /// Seven of the MACs `docs/protocol/vectors/v1.json` publishes, the ones
-    /// these fixtures cover: what these methods compute, beside what the file
-    /// publishes.
-    fn published() -> [([u8; Tag::LEN], [u8; Tag::LEN]); 7] {
-        let pair = PairKey::new(PAIR_KEY);
-        let client = ClientKey::new(CLIENT_KEY);
-        let session = SessionKey::new(SESSION_KEY);
-        [
-            (
-                *pair.proof(&pair_proof_fields()).as_bytes(),
-                hex("22171c0449d848381e6d99ed7c92d1bd"),
-            ),
-            (
-                *pair.ack(&pair_ack_fields()).as_bytes(),
-                hex("4a7937d934b87b750a254a05289f030b"),
-            ),
-            (
-                *client.hello_proof(&hello_proof_fields()).as_bytes(),
-                hex("8418a3ffb064b88022622123ce6a4f01"),
-            ),
-            (
-                *session.signed_request(&signed_request_fields()).as_bytes(),
-                hex("078cc3c1d821bc16a1d6ab81e11ec30d"),
-            ),
-            (
-                *session.wrapper_request(&read_log_fields()).as_bytes(),
-                hex("dc50348012c95f28990c26c4f0f84cb5"),
-            ),
-            (
-                *session.response(&command_ack_fields()).as_bytes(),
-                hex("879f149683b569b80d2b190a955eccba"),
-            ),
-            (
-                *session
-                    .event(SessionId::from(SESSION), &EVENT_BODY)
-                    .as_bytes(),
-                hex("98b7711ad5f1162b6eb7d2dc41d863ef"),
-            ),
-        ]
     }
 
     /// RFC 4231's seven cases, at full width.
@@ -765,128 +718,6 @@ mod tests {
             rightmost,
             "the two ends of this digest differ, or this test proves nothing"
         );
-    }
-
-    /// Seven of the MACs in `v1.json`, byte for byte. The wrapped `Error 0xFF`
-    /// tag is read only by `tests/vectors.rs`, which is the reading that counts.
-    ///
-    /// That file is produced by a tool forbidden from importing this crate. The
-    /// reading of it that counts is `tests/vectors.rs`, which drives the public
-    /// API; the hex below is a transcription, and would be the second copy
-    /// CLAUDE.md warns about if that test did not exist.
-    #[test]
-    fn every_published_mac_is_reproduced_byte_for_byte() {
-        for (index, (computed, published)) in published().iter().enumerate() {
-            assert_eq!(computed, published, "vector {index} moved");
-        }
-    }
-
-    /// The published preimage bytes, fed straight in, give the published tag too.
-    ///
-    /// Without this a dropped field and a broken primitive look identical from
-    /// the test above: both come back as one wrong tag. Here a composition bug
-    /// makes these two disagree with each other while a primitive bug makes both
-    /// disagree with the vector, which says which half to go and read.
-    #[test]
-    fn the_fields_these_methods_compose_are_the_published_preimage_bytes() {
-        const PREIMAGES: [(&[u8; KEY_BYTES], &[u8]); 7] = [
-            (
-                &PAIR_KEY,
-                &hex::<80>(
-                    "6b6d34332f76312f706169722d70726f6f664f524947494e38392044454d4f2030\
-                     31a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf01\
-                     6b69746368656e2070686f6e65",
-                ),
-            ),
-            (
-                &PAIR_KEY,
-                &hex::<89>(
-                    "6b6d34332f76312f706169722d61636b4f524947494e38392044454d4f2030\
-                     31a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf0100\
-                     00000700000001c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
-                ),
-            ),
-            (
-                &CLIENT_KEY,
-                &hex::<95>(
-                    "6b6d34332f76312f68656c6c6f2d70726f6f66a0a1a2a3a4a5a6a7a8a9aaabacada\
-                     eafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf00000007a5010102000307046d6f38392d\
-                     636c6920302e312e300550b0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
-                ),
-            ),
-            (
-                &SESSION_KEY,
-                &hex::<44>(
-                    "6b6d34332f76312f7265710800030000001100000007000000000000004\
-                     2a301182a0219010103a101190384",
-                ),
-            ),
-            (
-                &SESSION_KEY,
-                &hex::<26>("6b6d34332f76312f77727105000300000011a2011904c0021840"),
-            ),
-            (
-                &SESSION_KEY,
-                &hex::<44>(
-                    "6b6d34332f76312f72737088000300000011a301182a0201037267656e657261746\
-                     f72207374617274696e67",
-                ),
-            ),
-            (
-                &SESSION_KEY,
-                &hex::<43>(
-                    "6b6d34332f76312f65767404000300000000a4011904d2021b0000018f1e2a3b400\
-                     319020104a201030201",
-                ),
-            ),
-        ];
-
-        for (index, ((composed, _), (key, preimage))) in
-            published().iter().zip(PREIMAGES).enumerate()
-        {
-            assert_eq!(
-                composed,
-                Hmac256::keyed(key).feed(preimage).tag().as_bytes(),
-                "the fields of vector {index} do not compose the published preimage"
-            );
-        }
-    }
-
-    /// Every label is the ASCII the specification prints, checked against the
-    /// bytes at the head of a published preimage rather than against another
-    /// copy of the same list.
-    ///
-    /// A preimage in this repo once gained a label in the spec and not in the
-    /// generator, and the check meant to catch it compared descriptions while
-    /// the bytes underneath had already diverged.
-    #[test]
-    fn every_label_is_the_ascii_the_published_preimage_starts_with() {
-        const LABELS: [(Domain, &[u8]); 7] = [
-            (Domain::SignedRequest, &hex::<11>("6b6d34332f76312f726571")),
-            (Domain::WrapperRequest, &hex::<11>("6b6d34332f76312f777271")),
-            (Domain::Response, &hex::<11>("6b6d34332f76312f727370")),
-            (Domain::Event, &hex::<11>("6b6d34332f76312f657674")),
-            (
-                Domain::PairProof,
-                &hex::<18>("6b6d34332f76312f706169722d70726f6f66"),
-            ),
-            (
-                Domain::PairAck,
-                &hex::<16>("6b6d34332f76312f706169722d61636b"),
-            ),
-            (
-                Domain::HelloProof,
-                &hex::<19>("6b6d34332f76312f68656c6c6f2d70726f6f66"),
-            ),
-        ];
-
-        for (domain, ascii) in LABELS {
-            assert_eq!(
-                domain.as_str().as_bytes(),
-                ascii,
-                "{domain} is not the label the vectors were computed under"
-            );
-        }
     }
 
     /// Two labels over one key and one body are two tags. This is what says

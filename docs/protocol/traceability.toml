@@ -988,7 +988,17 @@
 # things, wherever that test lives, and deleting them would let the controller's
 # copy read a half-built rule as covered.
 
-uncovered = 122
+# 122 -> 125: LINK.md gained the download window, L-190 to L-192, for the
+# request that puts the module into its ROM's serial download mode from the
+# controller and nowhere else (origin89hq/km43#30, origin89hq/firmware#1). All
+# three bind the two firmwares' clocks: how long the comms processor listens
+# from its own start, what it answers outside that window and never does from
+# a client transport, and when the controller sends and how it repeats. The
+# crate's part, the two bodies and the direction, is tested beside the other
+# bodies; a test in this workspace named after one of the three would stand
+# over a window that exists only in a firmware, which is the shape this file
+# refuses.
+uncovered = 125
 
 # P-045 is the shape this file is for. Nothing can drive an implementation into
 # transmitting a key it does not have, so the thing that stands behind it reads

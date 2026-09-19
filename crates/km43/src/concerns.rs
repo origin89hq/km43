@@ -16,7 +16,8 @@
 use core::fmt;
 
 use crate::cbor::{CborError, CborReader, CborWriter};
-use crate::generated::{ConcernState, Condition, Severity, VendorNamespace};
+use crate::envelope::Refusal;
+use crate::generated::{ConcernState, Condition, ErrorCode, Severity, VendorNamespace};
 use crate::ident::{Id, IdError};
 use crate::limits::{
     CONCERN_MAX_BYTES, MAX_CONCERN_PAGE_BYTES, MAX_CONCERN_PAGE_ROWS, MAX_SERIES_LEN,
@@ -970,6 +971,36 @@ impl From<IdError> for ConcernsError {
     }
 }
 
+impl ConcernsError {
+    /// What to answer. A row past its byte bound is error 5, as a wrapper too
+    /// large to write is; a page past its *row* cap is not, because the bytes
+    /// fit and it is the shape that is wrong. Everything else is a body whose
+    /// meaning cannot be trusted, which is what error 1 says.
+    #[must_use]
+    pub const fn refusal(self) -> Refusal {
+        match self {
+            Self::RowTooLong(_) => Refusal::Client(ErrorCode::PayloadTooLarge),
+            Self::ZeroId
+            | Self::ZeroElement
+            | Self::ElementPastSeries(_)
+            | Self::ElementWithoutSignal
+            | Self::CodeWithoutNamespace
+            | Self::NamespaceWithoutCode
+            | Self::UnknownSeverity(_)
+            | Self::UnknownState(_)
+            | Self::MissingRequest(_)
+            | Self::MissingResponse(_)
+            | Self::MissingRow(_)
+            | Self::MissingEvent(_)
+            | Self::WentNowhere(_)
+            | Self::PagePastRowCap(_)
+            | Self::AnsweredNothing(_)
+            | Self::UnknownOutcome(_)
+            | Self::Cbor(_) => Refusal::Client(ErrorCode::MalformedFrame),
+        }
+    }
+}
+
 impl fmt::Display for ConcernsError {
     fn fmt(&self, w: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -1012,10 +1043,50 @@ impl fmt::Display for ConcernsError {
     }
 }
 
+impl core::error::Error for ConcernsError {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::limits::{CONCERNS_HEADER_BYTES, INNER_BODY_BYTES};
+    use crate::render::Rendering;
+
+    /// No two refusals read as one sentence, and each carries the code P-141
+    /// leaves for a body that never reached a handler: error 5 for a row past
+    /// its byte bound, error 1 for the rest, a page past its row cap included,
+    /// because its bytes fit and it is the shape that is wrong.
+    #[test]
+    fn every_refusal_says_something_of_its_own() {
+        const EVERY: [ConcernsError; 18] = [
+            ConcernsError::ZeroId,
+            ConcernsError::ZeroElement,
+            ConcernsError::ElementPastSeries(40),
+            ConcernsError::ElementWithoutSignal,
+            ConcernsError::CodeWithoutNamespace,
+            ConcernsError::NamespaceWithoutCode,
+            ConcernsError::UnknownSeverity(9),
+            ConcernsError::UnknownState(9),
+            ConcernsError::MissingRequest(1),
+            ConcernsError::MissingResponse(2),
+            ConcernsError::MissingRow(ConcernKey::Cond),
+            ConcernsError::MissingEvent(3),
+            ConcernsError::WentNowhere(ConcernState::Active),
+            ConcernsError::RowTooLong(200),
+            ConcernsError::PagePastRowCap(99),
+            ConcernsError::AnsweredNothing(ConcernsOutcome::OutOfRange),
+            ConcernsError::UnknownOutcome(9),
+            ConcernsError::Cbor(CborError::WrongType),
+        ];
+        Rendering::<112>::each_says_something_of_its_own(&EVERY);
+        for why in EVERY {
+            let want = if matches!(why, ConcernsError::RowTooLong(_)) {
+                Refusal::Client(ErrorCode::PayloadTooLarge)
+            } else {
+                Refusal::Client(ErrorCode::MalformedFrame)
+            };
+            assert_eq!(why.refusal(), want, "{why}");
+        }
+    }
 
     fn id(value: u16) -> Id {
         Id::new(value).expect("a non-zero id")
