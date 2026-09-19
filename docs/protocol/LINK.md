@@ -356,12 +356,22 @@ in exactly the sense `peer` is. The answer to *whose bytes are those* comes from
 the comms processor's own secure boot, and nothing on this link carries that
 measurement.
 
-**L-033** — Until a `LinkUp` exchange has completed in both directions, the
-comms processor MUST NOT forward a client frame and the controller MUST NOT
-accept one; a client frame arriving before that MUST be answered with code 258. A
-comms processor that starts routing before it knows the controller's protocol
-version is a comms processor that will forward a v2 body to a v1 controller and
-blame the client.
+**L-033** — A side is linked once its own `LinkUp` has been answered: the
+answer carries the peer's statement, and answering proves the peer holds this
+side's. A `LinkUp` from the peer is answered with this side's statement and
+recorded, and a side that is not linked sends its own at once; the peer's
+`LinkUp` does not link the side that receives it. Until linked, the comms
+processor MUST NOT forward a client frame and the controller MUST NOT accept
+one; a client frame arriving before that MUST be answered with code 258. A comms
+processor that starts routing before it knows the controller's protocol version
+is a comms processor that will forward a v2 body to a v1 controller and blame
+the client.
+
+A statement received is not a link. A peer that can talk but cannot hear sends
+its `LinkUp` for ever and answers nothing, and a side that counted the statement
+as the link would route to a peer that never hears the reply. Only an answer
+proves both directions, which is also the property the heartbeat ladder below
+is measured on.
 
 ### boot_id is what makes a reboot visible
 
@@ -596,15 +606,19 @@ Heartbeat  0x61  ·  Heartbeat  0xE1
 ```
 
 **L-100** — Each side MUST send a `Heartbeat` every 2 seconds and MUST answer the
-peer's immediately rather than on its own next tick. Three missed in a row —
-6 seconds — MUST be treated as a dead link.
+peer's immediately rather than on its own next tick. A link is alive while the
+peer answers: three of this side's heartbeats unanswered in a row — 6 seconds
+since the peer last answered one of this side's requests — MUST be treated as a
+dead link. The peer's own heartbeats do not count toward it: a heartbeat
+received proves the peer can talk, not that it can hear, and a peer whose
+receiver has hung keeps talking. Only an answer proves both directions.
 
 Every rung of the ladder below is measured from that one number, so the 2 seconds
 is not a comfort setting. Answering immediately rather than folding the answer
 into the next scheduled beat is what keeps a healthy link off the first rung: a
 side that batches its reply can be a full period late through nothing but
 scheduling, and two of those in a row look exactly like a comms processor that
-has stopped talking.
+has stopped answering.
 
 **`conns` catches the leak nothing else would.** A `ClientDisconnected` lost to a
 CRC failure leaks a row, and a leaked row is invisible: the controller thinks a
@@ -633,15 +647,15 @@ moment later.
 
 ### When the controller stops hearing the comms processor
 
-| Since the last heartbeat | What the controller does |
+| Since the comms processor last answered | What the controller does |
 |---|---|
 | 6 s | Link down. Drop every connection and session, log comms link lost (`0x0801`). Control is unaffected (L-110) |
 | 60 s | Cut the ESP32 power rail for 5 s, restore it, log comms power cycled (`0x0802`) with the count (L-111) |
 | 3 power cycles inside an hour | Leave the rail **off** for 15 minutes, raise comms unrecoverable (`0x0803`) (L-112) |
 | A comms firmware install is in flight | The ladder is suspended until the install finishes or its window lapses (L-113) |
 
-**L-110** — Six seconds after the last heartbeat from the comms processor the
-controller MUST treat the link as down, drop every connection and every session
+**L-110** — Six seconds after the comms processor last answered one of the
+controller's requests the controller MUST treat the link as down, drop every connection and every session
 bound to one, and log comms link lost (`0x0801`). **Control MUST be unaffected.**
 
 That second sentence is the one to write the test around. It is the
@@ -649,8 +663,9 @@ week-with-no-client acceptance test running for real, and deleting it means a
 site four hours from a road stops running its generator because a browser went
 away.
 
-**L-111** — Sixty seconds after the last heartbeat the controller MUST cut the
-ESP32 power rail for 5 seconds, restore it, and log comms power cycled (`0x0802`)
+**L-111** — Sixty seconds after the comms processor last answered one of the
+controller's requests, or after the rail last came up if it has not answered
+since, the controller MUST cut the ESP32 power rail for 5 seconds, restore it, and log comms power cycled (`0x0802`)
 carrying the count. A wedged Wi-Fi stack has no other recovery. The count is in
 the record because the rung below is counted on it, and a power cycle nobody
 counts is a boot loop nobody can name afterwards from the log.
@@ -673,8 +688,8 @@ ask why.
 
 ### When the comms processor stops hearing the controller
 
-**L-120** — Six seconds after the last heartbeat from the controller the comms
-processor MUST close every client connection, stop advertising over BLE, refuse
+**L-120** — Six seconds after the controller last answered one of the comms
+processor's requests the comms processor MUST close every client connection, stop advertising over BLE, refuse
 new connections, and retry `LinkUp` every 2 seconds until the controller answers.
 
 Refusing and un-advertising is what makes the outage visible at the phone instead
@@ -1127,7 +1142,7 @@ by hoping.
 
 **L-180** — Codes 257, 258 and 259 MUST reach the client whose frame raised
 them; the other six MUST NOT appear in a client-facing frame. A client that sent
-a link-local type, or connected before the two firmwares had exchanged `LinkUp`,
+a link-local type, or connected before the comms processor was linked (L-033),
 or is holding a handle the controller has never heard of, has to be told
 something: a client answered with silence waits until its socket dies, and the
 person holding the phone says *it just stops working*, which is the one bug
