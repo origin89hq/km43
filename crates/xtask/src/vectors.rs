@@ -770,6 +770,8 @@ enum Link {
     TimeOffer = 0x66,
     TimeOfferAck = 0xe6,
     NetConfigAck = 0xe5,
+    EnterDownload = 0x68,
+    EnterDownloadAck = 0xe8,
 }
 
 /// The six capacities this controller reports in `Hello 0x81` keys 12 to 17.
@@ -1669,8 +1671,11 @@ impl Builder {
     /// `cargo xtask check` refuses that edge, and it is the whole point: a
     /// generator that imports the thing it checks publishes the implementation's
     /// opinion of itself.
-    fn link() -> Result<Value> {
-        let cases: Vec<(&'static str, Link, u16, u32, Cb, &'static str)> = vec![
+    /// The link frames the file publishes: one per opcode the two ends
+    /// exchange, and the refusal rather than the acceptance wherever a
+    /// verdict has one.
+    fn link_cases() -> Vec<(&'static str, Link, u16, u32, Cb, &'static str)> {
+        vec![
             (
                 "link_up_0x60",
                 Link::Up,
@@ -1737,10 +1742,33 @@ impl Builder {
                 cmap! {1 => Cb::U(1), 2 => Cb::U(0)},
                 "{1:outcome=stored, 2:version=0}",
             ),
-        ];
+            (
+                // The bench's reason, which is the one a controller sends on
+                // every unit before it leaves the bench.
+                "enter_download_0x68",
+                Link::EnterDownload,
+                0,
+                5,
+                cmap! {1 => Cb::U(1)},
+                "{1:reason=bench}",
+            ),
+            (
+                // The refusal, not the acceptance: `entering` is the frame a
+                // module sends once and then resets, and the refusal is the
+                // one a controller that knocked late has to read.
+                "enter_download_ack_0xe8",
+                Link::EnterDownloadAck,
+                0,
+                5,
+                cmap! {1 => Cb::U(2)},
+                "{1:outcome=refused_outside_window}",
+            ),
+        ]
+    }
 
+    fn link() -> Result<Value> {
         let mut out = Vec::new();
-        for (name, kind, session, req_id, body, readable) in cases {
+        for (name, kind, session, req_id, body, readable) in Self::link_cases() {
             let envelope = cbor(&Cb::A(vec![
                 Cb::U(kind as u64),
                 Cb::U(u64::from(session)),

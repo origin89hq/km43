@@ -811,7 +811,7 @@ fn p_001_the_published_frame_is_the_one_this_crate_writes() {
     );
 }
 
-/// **The six link frames' wire bytes, read.** `every_published_link_frame_is_one_
+/// **The eight link frames' wire bytes, read.** `every_published_link_frame_is_one_
 /// this_crate_decodes` starts from `envelope_cbor`, so a wrong `crc16_ccitt_false`
 /// or a mis-framed `encoded_with_delimiter` in the `link_local` block was
 /// invisible: the gate accepts any quoted key inside a block as *read*, and the
@@ -822,7 +822,7 @@ fn every_published_link_frame_is_the_one_this_crate_frames_and_checksums() {
     let envelopes = strings_of(link, "envelope_cbor");
     let frames = strings_of(link, "encoded_with_delimiter");
     let crcs = strings_of(link, "crc16_ccitt_false");
-    assert_eq!(envelopes.len(), 6, "the link block changed shape");
+    assert_eq!(envelopes.len(), 8, "the link block changed shape");
     assert_eq!(frames.len(), envelopes.len());
     assert_eq!(crcs.len(), envelopes.len());
 
@@ -1686,14 +1686,15 @@ fn the_published_change_records_are_the_ones_this_crate_reads() {
 #[test]
 fn every_published_link_frame_is_one_this_crate_decodes() {
     use km43::{
-        ClientConnected, ClientUp, ClientUpAck, ClockOffer, Intake, LinkEnvelope, LinkMessageType,
-        NetConfig, NetVerdict, Side, TimeOffer, TimeVerdict, arriving,
+        ClientConnected, ClientUp, ClientUpAck, ClockOffer, DownloadReason, DownloadRequest,
+        DownloadVerdict, EnterDownload, Intake, LinkEnvelope, LinkMessageType, NetConfig,
+        NetVerdict, Side, TimeOffer, TimeVerdict, arriving,
     };
 
     let frames = link_envelopes();
     assert_eq!(
         frames.len(),
-        6,
+        8,
         "the published link section changed shape; this test walks it by count \
          so a vector that stops being published cannot go unnoticed"
     );
@@ -1763,6 +1764,20 @@ fn every_published_link_frame_is_one_this_crate_decodes() {
                 );
                 seen += 1;
             }
+            LinkMessageType::EnterDownload => {
+                let request =
+                    DownloadRequest::decode(envelope).expect("the published request reads");
+                assert_eq!(request.reason, DownloadReason::Bench);
+                seen += 1;
+            }
+            // The refusal, not the acceptance: the frame a controller that
+            // knocked late has to read (L-191).
+            LinkMessageType::EnterDownloadAck => {
+                let verdict =
+                    DownloadVerdict::decode(envelope).expect("the published verdict reads");
+                assert_eq!(verdict.outcome, EnterDownload::RefusedOutsideWindow);
+                seen += 1;
+            }
             other => panic!("a published link frame this test does not cover: {other:?}"),
         }
     }
@@ -1780,13 +1795,15 @@ fn every_published_link_frame_is_one_this_crate_decodes() {
 fn receiving(opcode: u8) -> km43::Side {
     use km43::Side::{Comms, Controller};
 
-    const AT: [(u8, km43::Side); 6] = [
+    const AT: [(u8, km43::Side); 8] = [
         (0x60, Controller), // LinkUp, either way; the STM32 receives this one
         (0x62, Controller), // ClientConnected, comms → controller
         (0x66, Controller), // TimeOffer, comms → controller
         (0xe2, Comms),      // ClientConnectedAck, back to the comms processor
         (0xe6, Comms),      // TimeOfferAck, back to the comms processor
         (0xe5, Controller), // NetConfigAck, back to the controller
+        (0x68, Comms),      // EnterDownload, controller → comms
+        (0xe8, Controller), // EnterDownloadAck, back to the controller
     ];
 
     AT.into_iter()
