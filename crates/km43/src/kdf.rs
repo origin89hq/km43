@@ -67,6 +67,7 @@ const_assert!(
 /// `Preimage::under(key, Domain::PairKey)` would compile — and two enums are
 /// what makes it a type error instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Derivation {
     /// The pairing key, derived from the printed secret (P-088).
     PairKey,
@@ -125,6 +126,7 @@ impl PrintedSecret {
 /// device-level derivations, and at that call site a bare array is one swap
 /// away from being the IKM.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct DeviceId([u8; DEVICE_ID_BYTES]);
 
 impl DeviceId {
@@ -142,6 +144,7 @@ impl DeviceId {
 /// nobody wrote, and deriving under it mints keys the first successful write
 /// invalidates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Epoch(NonZeroU32);
 
 impl Epoch {
@@ -172,6 +175,7 @@ impl Epoch {
 /// slot and there is no key at it. Refusing it here is what stops a refused
 /// pairing from deriving anything at all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ClientId(NonZeroU32);
 
 impl ClientId {

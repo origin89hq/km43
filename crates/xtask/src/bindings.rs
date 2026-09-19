@@ -245,6 +245,7 @@ impl Bindings {
              /// does, so a limit or a period counter cannot borrow a live reading's word.\n\
              /// Rows are most specific first, so the first match is the one to take.\n\
              #[derive(Debug, Clone, Copy, PartialEq, Eq)]\n\
+             #[cfg_attr(feature = \"defmt\", derive(defmt::Format))]\n\
              pub struct DatasetMetric {\n    \
                  pub kind: MetricKind,\n    \
                  pub domain: SignalDomain,\n    \
@@ -497,6 +498,7 @@ impl Bindings {
              /// routing fault in the comms processor look like the client's own\n\
              /// request failing, and the two want different retries.\n\
              #[derive(Debug, Clone, Copy, PartialEq, Eq)]\n\
+             #[cfg_attr(feature = \"defmt\", derive(defmt::Format))]\n\
              pub enum Incoming {\n    \
                  Client(ErrorCode),\n    \
                  LinkLocal(LinkErrorCode),\n    \
@@ -526,6 +528,7 @@ impl Bindings {
                  /// Not a wire discriminant: an unallocated bit is a capability\n\
                  /// nobody has defined yet, not a value to reject.\n\
                  #[derive(Debug, Clone, Copy, PartialEq, Eq)]\n\
+                 #[cfg_attr(feature = \"defmt\", derive(defmt::Format))]\n\
                  pub struct ClientCapability(pub u16);\n\n\
                  impl ClientCapability {\n",
             );
@@ -555,6 +558,7 @@ impl Bindings {
         let mut o = String::from(
             "/// Which side may send a link-local request.\n\
              #[derive(Debug, Clone, Copy, PartialEq, Eq)]\n\
+             #[cfg_attr(feature = \"defmt\", derive(defmt::Format))]\n\
              pub enum LinkDirection {\n    \
                  Either,\n    \
                  CommsToController,\n    \
@@ -869,6 +873,10 @@ fn closed_enum(
         return;
     }
     let _ = writeln!(o, "#[derive(Debug, Clone, Copy, PartialEq, Eq)]");
+    let _ = writeln!(
+        o,
+        r#"#[cfg_attr(feature = "defmt", derive(defmt::Format))]"#
+    );
     let _ = writeln!(o, "#[repr({repr})]");
     let _ = writeln!(o, "pub enum {name} {{");
     for (v, n) in &rows {
@@ -903,6 +911,10 @@ fn open_newtype(
         "/// Open set: a value this list does not name is carried, not refused."
     );
     let _ = writeln!(o, "#[derive(Debug, Clone, Copy, PartialEq, Eq)]");
+    let _ = writeln!(
+        o,
+        r#"#[cfg_attr(feature = "defmt", derive(defmt::Format))]"#
+    );
     let _ = writeln!(o, "pub struct {name}(pub u16);\n");
     let _ = writeln!(o, "impl {name} {{");
     for (v, n) in entries {

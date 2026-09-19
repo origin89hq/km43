@@ -76,6 +76,7 @@ const_assert!(
 /// MAC preimages derives keys that are wrong on both sides and identical to
 /// nobody, so a variant here is a preimage prefix and never a KDF argument.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Domain {
     /// A signed request — one that carries a counter.
     SignedRequest,
@@ -163,6 +164,7 @@ impl Tag {
 /// Why a tag was refused. Both stop the message: P-051 answers a failed MAC with
 /// error 10 and does not decode the body it covered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum MacError {
     /// A tag that is not exactly [`Tag::LEN`] bytes, carrying what arrived so a
     /// bench log can say how far off the peer was. Refused rather than padded

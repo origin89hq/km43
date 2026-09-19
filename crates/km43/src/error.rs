@@ -21,6 +21,7 @@ use crate::generated::{ErrorCode, Incoming, MessageType};
 
 /// The two keys of an `Error 0xFF` body.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ErrorKey {
     /// Key 1.
     Code,
@@ -248,6 +249,7 @@ fn once<T>(slot: &mut Option<T>, key: ErrorKey, value: T) -> Result<(), ErrorBod
 
 /// Why an `Error` body was refused. Refusing one is never answered with another.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ErrorBodyError {
     /// A required key never arrived (P-015).
     Missing(ErrorKey),

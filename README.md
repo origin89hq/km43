@@ -53,7 +53,9 @@ own.
 ## Consumers
 
 A consumer pins a version of the crate or of the bindings, and a change here
-reaches it when the consumer moves its pin, not before. The controller in
+reaches it when the consumer moves its pin, not before. A consumer that logs
+with `defmt` turns on the crate's `defmt` feature to get `Format` on the
+identifier, counter, enum and error types; keys and tags never get it. The controller in
 origin89 still builds from its own copy of the crate until it is rewritten
 against this one.
 

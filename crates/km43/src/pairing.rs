@@ -92,6 +92,7 @@ const_assert!(
 
 /// The four keys of `Pair 0x0B`, by name rather than by number.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum PairRequestKey {
     /// Key 1, which P-105 fixes the capability mask from and which is attested
     /// by the proof rather than by the comms processor.
@@ -146,6 +147,7 @@ impl fmt::Display for PairRequestKey {
 
 /// The four keys of `Pair 0x8B`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum PairAckKey {
     /// Key 1, the registry number of what the controller decided.
     Outcome,
@@ -203,6 +205,7 @@ impl fmt::Display for PairAckKey {
 /// gives about `BodyKey`: key 1 is `client_kind` going out and `outcome` coming
 /// back, and a single enum would either lose that or spell every variant twice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum PairBodyKey {
     /// A key of the request.
     Request(PairRequestKey),
@@ -279,6 +282,7 @@ impl fmt::Debug for Attempt {
 /// let refused = Outcome::WindowClosed(ClientId::new(1).expect("a slot"));
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Outcome {
     /// Outcome 1: a free row was allocated, at P-086's lowest free index.
     Enrolled(ClientId),
@@ -535,6 +539,7 @@ impl fmt::Debug for PairClaim<'_> {
 /// standing at the panel that they mis-scanned a label they scanned correctly,
 /// and the only cure they can think of is pressing the button again.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct BadProof;
 
 impl BadProof {
@@ -564,6 +569,7 @@ impl core::error::Error for BadProof {}
 /// it**: P-087 puts it in `Discover 0x80`, and both ends supply it from what
 /// they already know.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct PairResponse {
     /// Keys 1 and 2, which are one decision and so one value.
     pub outcome: Outcome,
@@ -935,6 +941,7 @@ fn expected(header: Header, kind: MessageType) -> Result<(), PairError> {
 /// because P-051's exception answers it with an outcome rather than with a code
 /// from this list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum PairError {
     /// A key the body requires that never arrived. Never defaulted: an absent
     /// `next_challenge` is not sixteen zero bytes.

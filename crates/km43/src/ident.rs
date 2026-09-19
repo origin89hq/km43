@@ -19,6 +19,7 @@ use core::fmt;
 /// either stops a page early and renders a dashboard missing the well-pump
 /// circuit, or loops on page one for ever.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Id(u16);
 
 impl Id {
@@ -40,6 +41,7 @@ impl Id {
 /// Why an id was refused. One variant, and each message restates it in its own
 /// vocabulary rather than carrying this type into its error.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum IdError {
     /// 0 handed to a space that reserves it as the paging sentinel.
     Zero,

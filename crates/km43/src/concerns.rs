@@ -31,6 +31,7 @@ use crate::limits::{
 ///
 /// Bounded above as well as below, which is what keeps it one byte on the wire.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ElementAt(u8);
 
 impl ElementAt {
@@ -63,6 +64,7 @@ impl ElementAt {
 /// namespace with no code names a vendor and says nothing about them. Two
 /// vendors both use `0x0021` for different things.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct VendorCode {
     /// Preserved verbatim. Never normalised and never mapped onto a
     /// [`Condition`] — that is what key 6 is for, and a vendor code translated
@@ -78,6 +80,7 @@ pub struct VendorCode {
 /// [`Self::device`] — so a caller cannot put a bare 0 in the component position
 /// and mean a component, which is the confusion the reservation exists against.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Part {
     dev: Id,
     cmp: u16,
@@ -125,6 +128,7 @@ impl Part {
 /// `ebase`, so a client handed a position without one cannot print the label at
 /// all — it has a number and no way to turn it into the one painted on the cell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Subject {
     /// The device or the component, and nothing narrower.
     Part(Part),
@@ -166,6 +170,7 @@ impl Subject {
 /// literal that could be typed one out, and a refusal says `cid` rather than
 /// `1`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ConcernKey {
     Cid = 1,
     Dev = 2,
@@ -522,6 +527,7 @@ impl ConcernChanged {
 /// What a `Concerns 0x8F` answers. Evaluated in ascending order, first match
 /// wins (P-199).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ConcernsOutcome {
     /// Answered, in whole or in part. **An empty table is this**, with no rows
     /// and `next = 0` — *nothing is wrong at this site* is an answer, and a
@@ -773,6 +779,7 @@ impl ConcernsBody<'_> {
 
 /// What a client reads out of a `Concerns 0x8F` before it looks at the rows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ConcernsHeader {
     /// Key 1, the revision the page is of.
     pub rev: u32,
@@ -909,6 +916,7 @@ impl Iterator for ConcernRows<'_> {
 
 /// Why a `ReadConcerns` or a `Concerns` was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ConcernsError {
     /// 0 handed to an id space that reserves it as the paging sentinel.
     ZeroId,

@@ -35,6 +35,7 @@ use crate::limits::{
 /// meaningful together, and because the one thing a caller must not be able to
 /// do is build a `q` that says there is a number when there is not.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct SignalQuality(u8);
 
 impl SignalQuality {
@@ -151,6 +152,7 @@ impl SignalQuality {
 
 /// A scalar reading: one signal, and a value only if there is one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Sample {
     /// Key 1, the signal.
     pub sig: Id,
@@ -442,6 +444,7 @@ impl<'a> Series<'a> {
 /// tempting reading of 0 is *the device itself* and the answer is a `dev`
 /// selector.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Sel {
     /// This device and, transitively, every device whose `parent` chain reaches it.
     Dev(Id),
@@ -497,6 +500,7 @@ impl Sel {
 /// thirteenth is refused rather than dropped — a silently truncated selection
 /// answers a question nobody asked, and `total` would agree with it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ReadSignals {
     /// Key 1, the revision the client holds.
     pub rev: u32,
@@ -591,6 +595,7 @@ impl ReadSignals {
 /// What a `Readings 0x8E` answers. Evaluated in ascending order, first match
 /// wins (P-199).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ReadingsOutcome {
     /// Answered, in whole or in part.
     Ok,
@@ -871,6 +876,7 @@ impl ReadingsBody<'_> {
 
 /// What a client reads out of a `Readings 0x8E`, before it looks at the rows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ReadingsHeader {
     /// Key 1, the log position the readings are current as of.
     pub seq: u64,
@@ -979,6 +985,7 @@ impl ReadingsHeader {
 
 /// Why a `ReadSignals` or a `Readings` was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ReadingsError {
     /// 0 handed to an id space that reserves it as the paging sentinel.
     ZeroId,
@@ -1058,6 +1065,7 @@ impl fmt::Display for ReadingsError {
 
 /// Why a reading was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum QualityError {
     /// A validity that carries no number, handed one.
     NoValueToCarry(Validity),
