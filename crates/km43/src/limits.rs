@@ -105,10 +105,10 @@ pub const MAX_CHALLENGES: usize = 8;
 pub const MAX_AUTH_FAILURES: u8 = 8;
 
 /// The CRC-16 that goes into COBS alongside the envelope.
-const CRC_BYTES: usize = 2;
+pub(crate) const CRC_BYTES: usize = 2;
 
 /// The zero byte that ends every frame.
-const FRAME_DELIMITER_BYTES: usize = 1;
+pub(crate) const FRAME_DELIMITER_BYTES: usize = 1;
 
 /// `[type, session_id, req_id, body]` and the body's own map header, with `req_id` a `u32` — five
 /// CBOR bytes at the top of its range, not three. A `type` past `0x17` costs one more.
@@ -127,12 +127,12 @@ const WRAPPER_CONTENTS_BYTES: usize = 22;
 const RESPONSE_TYPE_EXTRA_BYTE: usize = 1;
 
 /// What a response spends before its inner body: 11 + 22 + 1.
-const RESPONSE_FRAMING_BYTES: usize =
+pub(crate) const RESPONSE_FRAMING_BYTES: usize =
     ENVELOPE_BYTES + WRAPPER_CONTENTS_BYTES + RESPONSE_TYPE_EXTRA_BYTE;
 
 /// What a request spends before its inner body: 11 + 22. One byte cheaper, because its type fits
 /// in one CBOR byte.
-const REQUEST_FRAMING_BYTES: usize = ENVELOPE_BYTES + WRAPPER_CONTENTS_BYTES;
+pub(crate) const REQUEST_FRAMING_BYTES: usize = ENVELOPE_BYTES + WRAPPER_CONTENTS_BYTES;
 
 /// The inner body budget every topology derivation rests on.
 pub const INNER_BODY_BYTES: usize = MAX_PAYLOAD - RESPONSE_FRAMING_BYTES;
@@ -173,8 +173,10 @@ pub const MAX_EVENT_BODY: usize =
 /// `LogPage` keys 2, 3 and 4.
 const LOG_PAGE_HEADER_BYTES: usize = 26;
 
-/// What is left of a payload for log entries once the envelope, the wrapper and the page header are paid for.
-const LOG_PAGE_HEADROOM: usize = MAX_PAYLOAD - RESPONSE_FRAMING_BYTES - LOG_PAGE_HEADER_BYTES;
+/// The most log-entry bytes one page could ever carry: a payload less the envelope, the wrapper
+/// and the page header. [`MAX_LOG_PAGE_BYTES`] sits under it with a margin, so a `LogPage` that
+/// gains a key does not turn a page that was legal yesterday into one that cannot be sent.
+pub const LOG_PAGE_CEILING: usize = MAX_PAYLOAD - RESPONSE_FRAMING_BYTES - LOG_PAGE_HEADER_BYTES;
 
 /// Elements in one series signal. A driver declaring a longer series fails to register that
 /// signal — the device attaches, the signal does not, and a `Concern` names it. Never truncated.
@@ -360,6 +362,12 @@ pub const POINT_CEILING: usize =
 /// The most validity changes one coalesced event could carry.
 pub const SWEEP_CEILING: usize = (MAX_EVENT_BODY - VALIDITY_SWEEP_HEADER_BYTES) / VCHANGE_MAX_BYTES;
 
+/// The most presence changes one coalesced event could carry. [`MAX_PRESENCE_SWEEP`] is the
+/// device cap rather than this, because every device can change presence at once; this is the
+/// number that cap must stay under.
+pub const PRESENCE_SWEEP_CEILING: usize =
+    (MAX_EVENT_BODY - PRESENCE_SWEEP_HEADER_BYTES) / PCHANGE_MAX_BYTES;
+
 /// The class A events one tick can produce **from this design**: one `0x0102`, one `0x0902`,
 /// [`MAX_CONCERN_EVENTS_PER_TICK`] concern events, and at most one `0x0901`.
 ///
@@ -425,7 +433,7 @@ const_assert!(
 );
 
 const_assert!(
-    PRESENCE_SWEEP_HEADER_BYTES + MAX_PRESENCE_SWEEP * PCHANGE_MAX_BYTES <= MAX_EVENT_BODY,
+    MAX_PRESENCE_SWEEP <= PRESENCE_SWEEP_CEILING,
     "a coalesced 0x0902 carrying every device must still fit one event body"
 );
 
@@ -487,7 +495,7 @@ const _: () = assert!(
 );
 
 const _: () = assert!(
-    MAX_LOG_PAGE_BYTES <= LOG_PAGE_HEADROOM,
+    MAX_LOG_PAGE_BYTES <= LOG_PAGE_CEILING,
     "MAX_LOG_PAGE_BYTES must fit inside MAX_PAYLOAD under the envelope, the wrapper and the page header — a page is not a frame"
 );
 
@@ -506,7 +514,7 @@ mod tests {
     }
 
     /// What a `LogPage` of `page` bytes costs once the envelope, the wrapper and the page header
-    /// are wrapped around it — the derivation again, not `LOG_PAGE_HEADROOM` read back.
+    /// are wrapped around it — the derivation again, not `LOG_PAGE_CEILING` read back.
     fn log_page_frame_bytes(page: usize) -> usize {
         ENVELOPE_BYTES
             .saturating_add(WRAPPER_CONTENTS_BYTES)
@@ -587,7 +595,7 @@ mod tests {
     /// earlier revision put 1024 bytes of page inside a 1024-byte payload, which cannot happen.
     #[test]
     fn a_log_page_is_not_a_payload() {
-        assert_eq!(LOG_PAGE_HEADROOM, 964, "the document derives 964");
+        assert_eq!(LOG_PAGE_CEILING, 964, "the document derives 964");
         assert!(
             log_page_frame_bytes(MAX_LOG_PAGE_BYTES) <= MAX_PAYLOAD,
             "the page must fit under its own overhead"
@@ -602,9 +610,9 @@ mod tests {
     /// must not turn a page that was legal yesterday into one that cannot be sent.
     #[test]
     fn the_log_page_keeps_a_margin_for_a_page_that_gains_a_key() {
-        let margin = LOG_PAGE_HEADROOM
+        let margin = LOG_PAGE_CEILING
             .checked_sub(MAX_LOG_PAGE_BYTES)
-            .expect("the page must sit below its headroom");
+            .expect("the page must sit below its ceiling");
         assert_eq!(margin, 68, "896 under a headroom of 964");
     }
 
@@ -693,7 +701,11 @@ mod tests {
             MAX_CMD_DEDUP,
             MAX_CHALLENGES,
             MAX_AUTH_FAILURES,
+            CRC_BYTES,
+            FRAME_DELIMITER_BYTES,
             ENVELOPE_BYTES,
+            RESPONSE_FRAMING_BYTES,
+            REQUEST_FRAMING_BYTES,
             SIGNED_BODY_BYTES,
             INNER_BODY_BYTES,
             MAX_SERIES_LEN,
@@ -740,6 +752,8 @@ mod tests {
             INVENTORY_PAGE_ROWS_CEILING,
             POINT_CEILING,
             SWEEP_CEILING,
+            PRESENCE_SWEEP_CEILING,
+            LOG_PAGE_CEILING,
             CLASS_A_TICK_CEILING,
         ];
     }

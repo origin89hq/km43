@@ -18,19 +18,15 @@ use core::mem;
 
 use crate::cobs::{self, CobsError, max_encoded_len};
 use crate::crc::crc16;
-use crate::limits::{MAX_FRAME, MAX_PAYLOAD};
+use crate::limits::{CRC_BYTES, FRAME_DELIMITER_BYTES, MAX_FRAME, MAX_PAYLOAD};
 
 /// The byte that ends every frame, and the only one a frame body cannot contain.
 /// That exclusivity is the whole reason COBS is here.
 pub const DELIMITER: u8 = 0x00;
 
-/// The CRC-16 rides inside the COBS encoding, little-endian, straight after the
-/// envelope it covers.
-const CRC_BYTES: usize = 2;
-
 /// The most encoded bytes between two delimiters. [`MAX_FRAME`] counts the
 /// delimiter and the body is everything before it.
-const MAX_ENCODED: usize = MAX_FRAME - 1;
+const MAX_ENCODED: usize = MAX_FRAME - FRAME_DELIMITER_BYTES;
 
 /// A decoded frame: the envelope with its CRC still on the end.
 const MAX_DECODED: usize = MAX_PAYLOAD + CRC_BYTES;
@@ -40,7 +36,7 @@ const MAX_DECODED: usize = MAX_PAYLOAD + CRC_BYTES;
 /// refuses a shorter one rather than truncating.
 #[must_use]
 pub const fn max_frame_len(payload: usize) -> usize {
-    max_encoded_len(payload.saturating_add(CRC_BYTES)).saturating_add(1)
+    max_encoded_len(payload.saturating_add(CRC_BYTES)).saturating_add(FRAME_DELIMITER_BYTES)
 }
 
 const _: () = {

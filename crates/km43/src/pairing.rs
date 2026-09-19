@@ -48,7 +48,7 @@ use crate::cbor::{CborError, CborReader};
 use crate::envelope::{Envelope, EnvelopeError, Header, Refusal};
 use crate::generated::{ClientKind, ErrorCode, MessageType, Pair};
 use crate::kdf::{ClientId, Epoch};
-use crate::limits::{MAX_LABEL, MAX_PAYLOAD, MAX_STRING};
+use crate::limits::{ENVELOPE_BYTES, MAX_LABEL, MAX_PAYLOAD, MAX_STRING};
 use crate::mac::{MacError, PairAck, PairKey, PairProof};
 
 /// A `device_id`, a `challenge`, a `client_nonce`, a `next_challenge` and a
@@ -57,11 +57,6 @@ const BSTR16: usize = 16;
 
 /// A `text` field at its widest: a two-byte head and [`MAX_STRING`] bytes.
 const TEXT_MAX: usize = 2 + MAX_STRING;
-
-/// What `[type, session_id, req_id, …]` costs around either body, at the widest
-/// each of the three scalars encodes to. The body map's own head is counted
-/// with the body.
-const ENVELOPE: usize = 11;
 
 const_assert!(
     MAX_STRING >= 24,
@@ -82,11 +77,11 @@ pub const MAX_PAIR_BODY: usize = 40 + TEXT_MAX;
 pub const MAX_PAIR_ACK_BODY: usize = 45;
 
 const_assert!(
-    MAX_PAIR_BODY + ENVELOPE <= MAX_PAYLOAD,
+    MAX_PAIR_BODY + ENVELOPE_BYTES <= MAX_PAYLOAD,
     "a Pair 0x0B carries the one variable-width field in either pairing preimage; a body that fills the payload is a frame the client builds and the controller then refuses with error 5, at the one moment somebody is standing in front of the panel"
 );
 const_assert!(
-    MAX_PAIR_ACK_BODY + ENVELOPE <= MAX_PAYLOAD,
+    MAX_PAIR_ACK_BODY + ENVELOPE_BYTES <= MAX_PAYLOAD,
     "the ack is fixed width, so this can only fail by somebody adding a key to it — which is the review this line is asking for, because every key of this body is inside the MAC and a new one would not be"
 );
 
@@ -2283,7 +2278,7 @@ mod tests {
             MAX_LABEL,
             "the fixture is the row's cap exactly"
         );
-        let mut exact = [0u8; MAX_PAIR_BODY + ENVELOPE];
+        let mut exact = [0u8; MAX_PAIR_BODY + ENVELOPE_BYTES];
         let len = PairRequest {
             client_kind: ClientKind::App,
             label: WIDEST,
@@ -2295,9 +2290,9 @@ mod tests {
             &mut exact,
         )
         .expect("the widest label fits the buffer the constant promises");
-        assert!(len <= MAX_PAIR_BODY + ENVELOPE);
+        assert!(len <= MAX_PAIR_BODY + ENVELOPE_BYTES);
 
-        let mut ack = [0u8; MAX_PAIR_ACK_BODY + ENVELOPE];
+        let mut ack = [0u8; MAX_PAIR_ACK_BODY + ENVELOPE_BYTES];
         let widest_slot = ClientId::new(u32::MAX).expect("the top of the counter is a slot");
         let len = answer(Outcome::Enrolled(widest_slot))
             .write(
@@ -2307,7 +2302,7 @@ mod tests {
                 &mut ack,
             )
             .expect("the widest client_id fits too");
-        assert!(len <= MAX_PAIR_ACK_BODY + ENVELOPE);
+        assert!(len <= MAX_PAIR_ACK_BODY + ENVELOPE_BYTES);
     }
     /// Every strict prefix of a frame is refused, at the envelope or in the
     /// body it carries.
