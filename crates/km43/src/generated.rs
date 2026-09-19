@@ -1280,6 +1280,7 @@ impl TryFrom<u8> for EnterDownload {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum NetConfig {
     Stored = 0x1,
@@ -1417,6 +1418,7 @@ impl TryFrom<u8> for DownloadReason {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum LinkTransport {
     Ble = 0x1,
