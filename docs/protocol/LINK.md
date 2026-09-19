@@ -330,9 +330,9 @@ LinkUp  0x60  ·  LinkUp  0xE0
   1: protocol_major   u8
   2: protocol_minor   u8
   3: role             u8      1 controller · 2 comms
-  4: fw               text    ≤ 32 bytes, the sender's own firmware version
+  4: fw               text    ≤ 32 bytes, the sender's own firmware version (L-034)
   5: boot_id          u32     redrawn randomly on every boot
-  6: hw               text    ≤ 32 bytes, board revision
+  6: hw               text    ≤ 32 bytes, board name and revision (L-034)
   7: net_version      u32     *optional*, comms only: the credential version it
                               has cached, 0 if it has none
 ```
@@ -379,6 +379,27 @@ its `LinkUp` for ever and answers nothing, and a side that counted the statement
 as the link would route to a peer that never hears the reply. Only an answer
 proves both directions, which is also the property the heartbeat ladder below
 is measured on.
+
+**L-034** — `fw` in `LinkUp`, and `version` in `CommsRelease` and
+`CommsReleaseAck`, MUST be a semantic version whose build metadata names the
+commit it was built from: `MAJOR.MINOR.PATCH[-PRE]+gXXXXXXXX`, with the first
+eight lowercase hex digits of the commit id after the `g`. Each of `MAJOR`,
+`MINOR` and `PATCH` MUST be at most three decimal digits, and `PRE`, without
+its hyphen, at most eight bytes. `hw` MUST be the board name and revision as
+origin89hq/hardware writes them, such as `controller-a rev B`. The controller
+MUST send the same `fw` text as `fw_controller` in the client `Hello`. A
+receiver MUST NOT refuse a `LinkUp` whose text has another shape.
+
+Without a format, two firmwares that never met could disagree: one sending
+`0.1.0`, the other `0.1.0+g1a2b3c4d`. A client comparing them learns nothing,
+and a bench log cannot match a running unit to a commit. The commit id is what
+does that matching, and eight digits of it is what fits. A semantic version
+alone has no ceiling, so the limits are what make the field hold every legal
+text: three-digit components, an eight-byte pre-release and the commit come to
+30 bytes, under the 32 the field allows. A full 40-character hash or a build
+date does not fit, which is why the format names neither. The receiver half
+exists because these texts are diagnostic (L-032): a link taken down over a
+version string is an outage caused by a label.
 
 ### boot_id is what makes a reboot visible
 
@@ -982,7 +1003,7 @@ Two checks, and the second one is not the first one repeated.
 CommsRelease  0x67
   1: op           u8      1 authorise · 2 activate · 3 revoke
                           · 4 confirm_healthy
-  2: version      text    ≤ 32 bytes
+  2: version      text    ≤ 32 bytes (L-034)
   3: image_len    u32
   4: digest       bytes(32)   SHA-256 over the whole image
 
@@ -990,7 +1011,7 @@ CommsReleaseAck  0xE7
   1: outcome      u8      1 authorised · 2 installed · 3 activated
                           · 4 refused_digest_mismatch · 5 refused_signature
                           · 6 refused_no_space · 7 rolled_back
-  2: version      text    what it will boot next
+  2: version      text    what it will boot next (L-034)
   3: bytes_have   u32     resume point after an interruption
 ```
 
