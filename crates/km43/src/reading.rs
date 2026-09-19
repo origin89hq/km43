@@ -33,6 +33,7 @@ use crate::generated::EnumSpace;
 /// question a gauge and a counter are the same thing: a number. What matters is
 /// whether the integer was drawn from a set, and which set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Meaning {
     /// A scaled integer. Its unit and scale are the metric kind's.
     Measurement(i32),

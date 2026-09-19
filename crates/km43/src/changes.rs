@@ -33,6 +33,7 @@ use crate::readings::{QualityError, SignalQuality};
 /// about — and the client compares `prev` against what it holds, which is what
 /// it was last sent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct VChange {
     /// Key 1, the signal that moved.
     pub sig: Id,
@@ -81,6 +82,7 @@ impl VChange {
 
 /// One device's presence moving, inside an `0x0902`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct PChange {
     /// Key 1, the device that moved.
     pub dev: Id,
@@ -431,6 +433,7 @@ impl Iterator for PChanges<'_> {
 /// The one of the three that carries no array: a revision moves once, for one
 /// reason, however many rows it took with it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct TopologyChanged {
     /// The revision this moved **to**.
     pub rev: u32,
@@ -491,6 +494,7 @@ impl TopologyChanged {
 
 /// Why a change record was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ChangeError {
     /// 0 handed to an id space that reserves it as the paging sentinel.
     ZeroId,

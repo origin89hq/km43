@@ -31,6 +31,7 @@ use crate::mac::{MacError, SessionKey, SignedRequest, Tag};
 /// device-wide counter livelocks the moment two clients are active, because both
 /// read 100, both send 101, and one of them is refused forever.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Counter(pub u64);
 
 impl Counter {
@@ -64,6 +65,7 @@ impl fmt::Display for Counter {
 
 /// The four keys of a signed body.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum SignedKey {
     /// Key 1. On the wire only because it is inside the preimage — P-084 is
     /// emphatic that it is never the lookup key.
@@ -548,6 +550,7 @@ impl<'a> Slots<'a> {
 /// counter retries the same bytes until it gives up, and P-081 says the cure is
 /// to re-read `Hello 0x81` key 11 instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum SignedError {
     /// A required key never arrived (P-015).
     Missing(SignedKey),

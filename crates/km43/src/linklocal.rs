@@ -67,6 +67,7 @@ impl LinkErrorCode {
 
 /// Which firmware is reading the frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Side {
     /// The STM32.
     Controller,
@@ -125,6 +126,7 @@ impl Side {
 
 /// What a receiver does with the frame in front of it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Intake {
     /// Act on it.
     Act(LinkMessageType),
@@ -200,6 +202,7 @@ const fn is_ack(kind: LinkMessageType) -> bool {
 /// missing `country` reported `hw`, which is the failure this type exists to
 /// prevent doing its opposite.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[non_exhaustive]
 pub enum LinkField {
     ProtocolMajor,
@@ -264,6 +267,7 @@ impl fmt::Display for LinkField {
 
 /// Why a link-local body would not read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum LinkError {
     /// A required key that never arrived. Never defaulted: an absent `boot_id`
     /// is not zero, and a zero one would compare equal across a reboot.
@@ -503,6 +507,7 @@ fn once<T>(slot: &mut Option<T>, key: LinkField, value: T) -> Result<(), LinkErr
 /// disagree about how many connections exist, and this is the only place either
 /// finds out (L-120).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Heartbeat {
     /// Key 1, seconds since this side's boot, saturating.
     pub uptime_s: u32,
@@ -628,6 +633,7 @@ impl<'a> ClientUp<'a> {
 
 /// `ClientDisconnected 0x63` — a transport went away, and why.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ClientDown {
     /// Key 1, the handle that is going. Never 0.
     pub conn: u16,
@@ -692,6 +698,7 @@ impl ClientDown {
 /// sends when the two sides disagree about the table, and there is no other way
 /// to say *all of them* in one message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct CloseConnections {
     /// Key 1. **0 names every connection**, not none.
     pub conn: u16,
@@ -759,6 +766,7 @@ impl CloseConnections {
 /// believed in matched the one that existed (L-090). An ack without it would
 /// answer *closed* to a resync that closed nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct CloseReport {
     /// Key 1.
     pub outcome: CloseConnection,
@@ -1085,6 +1093,7 @@ impl<'a> ClockOffer<'a> {
 /// held, which is why the generated enum has a gap at 3: it cannot be written
 /// because it does not exist, rather than because a caller remembered not to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct TimeVerdict {
     /// Key 1.
     pub outcome: TimeOffer,
@@ -1191,6 +1200,7 @@ impl DownloadVerdict {
 /// falls back to one device-wide challenge and the two-client livelock it
 /// exists to prevent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ClientUpAck {
     /// Key 1.
     pub outcome: ClientConnected,
@@ -1220,6 +1230,7 @@ impl ClientUpAck {
 /// the moment its socket closed would hand a brand-new client the session the
 /// old one left open.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ClientDownAck {
     /// Key 1.
     pub outcome: ClientDisconnected,
@@ -1251,6 +1262,7 @@ impl ClientDownAck {
 /// the offered version would stop the pushes to a board with no credentials on
 /// it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct NetVerdict {
     /// Key 1.
     pub outcome: NetConfig,

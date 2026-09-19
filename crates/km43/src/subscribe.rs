@@ -18,6 +18,7 @@ use crate::handshake::LogSeq;
 
 /// The one key of `Subscribe 0x03`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum SubscribeKey {
     /// Key 1. Zero is the sentinel, not a position (P-144).
     FromSeq,
@@ -54,6 +55,7 @@ impl fmt::Display for SubscribeKey {
 
 /// The four keys of `SubscribeAck 0x83`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum AckKey {
     /// Key 1, the first position that will be delivered (P-029).
     AcceptedFromSeq,
@@ -110,6 +112,7 @@ impl fmt::Display for AckKey {
 
 /// A key of either body here, so one refusal can name either.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum SubscribeBodyKey {
     /// A key of `Subscribe 0x03`.
     Request(SubscribeKey),
@@ -145,6 +148,7 @@ impl fmt::Display for SubscribeBodyKey {
 /// and the arithmetic P-104 spells out is exactly the arithmetic that gets it
 /// wrong when they are confused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Replay {
     /// Key 1 was 0: deliver nothing that already exists.
     LiveOnly,
@@ -179,6 +183,7 @@ impl Replay {
 /// as 1 — the position the first record will take — rather than one past a
 /// record nobody wrote.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct LogExtent {
     oldest: LogSeq,
     newest: LogSeq,
@@ -224,6 +229,7 @@ impl LogExtent {
 
 /// The body of `Subscribe 0x03`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Subscribe {
     /// Key 1.
     pub replay: Replay,
@@ -270,6 +276,7 @@ impl Subscribe {
 /// P-104's arithmetic and a field somebody fills in by hand is the field two
 /// implementations disagree about.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct SubscribeAck {
     accepted_from_seq: LogSeq,
     extent: LogExtent,
@@ -427,6 +434,7 @@ impl AckSlots {
 
 /// Why a subscription was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum SubscribeError {
     /// A required key never arrived (P-015).
     Missing(SubscribeBodyKey),

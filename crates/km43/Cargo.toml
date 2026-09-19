@@ -27,6 +27,20 @@ sha2.workspace = true
 hmac.workspace = true
 subtle.workspace = true
 
+# Off by default. A consumer logging with `defmt` derives `Format` on a struct
+# holding a `ClientId` and gets E0277 with nothing to do about it but a
+# hand-written impl per wrapper or `Debug2Format`, which formats on the target
+# and costs flash the controller does not have.
+defmt = { workspace = true, optional = true }
+
+[features]
+# Derives `defmt::Format` on the identifier, counter, enum, verdict and error
+# types. Never on a key or a tag: those have no `Debug` for the same reason.
+defmt = ["dep:defmt"]
+
+[package.metadata.docs.rs]
+features = ["defmt"]
+
 # `clippy::pedantic` minus the one lint that contradicts a house rule.
 #
 # `missing_errors_doc` demands a `# Errors` heading on every function returning

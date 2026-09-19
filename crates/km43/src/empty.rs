@@ -26,6 +26,7 @@ use crate::generated::{ErrorCode, MessageType};
 /// Encoding one is [`EmptyBody::encode`]; the caller wraps and MACs the byte it
 /// writes, exactly as it would a body that said something.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct EmptyBody;
 
 impl EmptyBody {
@@ -112,6 +113,7 @@ impl EmptyBody {
 
 /// Why an empty body was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum EmptyBodyError {
     /// A `type` that does not carry an empty *inner* body. Refused rather than
     /// written as `a0`, which would put a `Readings 0x8E` on the wire saying

@@ -183,6 +183,7 @@ const PARAM_FIELDS: &[Field] = &[
 /// against each other on every row: a length disagreement is a bug in the
 /// caller, not a short row on the wire.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Value<'a> {
     U8(u8),
     U16(u16),
@@ -203,6 +204,7 @@ pub enum Value<'a> {
 /// fifth command is refused at the line that built the list rather than dropped
 /// somewhere a person would have to notice a missing button to find.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct CmdList {
     /// Zero-filled past `len`, which is what makes the derived `PartialEq`
     /// compare two lists and not two lots of leftovers.
@@ -238,6 +240,7 @@ impl CmdList {
 
 /// Which of the five tables a row is read against.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum RowKind {
     Bus,
     Device,
@@ -330,6 +333,7 @@ impl RowKind {
 /// None of these has a vendor range (P-019), so a value outside the space is
 /// error 1 rather than a value to skip.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Closed {
     /// `BusRow` key 2 — what the port physically is.
     Transport,
@@ -413,6 +417,7 @@ const PARAM_MEMBERS: &[(u8, Closed)] = &[
 /// protocol version states — a sixth should be argued for against the field
 /// lists rather than passed in as a closure by whoever needs one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum When {
     /// The row's `kind` is in P-019's vendor range, so the registry cannot
     /// answer for its unit, its scale, or whose namespace it is (P-204).
@@ -783,6 +788,7 @@ impl Value<'_> {
 /// `base` 1 and 17, so element 7 of the second is cell 23 — the number painted
 /// on the rack.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ElementLabels {
     base: u16,
     elements: u8,
@@ -1073,6 +1079,7 @@ impl Page {
 
 /// The four keys of `ReadInventory 0x0D`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ReadInventoryKey {
     /// Key 1, the revision the client is assembling; 0 on the first call.
     Rev,
@@ -1127,6 +1134,7 @@ impl fmt::Display for ReadInventoryKey {
 
 /// The seven keys of `Inventory 0x8D`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum InventoryKey {
     /// Key 1, the controller's current revision — on every page, so a torn walk
     /// is detectable in a field that is already there (P-152, P-153).
@@ -1194,6 +1202,7 @@ impl fmt::Display for InventoryKey {
 /// How an `Inventory 0x8D` answered, and the only thing that decides whether
 /// keys 3, 4 and 7 carry anything (P-190).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum InventoryOutcome {
     Ok,
     /// The `rev` named was neither 0 nor current. The rows are empty and key 1
@@ -1234,6 +1243,7 @@ impl InventoryOutcome {
 
 /// The body of `ReadInventory 0x0D`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ReadInventory {
     /// Key 1, the revision the client holds.
     pub rev: u32,
@@ -1377,6 +1387,7 @@ impl InventoryBody<'_> {
 /// client that wants to check the digest concatenates exactly these, which is
 /// the half of P-173 that lives on this side of the wire.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct InventoryHeader {
     /// Key 1, the revision the page is of. Differing from the request's, the walk is torn (P-152).
     pub rev: u32,
@@ -1525,6 +1536,7 @@ impl TopoDigest {
 
 /// What a page or a row was refused for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum InventoryError {
     /// The value slice does not match the row kind's table.
     RowShape {

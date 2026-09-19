@@ -3,6 +3,7 @@
 // registry-digest: 655b5dd6de946947
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum MessageType {
     Discover = 0x0,
@@ -82,6 +83,7 @@ impl TryFrom<u8> for MessageType {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum LinkMessageType {
     LinkUp = 0x60,
@@ -134,6 +136,7 @@ impl TryFrom<u8> for LinkMessageType {
 
 /// Which side may send a link-local request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum LinkDirection {
     Either,
     CommsToController,
@@ -177,6 +180,7 @@ impl LinkMessageType {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u16)]
 pub enum ErrorCode {
     MalformedFrame = 0x1,
@@ -218,6 +222,7 @@ impl TryFrom<u16> for ErrorCode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum Command {
     Accepted = 0x1,
@@ -249,6 +254,7 @@ impl TryFrom<u8> for Command {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum Concerns {
     Ok = 0x1,
@@ -270,6 +276,7 @@ impl TryFrom<u8> for Concerns {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum Firmware {
     Accepted = 0x1,
@@ -301,6 +308,7 @@ impl TryFrom<u8> for Firmware {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum History {
     Ok = 0x1,
@@ -328,6 +336,7 @@ impl TryFrom<u8> for History {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum Inventory {
     Ok = 0x1,
@@ -351,6 +360,7 @@ impl TryFrom<u8> for Inventory {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum Pair {
     Enrolled = 0x1,
@@ -376,6 +386,7 @@ impl TryFrom<u8> for Pair {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum Readings {
     Ok = 0x1,
@@ -399,6 +410,7 @@ impl TryFrom<u8> for Readings {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum SetConfig {
     Accepted = 0x1,
@@ -426,6 +438,7 @@ impl TryFrom<u8> for SetConfig {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum Time {
     Accepted = 0x1,
@@ -449,6 +462,7 @@ impl TryFrom<u8> for Time {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum BootReason {
     PowerOn = 0x1,
@@ -474,6 +488,7 @@ impl TryFrom<u8> for BootReason {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum Bucket {
     Day = 0x1,
@@ -495,6 +510,7 @@ impl TryFrom<u8> for Bucket {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum ClientKind {
     App = 0x1,
@@ -518,6 +534,7 @@ impl TryFrom<u8> for ClientKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum ConcernState {
     Active = 0x1,
@@ -543,6 +560,7 @@ impl TryFrom<u8> for ConcernState {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum ControlOwner {
     LocalPanel = 0x1,
@@ -570,6 +588,7 @@ impl TryFrom<u8> for ControlOwner {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum Direction {
     PositiveIsIn = 0x1,
@@ -591,6 +610,7 @@ impl TryFrom<u8> for Direction {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum GeneratorSelector {
     Auto = 0x1,
@@ -612,6 +632,7 @@ impl TryFrom<u8> for GeneratorSelector {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum GeneratorState {
     Stopped = 0x1,
@@ -639,6 +660,7 @@ impl TryFrom<u8> for GeneratorState {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum HistorySource {
     DeviceReported = 0x1,
@@ -658,6 +680,7 @@ impl TryFrom<u8> for HistorySource {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum HistoryStopReason {
     DeviceReplaced = 0x1,
@@ -685,6 +708,7 @@ impl TryFrom<u8> for HistoryStopReason {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum InventoryKind {
     Buses = 0x1,
@@ -710,6 +734,7 @@ impl TryFrom<u8> for InventoryKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum Presence {
     Online = 0x1,
@@ -733,6 +758,7 @@ impl TryFrom<u8> for Presence {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum Provenance {
     None = 0x0,
@@ -762,6 +788,7 @@ impl TryFrom<u8> for Provenance {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum Quality {
     Measured = 0x1,
@@ -787,6 +814,7 @@ impl TryFrom<u8> for Quality {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum Severity {
     Info = 0x1,
@@ -810,6 +838,7 @@ impl TryFrom<u8> for Severity {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum Shape {
     Scalar = 0x1,
@@ -829,6 +858,7 @@ impl TryFrom<u8> for Shape {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum SignalDomain {
     Live = 0x1,
@@ -862,6 +892,7 @@ impl TryFrom<u8> for SignalDomain {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum TimeSource {
     Client = 0x1,
@@ -881,6 +912,7 @@ impl TryFrom<u8> for TimeSource {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum TopologyChangeReason {
     Boot = 0x1,
@@ -906,6 +938,7 @@ impl TryFrom<u8> for TopologyChangeReason {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum Transport {
     Rs485 = 0x1,
@@ -935,6 +968,7 @@ impl TryFrom<u8> for Transport {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum Unit {
     Volt = 0x1,
@@ -982,6 +1016,7 @@ impl TryFrom<u8> for Unit {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum Validity {
     Ok = 0x1,
@@ -1013,6 +1048,7 @@ impl TryFrom<u8> for Validity {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum Vtype {
     Gauge = 0x1,
@@ -1036,6 +1072,7 @@ impl TryFrom<u8> for Vtype {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u16)]
 pub enum CapabilityBit {
     EventLogReadable = 0x0,
@@ -1067,6 +1104,7 @@ impl TryFrom<u16> for CapabilityBit {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u16)]
 pub enum CommandKind {
     StartGenerator = 0x101,
@@ -1094,6 +1132,7 @@ impl TryFrom<u16> for CommandKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u16)]
 pub enum ConfigSection {
     IdentityAndSite = 0x1,
@@ -1127,6 +1166,7 @@ impl TryFrom<u16> for ConfigSection {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum ClientConnected {
     Accepted = 0x1,
@@ -1150,6 +1190,7 @@ impl TryFrom<u8> for ClientConnected {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum ClientDisconnected {
     Released = 0x1,
@@ -1169,6 +1210,7 @@ impl TryFrom<u8> for ClientDisconnected {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum CloseConnection {
     Closed = 0x1,
@@ -1188,6 +1230,7 @@ impl TryFrom<u8> for CloseConnection {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum CommsRelease {
     Authorised = 0x1,
@@ -1217,6 +1260,7 @@ impl TryFrom<u8> for CommsRelease {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum EnterDownload {
     Entering = 0x1,
@@ -1257,6 +1301,7 @@ impl TryFrom<u8> for NetConfig {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum TimeOffer {
     Accepted = 0x1,
@@ -1280,6 +1325,7 @@ impl TryFrom<u8> for TimeOffer {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum CloseReason {
     SessionExpired = 0x1,
@@ -1303,6 +1349,7 @@ impl TryFrom<u8> for CloseReason {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum CommsReleaseOp {
     Authorise = 0x1,
@@ -1326,6 +1373,7 @@ impl TryFrom<u8> for CommsReleaseOp {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum DisconnectReason {
     ClosedByClient = 0x1,
@@ -1349,6 +1397,7 @@ impl TryFrom<u8> for DisconnectReason {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum DownloadReason {
     Bench = 0x1,
@@ -1391,6 +1440,7 @@ impl TryFrom<u8> for LinkTransport {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum NetConfigOp {
     Set = 0x1,
@@ -1496,6 +1546,7 @@ impl EventKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u16)]
 pub enum LinkErrorCode {
     WrongSide = 0x100,
@@ -1534,6 +1585,7 @@ impl TryFrom<u16> for LinkErrorCode {
 /// routing fault in the comms processor look like the client's own
 /// request failing, and the two want different retries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Incoming {
     Client(ErrorCode),
     LinkLocal(LinkErrorCode),
@@ -1554,6 +1606,7 @@ impl From<u16> for Incoming {
 /// Not a wire discriminant: an unallocated bit is a capability
 /// nobody has defined yet, not a value to reject.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ClientCapability(pub u16);
 
 impl ClientCapability {
@@ -1589,6 +1642,7 @@ impl ClientCapability {
 
 /// Open set: a value this list does not name is carried, not refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct MetricKind(pub u16);
 
 impl MetricKind {
@@ -1621,6 +1675,7 @@ impl MetricKind {
 
 /// Open set: a value this list does not name is carried, not refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct EventKind(pub u16);
 
 impl EventKind {
@@ -1649,6 +1704,7 @@ impl EventKind {
 
 /// Open set: a value this list does not name is carried, not refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ComponentRole(pub u16);
 
 impl ComponentRole {
@@ -1681,6 +1737,7 @@ impl ComponentRole {
 
 /// Open set: a value this list does not name is carried, not refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Condition(pub u16);
 
 impl Condition {
@@ -1709,6 +1766,7 @@ impl Condition {
 
 /// Open set: a value this list does not name is carried, not refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct DeviceRole(pub u16);
 
 impl DeviceRole {
@@ -1727,6 +1785,7 @@ impl DeviceRole {
 
 /// Open set: a value this list does not name is carried, not refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Dialect(pub u16);
 
 impl Dialect {
@@ -1743,6 +1802,7 @@ impl Dialect {
 
 /// Open set: a value this list does not name is carried, not refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct EnumSpace(pub u16);
 
 impl EnumSpace {
@@ -1757,6 +1817,7 @@ impl EnumSpace {
 
 /// Open set: a value this list does not name is carried, not refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct MeasurementPoint(pub u16);
 
 impl MeasurementPoint {
@@ -1775,6 +1836,7 @@ impl MeasurementPoint {
 
 /// Open set: a value this list does not name is carried, not refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Product(pub u16);
 
 impl Product {
@@ -1792,6 +1854,7 @@ impl Product {
 
 /// Open set: a value this list does not name is carried, not refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct VendorNamespace(pub u16);
 
 impl VendorNamespace {
@@ -1899,6 +1962,7 @@ impl MetricKind {
 /// does, so a limit or a period counter cannot borrow a live reading's word.
 /// Rows are most specific first, so the first match is the one to take.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct DatasetMetric {
     pub kind: MetricKind,
     pub domain: SignalDomain,

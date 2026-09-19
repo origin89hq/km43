@@ -90,6 +90,7 @@ const_assert!(
 /// numbers are compared — a major that differs refuses, a minor that differs
 /// takes the lower.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Version {
     /// A difference here refuses the session with error 3 (P-073).
     pub major: u8,
@@ -139,6 +140,7 @@ impl fmt::Display for Version {
 /// fn behind(log: LogSeq, state: StateSeq) -> bool { log < state }
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct LogSeq(pub u64);
 
 /// The state store's own counter (P-074), which is not a position in the log.
@@ -152,10 +154,12 @@ pub struct LogSeq(pub u64);
 /// fn ahead(state: StateSeq, log: LogSeq) -> bool { state > log }
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct StateSeq(pub u64);
 
 /// The eight keys of `Discover 0x80`, by name rather than by number.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum DiscoverKey {
     /// Key 1.
     ProtocolMajor,
@@ -229,6 +233,7 @@ impl fmt::Display for DiscoverKey {
 /// The two keys of a `Hello 0x01` body: the encoded inner body, and the proof
 /// over it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum HelloKey {
     /// Key 1, the inner body exactly as the client encoded it.
     Payload,
@@ -271,6 +276,7 @@ impl fmt::Display for HelloKey {
 /// The five keys of the inner body of `Hello 0x01` — the ones P-070 puts inside
 /// the proof.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum InnerKey {
     /// Key 1.
     ProtocolMajor,
@@ -332,6 +338,7 @@ impl fmt::Display for InnerKey {
 
 /// The twenty-nine keys of `Hello 0x81`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ReportKey {
     /// Key 1.
     ProtocolMajor,
@@ -517,6 +524,7 @@ impl fmt::Display for ReportKey {
 /// `protocol_major` in a `Discover` and `payload` in a `Hello`, and a single
 /// enum would either lose that or spell every variant twice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum BodyKey {
     /// A key of `Discover 0x80`.
     Discover(DiscoverKey),
@@ -571,6 +579,7 @@ impl fmt::Display for BodyKey {
 /// descriptor without moving the revision, which is the one silent failure the
 /// topology design has — so it refetches and says so out loud.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Topology {
     /// The topology revision the digest and the caps are of.
     pub rev: u32,
@@ -676,6 +685,7 @@ const_assert!(
 /// a client told it may keep eight requests in flight collects error 7 all
 /// afternoon and tells somebody the site is busy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Caps {
     /// Key 12.
     pub sessions: u8,
@@ -1584,6 +1594,7 @@ impl<'a> ReportSlots<'a> {
 /// check out, and whatever the wrapper said — each sends a client somewhere
 /// different, and a client told the wrong one retries until it gives up.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum HandshakeError {
     /// A key the body requires that never arrived. Never defaulted: an absent
     /// `challenge` is not sixteen zero bytes.
