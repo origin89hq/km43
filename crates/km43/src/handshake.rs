@@ -28,7 +28,7 @@ use crate::generated::{ErrorCode, MessageType};
 use crate::kdf::{ClientId, Enrolment, Epoch, Handshake};
 use crate::limits::{
     MAX_CHANNELS, MAX_CLIENTS, MAX_CMD_DEDUP, MAX_EVENT_QUEUE, MAX_INFLIGHT, MAX_PAYLOAD,
-    MAX_SESSIONS, MAX_STRING,
+    MAX_SESSIONS, MAX_STRING, REQUEST_FRAMING_BYTES, RESPONSE_FRAMING_BYTES,
 };
 use crate::mac::{ClientKey, HelloProof, MacError, SessionKey, Tag};
 use crate::wrapper::{Wrapper, WrapperError};
@@ -43,10 +43,6 @@ const_assert!(
     MAX_STRING >= 24 && MAX_STRING <= 255,
     "a CBOR text head is two bytes only between 24 and 255 — outside that range the three body caps below are each a byte out, and the frame that does not fit gets built at a fully configured site rather than on a bench"
 );
-
-/// What an envelope and a wrapper cost around an inner body: eleven bytes of
-/// `[type, session_id, req_id, …]` and twenty-three of `{1: payload, 2: mac}`.
-const CARRIAGE: usize = 34;
 
 /// The widest `Discover 0x80` **body**: eight keys, a 64-byte `model` and two
 /// `bstr16`. A controller sizes its answer buffer at this plus the eleven bytes
@@ -80,11 +76,11 @@ const TOPOLOGY_REPORT_BYTES: usize = 59;
 pub const MAX_HELLO_REPORT: usize = 81 + 2 * TEXT_MAX + TOPOLOGY_REPORT_BYTES + 1;
 
 const_assert!(
-    MAX_HELLO_REPORT + CARRIAGE <= MAX_PAYLOAD,
+    MAX_HELLO_REPORT + RESPONSE_FRAMING_BYTES <= MAX_PAYLOAD,
     "a Hello 0x81 travels under an envelope and a wrapper; a body that fills the payload is the frame a controller builds and then has to refuse with error 5, which is P-185's argument one message over"
 );
 const_assert!(
-    MAX_HELLO_INNER + CARRIAGE <= MAX_PAYLOAD,
+    MAX_HELLO_INNER + REQUEST_FRAMING_BYTES <= MAX_PAYLOAD,
     "the inner body of a Hello 0x01 rides inside its payload key inside an envelope, and a client that cannot fit its own handshake never opens a session at all"
 );
 
