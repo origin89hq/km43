@@ -402,7 +402,7 @@ fn with_status_unless_gone(status: Option<&str>) -> bool {
 
 /// Every allocated number of a closed set decodes through its `TryFrom` to the
 /// variant named for its registry row, every gone number is refused, and so is
-/// the first number the table never allocated. A generator that dropped a live
+/// every other number the type can carry. A generator that dropped a live
 /// row, kept a retired one, or emitted a discriminant off by one is caught by
 /// whichever of the three it broke. The name is what catches two rows whose
 /// numbers were swapped: each number still decodes to a variant carrying it,
@@ -450,13 +450,19 @@ macro_rules! closed_set {
                     );
                 }
             }
-            let free = first_free(rows.iter().map(|r| r.number));
-            let free = <$repr>::try_from(free).expect("the first free number fits the repr");
-            assert!(
-                <$ty>::try_from(free).is_err(),
-                "{} accepts {free:#x}, which the registry never allocated",
-                stringify!($ty)
-            );
+            // Every number the type can carry, not only the first free one: a
+            // stray arm at 0xfe passes a check that looks at 0x00.
+            let taken: std::collections::BTreeSet<u16> = rows.iter().map(|r| r.number).collect();
+            for free in <$repr>::MIN..=<$repr>::MAX {
+                if taken.contains(&u16::from(free)) {
+                    continue;
+                }
+                assert!(
+                    <$ty>::try_from(free).is_err(),
+                    "{} accepts {free:#x}, which the registry never allocated",
+                    stringify!($ty)
+                );
+            }
         }
     };
 }
