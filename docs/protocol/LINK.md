@@ -213,10 +213,10 @@ Nothing in this range is cryptographic, so its vectors in
 [vectors/v1.json](vectors/v1.json) are wire bytes only, and they are a subset
 of the eighteen opcodes: `LinkUp`, `ClientConnected` and its acknowledgement,
 `TimeOffer` and its refusal, `NetConfigAck`, and `EnterDownload` and its
-refusal, chosen for the bodies with the most keys and for the refusal wherever
-a verdict has one. They exist because the two ends of this link are two
-codebases, and bytes two implementations agree on with nothing else checking
-them are how a format drifts.
+refusal, chosen for the bodies with the most keys and, for `TimeOffer` and
+`EnterDownload`, the refusal rather than the acceptance. They exist because the
+two ends of this link are two codebases, and bytes two implementations agree on
+with nothing else checking them are how a format drifts.
 
 ---
 
@@ -1062,8 +1062,9 @@ client able to reach the link a way to take the product off the air.
 
 ```text
 EnterDownload  0x68
-  1: reason     u8      1 bench · 2 recovery — for the log on both sides,
-                        and nothing the comms processor branches on
+  1: reason     u8      1 bench · 2 recovery — diagnostic: the controller
+                        records it with the request, and nothing either side
+                        branches on it
 
 EnterDownloadAck  0xE8
   1: outcome    u8      1 entering · 2 refused_outside_window
@@ -1092,7 +1093,10 @@ asked too late must learn it asked too late, not that the module is gone.
 **L-192** — The controller MUST send `EnterDownload` only after it has itself
 reset the module, by cycling `EN` or the rail, MUST send the first within
 200 ms of releasing `EN`, and MUST repeat it every 100 ms with the same
-`req_id` until it is answered or 3 000 ms have passed. L-015 does not apply to
+`req_id` until it is answered or 3 000 ms have passed. It MUST log the reason it
+sent with the verdict, or with the absence of one: the module keeps nothing across
+the reset it is asked for, so the controller's log is the only account of why a
+module entered its ROM. L-015 does not apply to
 `EnterDownload`: not its 500 ms, not its three attempts, and not its taking
 the link down, because the window is measured from the module's start, which
 the controller cannot see, and three attempts half a second apart could all

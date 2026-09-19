@@ -1671,9 +1671,9 @@ impl Builder {
     /// `cargo xtask check` refuses that edge, and it is the whole point: a
     /// generator that imports the thing it checks publishes the implementation's
     /// opinion of itself.
-    /// The link frames the file publishes: one per opcode the two ends
-    /// exchange, and the refusal rather than the acceptance wherever a
-    /// verdict has one.
+    /// The link frames the file publishes: eight of the eighteen opcodes,
+    /// chosen for the bodies with the most keys, with the refusal of
+    /// `TimeOffer` and of `EnterDownload` rather than their acceptance.
     fn link_cases() -> Vec<(&'static str, Link, u16, u32, Cb, &'static str)> {
         vec![
             (
