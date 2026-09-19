@@ -987,6 +987,21 @@
 # They say what a test must be called to stand behind a rule that says two
 # things, wherever that test lives, and deleting them would let the controller's
 # copy read a half-built rule as covered.
+#
+# 122 -> 122, and L-170 is why the number did not move. The rule says an
+# `authorise` carries the version, the image length and the digest, and that
+# the controller records the digest in FRAM. The first half is what
+# `CommsRelease 0x67` looks like on the cable, and until this commit nothing
+# in the tree could encode or decode one -- `arriving()` admitted the opcode
+# and no body type existed behind it. The body exists now, with the digest a
+# fixed 32-byte array a caller cannot build short, and a test named after the
+# rule is an authorise arriving without its digest being refused rather than
+# read as thirty-two zeroes. On that test alone the count would read 121, and
+# that reading is the half-built rule this file warns about: the FRAM half is
+# the controller's, this tree holds no persistent store, and a rule counted
+# covered on its wire clause is one the controller's copy never goes looking
+# for. So L-170 takes a `[[clauses]]` entry naming both halves and stays in
+# the count until the controller names the second.
 
 uncovered = 122
 
@@ -1259,6 +1274,20 @@ where a row landed in the table, two pages hold one row twice and miss another. 
 Counting only the rows still going wrong, `total` comes back smaller than the \
 number of rows the same walk delivers, and a client cannot tell a short page \
 from a torn one. Both pass every other assertion on the page."""
+
+# The FRAM half is the controller's: this tree holds no persistent store and no
+# authorisation table, so the fragment stays unnamed here until it does.
+[[clauses]]
+id = "L-170"
+each = ["carries_the_digest", "records_the_digest_in_fram"]
+reason = """
+What goes on the wire and what survives a reboot are two ways for one \
+authorisation to come apart. An authorise without its digest is an image \
+nothing can check, and a decoder that filled in zeroes would let it through \
+looking checked. A digest that lived only in RAM is gone after the brown-out \
+mid-install that is the ordinary case on a weak bank, leaving the comms \
+processor holding bytes nothing authorised. The first is refused where the \
+body is read; the second needs a controller with FRAM behind it."""
 
 # The client half — restart a walk whose `seq` moved — is a client rule and stays
 # uncounted, like P-208's.

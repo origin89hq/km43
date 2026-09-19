@@ -811,7 +811,7 @@ fn p_001_the_published_frame_is_the_one_this_crate_writes() {
     );
 }
 
-/// **The six link frames' wire bytes, read.** `every_published_link_frame_is_one_
+/// **The eight link frames' wire bytes, read.** `every_published_link_frame_is_one_
 /// this_crate_decodes` starts from `envelope_cbor`, so a wrong `crc16_ccitt_false`
 /// or a mis-framed `encoded_with_delimiter` in the `link_local` block was
 /// invisible: the gate accepts any quoted key inside a block as *read*, and the
@@ -822,7 +822,7 @@ fn every_published_link_frame_is_the_one_this_crate_frames_and_checksums() {
     let envelopes = strings_of(link, "envelope_cbor");
     let frames = strings_of(link, "encoded_with_delimiter");
     let crcs = strings_of(link, "crc16_ccitt_false");
-    assert_eq!(envelopes.len(), 6, "the link block changed shape");
+    assert_eq!(envelopes.len(), 8, "the link block changed shape");
     assert_eq!(frames.len(), envelopes.len());
     assert_eq!(crcs.len(), envelopes.len());
 
@@ -1682,18 +1682,20 @@ fn the_published_change_records_are_the_ones_this_crate_reads() {
 /// That is the test: the artefact is the witness, and it is read here rather
 /// than transcribed.
 ///
-/// cites: L-010, L-070, L-132, L-152
+/// cites: L-010, L-070, L-132, L-152, L-170
 #[test]
 fn every_published_link_frame_is_one_this_crate_decodes() {
     use km43::{
-        ClientConnected, ClientUp, ClientUpAck, ClockOffer, Intake, LinkEnvelope, LinkMessageType,
-        NetConfig, NetVerdict, Side, TimeOffer, TimeVerdict, arriving,
+        ClientConnected, ClientUp, ClientUpAck, ClockOffer, CommsRelease, CommsReleaseOp, Intake,
+        LinkEnvelope, LinkMessageType, NetConfig, NetVerdict, ReleaseRequest, ReleaseVerdict, Side,
+        TimeOffer, TimeVerdict, arriving,
     };
+    use sha2::{Digest, Sha256};
 
     let frames = link_envelopes();
     assert_eq!(
         frames.len(),
-        6,
+        8,
         "the published link section changed shape; this test walks it by count \
          so a vector that stops being published cannot go unnoticed"
     );
@@ -1763,6 +1765,36 @@ fn every_published_link_frame_is_one_this_crate_decodes() {
                 );
                 seen += 1;
             }
+            // The digest is a real SHA-256 over a fixed run of bytes, checked
+            // by recomputing it here rather than by reading 32 bytes back: a
+            // generator that published any 32 bytes would pass the decoder and
+            // prove nothing about the field a release turns on (L-170).
+            LinkMessageType::CommsRelease => {
+                let request =
+                    ReleaseRequest::decode(envelope).expect("the published authorise reads");
+                let image = b"km43 comms release vector image";
+                assert_eq!(request.op, CommsReleaseOp::Authorise);
+                assert_eq!(request.version, "0.2.0+g1a2b3c4");
+                assert_eq!(
+                    request.image_len,
+                    u32::try_from(image.len()).expect("it fits")
+                );
+                assert_eq!(
+                    request.digest,
+                    <[u8; 32]>::from(Sha256::digest(image)),
+                    "the published digest is not the SHA-256 of the image it names"
+                );
+                seen += 1;
+            }
+            // The refusal, not the acceptance, and `version` still names the
+            // old image: what it will boot next is not what it was sent.
+            LinkMessageType::CommsReleaseAck => {
+                let verdict = ReleaseVerdict::decode(envelope).expect("the published ack reads");
+                assert_eq!(verdict.outcome, CommsRelease::RefusedDigestMismatch);
+                assert_eq!(verdict.version, "0.1.0+g9f8e7d6");
+                assert_eq!(verdict.bytes_have, 524_288);
+                seen += 1;
+            }
             other => panic!("a published link frame this test does not cover: {other:?}"),
         }
     }
@@ -1780,13 +1812,15 @@ fn every_published_link_frame_is_one_this_crate_decodes() {
 fn receiving(opcode: u8) -> km43::Side {
     use km43::Side::{Comms, Controller};
 
-    const AT: [(u8, km43::Side); 6] = [
+    const AT: [(u8, km43::Side); 8] = [
         (0x60, Controller), // LinkUp, either way; the STM32 receives this one
         (0x62, Controller), // ClientConnected, comms → controller
         (0x66, Controller), // TimeOffer, comms → controller
         (0xe2, Comms),      // ClientConnectedAck, back to the comms processor
         (0xe6, Comms),      // TimeOfferAck, back to the comms processor
         (0xe5, Controller), // NetConfigAck, back to the controller
+        (0x67, Comms),      // CommsRelease, controller → comms
+        (0xe7, Controller), // CommsReleaseAck, back to the controller
     ];
 
     AT.into_iter()

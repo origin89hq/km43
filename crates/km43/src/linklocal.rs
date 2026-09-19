@@ -29,9 +29,9 @@ use crate::cbor::CborError;
 use crate::envelope::SessionId;
 use crate::envelope::{LinkEnvelope, LinkHeader};
 use crate::generated::{
-    ClientConnected, ClientDisconnected, CloseConnection, CloseReason, DisconnectReason,
-    LinkDirection, LinkErrorCode, LinkMessageType, LinkTransport, NetConfig, NetConfigOp,
-    TimeOffer,
+    ClientConnected, ClientDisconnected, CloseConnection, CloseReason, CommsRelease,
+    CommsReleaseOp, DisconnectReason, LinkDirection, LinkErrorCode, LinkMessageType, LinkTransport,
+    NetConfig, NetConfigOp, TimeOffer,
 };
 use crate::handshake::Version;
 use crate::limits::MAX_LINK_TEXT;
@@ -229,6 +229,12 @@ pub enum LinkField {
     Source,
     AccuracyMs,
     Server,
+    /// A release's `version` text. Not [`Self::NetVersion`]: that one is a
+    /// counter the two ends compare, this one is what a firmware calls itself.
+    ReleaseVersion,
+    ImageLen,
+    Digest,
+    BytesHave,
 }
 
 impl fmt::Display for LinkField {
@@ -258,6 +264,10 @@ impl fmt::Display for LinkField {
             Self::Source => "source",
             Self::AccuracyMs => "accuracy_ms",
             Self::Server => "server",
+            Self::ReleaseVersion => "version",
+            Self::ImageLen => "image_len",
+            Self::Digest => "digest",
+            Self::BytesHave => "bytes_have",
         })
     }
 }
@@ -303,6 +313,10 @@ pub enum LinkError {
     CountryNotTwoBytes(usize),
     /// A `clear` carrying an `ssid` or a `psk`, which L-131 forbids.
     ClearCarriedCredentials,
+    /// A `digest` that is not the 32 bytes a SHA-256 is. Carried rather than
+    /// padded or cut: a digest of any other length matches no image, and an
+    /// `authorise` built on one is a release nothing can ever install.
+    DigestNotSha256(usize),
     /// The CBOR underneath was refused.
     Cbor(CborError),
 }
@@ -339,6 +353,9 @@ impl fmt::Display for LinkError {
             }
             Self::ClearCarriedCredentials => {
                 f.write_str("a clear carried credentials, which is what it exists to remove")
+            }
+            Self::DigestNotSha256(len) => {
+                write!(f, "a digest of {len} bytes is not a SHA-256")
             }
             Self::Cbor(why) => write!(f, "{why}"),
         }
@@ -1222,6 +1239,171 @@ impl NetVerdict {
         Ok(Self {
             outcome: said.ok_or(LinkError::Missing(LinkField::Outcome))?,
             version: version.ok_or(LinkError::Missing(LinkField::NetVersion))?,
+        })
+    }
+}
+
+/// The width of the one digest this link carries: SHA-256 over the whole image.
+pub const DIGEST_BYTES: usize = 32;
+
+/// `CommsRelease 0x67` — the controller's word on a comms firmware image.
+///
+/// Named `ReleaseRequest` because the registry gives the bare `CommsRelease` to
+/// the **outcome** enum, the same split as `NetChange` beside `NetConfig`.
+///
+/// **The digest is the authorisation** (L-170, L-171). The version is a string
+/// the untrusted chip will repeat back, the length is what makes a resume point
+/// meaningful, and the digest is the only field that says *which bytes*. It is
+/// a fixed array rather than a slice so that a caller cannot build an
+/// `authorise` over a 31-byte digest that matches no image ever.
+///
+/// Every `op` carries all four keys. LINK.md marks none of them as omitted, and
+/// a `confirm_healthy` that names the digest it is confirming is one the comms
+/// processor can check against the slot it is about to mark good.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReleaseRequest<'a> {
+    /// Key 1.
+    pub op: CommsReleaseOp,
+    /// Key 2, at most [`MAX_LINK_TEXT`].
+    pub version: &'a str,
+    /// Key 3, the whole image.
+    pub image_len: u32,
+    /// Key 4, SHA-256 over the whole image.
+    pub digest: [u8; DIGEST_BYTES],
+}
+
+impl<'a> ReleaseRequest<'a> {
+    /// # Errors
+    /// A `version` past the link's text cap, or a `dst` too small.
+    pub fn write(&self, header: LinkHeader, dst: &mut [u8]) -> Result<usize, LinkError> {
+        bounded(LinkField::ReleaseVersion, self.version)?;
+        let mut cbor = header
+            .write(4, dst)
+            .map_err(|_| LinkError::Cbor(CborError::DestinationTooSmall))?;
+        cbor.key(1)?;
+        cbor.u64(u64::from(self.op as u8))?;
+        cbor.key(2)?;
+        cbor.text(self.version)?;
+        cbor.key(3)?;
+        cbor.u64(u64::from(self.image_len))?;
+        cbor.key(4)?;
+        cbor.bytes(&self.digest)?;
+        Ok(cbor.finish()?)
+    }
+
+    /// # Errors
+    /// An `op` this version does not allocate, a digest that is not 32 bytes, a
+    /// key absent or twice, a `version` past the cap, or CBOR that will not
+    /// read.
+    pub fn decode(envelope: LinkEnvelope<'a>) -> Result<Self, LinkError> {
+        let pairs = envelope.keys();
+        let mut body = envelope.into_body();
+        let mut op = None;
+        let mut version = None;
+        let mut image_len = None;
+        let mut digest = None;
+        for _ in 0..pairs {
+            match body.key()? {
+                1 => {
+                    let raw = body.u8()?;
+                    let which =
+                        CommsReleaseOp::try_from(raw).map_err(|()| LinkError::UnknownOp(raw))?;
+                    once(&mut op, LinkField::Op, which)?;
+                }
+                2 => {
+                    let text = bounded(LinkField::ReleaseVersion, body.text()?)?;
+                    once(&mut version, LinkField::ReleaseVersion, text)?;
+                }
+                3 => once(&mut image_len, LinkField::ImageLen, body.u32()?)?,
+                4 => once(&mut digest, LinkField::Digest, whole_digest(body.bytes()?)?)?,
+                _ => body.skip()?,
+            }
+        }
+        body.finish()?;
+        Ok(Self {
+            op: op.ok_or(LinkError::Missing(LinkField::Op))?,
+            version: version.ok_or(LinkError::Missing(LinkField::ReleaseVersion))?,
+            image_len: image_len.ok_or(LinkError::Missing(LinkField::ImageLen))?,
+            // **Never defaulted.** An absent digest read as zeroes is an
+            // authorisation for an image nothing can produce, which is safe by
+            // accident and reads as authorised in every log that follows.
+            digest: digest.ok_or(LinkError::Missing(LinkField::Digest))?,
+        })
+    }
+}
+
+/// The 32 bytes, or a refusal naming how many came.
+fn whole_digest(bytes: &[u8]) -> Result<[u8; DIGEST_BYTES], LinkError> {
+    <[u8; DIGEST_BYTES]>::try_from(bytes).map_err(|_| LinkError::DigestNotSha256(bytes.len()))
+}
+
+/// `CommsReleaseAck 0xE7` — what the comms processor did with a release step.
+///
+/// `version` is **what it will boot next**, not what it was sent: after a
+/// `rolled_back` it names the old image, which is the one fact the controller
+/// cannot work out for itself. `bytes_have` is the resume point after an
+/// interruption, carried on every outcome so that a `refused_no_space` still
+/// says how far the bytes got.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReleaseVerdict<'a> {
+    /// Key 1.
+    pub outcome: CommsRelease,
+    /// Key 2, at most [`MAX_LINK_TEXT`].
+    pub version: &'a str,
+    /// Key 3.
+    pub bytes_have: u32,
+}
+
+impl<'a> ReleaseVerdict<'a> {
+    /// # Errors
+    /// A `version` past the link's text cap, or a `dst` too small.
+    pub fn write(&self, header: LinkHeader, dst: &mut [u8]) -> Result<usize, LinkError> {
+        bounded(LinkField::ReleaseVersion, self.version)?;
+        let mut cbor = header
+            .write(3, dst)
+            .map_err(|_| LinkError::Cbor(CborError::DestinationTooSmall))?;
+        cbor.key(1)?;
+        cbor.u64(u64::from(self.outcome as u8))?;
+        cbor.key(2)?;
+        cbor.text(self.version)?;
+        cbor.key(3)?;
+        cbor.u64(u64::from(self.bytes_have))?;
+        Ok(cbor.finish()?)
+    }
+
+    /// # Errors
+    /// An outcome this version does not allocate, a key absent or twice, a
+    /// `version` past the cap, or CBOR that will not read.
+    pub fn decode(envelope: LinkEnvelope<'a>) -> Result<Self, LinkError> {
+        let pairs = envelope.keys();
+        let mut body = envelope.into_body();
+        let mut said = None;
+        let mut version = None;
+        let mut bytes_have = None;
+        for _ in 0..pairs {
+            match body.key()? {
+                1 => {
+                    let raw = body.u8()?;
+                    let did =
+                        CommsRelease::try_from(raw).map_err(|()| LinkError::UnknownOutcome(raw))?;
+                    once(&mut said, LinkField::Outcome, did)?;
+                }
+                2 => {
+                    let text = bounded(LinkField::ReleaseVersion, body.text()?)?;
+                    once(&mut version, LinkField::ReleaseVersion, text)?;
+                }
+                3 => once(&mut bytes_have, LinkField::BytesHave, body.u32()?)?,
+                _ => body.skip()?,
+            }
+        }
+        body.finish()?;
+        Ok(Self {
+            outcome: said.ok_or(LinkError::Missing(LinkField::Outcome))?,
+            version: version.ok_or(LinkError::Missing(LinkField::ReleaseVersion))?,
+            // An absent resume point read as 0 restarts every interrupted
+            // install from the top, which is a metered link paying twice for a
+            // key nobody sent.
+            bytes_have: bytes_have.ok_or(LinkError::Missing(LinkField::BytesHave))?,
         })
     }
 }
@@ -2528,6 +2710,246 @@ mod tests {
             Some(LinkError::UnknownSource(2))
         );
     }
+
+    fn an_authorise() -> ReleaseRequest<'static> {
+        ReleaseRequest {
+            op: CommsReleaseOp::Authorise,
+            version: "0.2.0+g1a2b3c4",
+            image_len: 1_048_576,
+            digest: [0xA5; DIGEST_BYTES],
+        }
+    }
+
+    /// All four ops round-trip through the decoder a peer would use, and the
+    /// digest comes back byte for byte rather than as a length.
+    #[test]
+    fn a_release_request_round_trips_for_every_op() {
+        let mut bytes = [0u8; 256];
+        for op in [
+            CommsReleaseOp::Authorise,
+            CommsReleaseOp::Activate,
+            CommsReleaseOp::Revoke,
+            CommsReleaseOp::ConfirmHealthy,
+        ] {
+            let request = ReleaseRequest {
+                op,
+                ..an_authorise()
+            };
+            let len = request
+                .write(link_header(LinkMessageType::CommsRelease), &mut bytes)
+                .expect("it encodes");
+            let envelope =
+                crate::envelope::LinkEnvelope::decode(bytes.get(..len).expect("the frame"))
+                    .expect("an envelope");
+            assert_eq!(ReleaseRequest::decode(envelope), Ok(request));
+        }
+    }
+
+    /// All seven outcomes round-trip, the refusals among them. An implementation
+    /// that only ever encodes `authorised` has never exercised the arm a
+    /// mismatch produces.
+    #[test]
+    fn a_release_verdict_round_trips_for_every_outcome() {
+        let mut bytes = [0u8; 256];
+        for outcome in [
+            CommsRelease::Authorised,
+            CommsRelease::Installed,
+            CommsRelease::Activated,
+            CommsRelease::RefusedDigestMismatch,
+            CommsRelease::RefusedSignature,
+            CommsRelease::RefusedNoSpace,
+            CommsRelease::RolledBack,
+        ] {
+            let verdict = ReleaseVerdict {
+                outcome,
+                version: "0.1.0+g9f8e7d6",
+                bytes_have: 524_288,
+            };
+            let len = verdict
+                .write(link_header(LinkMessageType::CommsReleaseAck), &mut bytes)
+                .expect("it encodes");
+            let envelope =
+                crate::envelope::LinkEnvelope::decode(bytes.get(..len).expect("the frame"))
+                    .expect("an envelope");
+            assert_eq!(ReleaseVerdict::decode(envelope), Ok(verdict));
+        }
+    }
+
+    /// **L-170 — an `authorise` carries the version, the image length and the
+    /// digest, and the digest is not optional.** The controller records the
+    /// digest in FRAM and the comms processor hashes against it; an authorise
+    /// that arrived without one would leave the comms processor holding bytes
+    /// nothing can check, which is the case L-171 then has to refuse. So the
+    /// decoder refuses the absence here, before anything is written anywhere.
+    #[test]
+    fn l_170_an_authorise_carries_the_digest_and_one_without_it_is_refused() {
+        let mut bytes = [0u8; 256];
+        let len = an_authorise()
+            .write(link_header(LinkMessageType::CommsRelease), &mut bytes)
+            .expect("it encodes");
+        let envelope = crate::envelope::LinkEnvelope::decode(bytes.get(..len).expect("the frame"))
+            .expect("an envelope");
+        assert_eq!(envelope.keys(), 4, "an authorise writes all four keys");
+
+        // Built by hand without key 4, because the writer will not build it.
+        let mut cbor = link_header(LinkMessageType::CommsRelease)
+            .write(3, &mut bytes)
+            .expect("the envelope opens");
+        cbor.key(1).expect("op");
+        cbor.u64(u64::from(CommsReleaseOp::Authorise as u8))
+            .expect("authorise");
+        cbor.key(2).expect("version");
+        cbor.text("0.2.0").expect("value");
+        cbor.key(3).expect("image_len");
+        cbor.u64(1_048_576).expect("value");
+        let len = cbor.finish().expect("it closes");
+        let envelope = crate::envelope::LinkEnvelope::decode(bytes.get(..len).expect("the frame"))
+            .expect("an envelope");
+        assert_eq!(
+            ReleaseRequest::decode(envelope).err(),
+            Some(LinkError::Missing(LinkField::Digest))
+        );
+    }
+
+    /// A digest that is not 32 bytes matches no image and is refused where it
+    /// is read, naming how many bytes came. The writer cannot build one — the
+    /// field is a fixed array — so this is the half an untrusted peer can send.
+    #[test]
+    fn a_digest_that_is_not_a_sha256_is_refused_with_its_length() {
+        let mut bytes = [0u8; 256];
+        for wrong in [0usize, 31, 33] {
+            let mut cbor = link_header(LinkMessageType::CommsRelease)
+                .write(4, &mut bytes)
+                .expect("the envelope opens");
+            cbor.key(1).expect("op");
+            cbor.u64(1).expect("authorise");
+            cbor.key(2).expect("version");
+            cbor.text("0.2.0").expect("value");
+            cbor.key(3).expect("image_len");
+            cbor.u64(1_048_576).expect("value");
+            cbor.key(4).expect("digest");
+            cbor.bytes(&[0xA5; 33][..wrong]).expect("value");
+            let len = cbor.finish().expect("it closes");
+            let envelope =
+                crate::envelope::LinkEnvelope::decode(bytes.get(..len).expect("the frame"))
+                    .expect("an envelope");
+            assert_eq!(
+                ReleaseRequest::decode(envelope).err(),
+                Some(LinkError::DigestNotSha256(wrong)),
+                "a digest of {wrong} bytes was read"
+            );
+        }
+    }
+
+    /// An `op` and an `outcome` nobody allocated are refused on both bodies
+    /// (P-014). A fifth op read as `revoke` is a release withdrawn by a typo.
+    #[test]
+    fn a_release_op_or_outcome_this_version_does_not_allocate_is_refused() {
+        let mut bytes = [0u8; 256];
+        let mut cbor = link_header(LinkMessageType::CommsRelease)
+            .write(4, &mut bytes)
+            .expect("the envelope opens");
+        cbor.key(1).expect("op");
+        cbor.u64(5).expect("nobody's op");
+        cbor.key(2).expect("version");
+        cbor.text("0.2.0").expect("value");
+        cbor.key(3).expect("image_len");
+        cbor.u64(1).expect("value");
+        cbor.key(4).expect("digest");
+        cbor.bytes(&[0; DIGEST_BYTES]).expect("value");
+        let len = cbor.finish().expect("it closes");
+        let envelope = crate::envelope::LinkEnvelope::decode(bytes.get(..len).expect("the frame"))
+            .expect("an envelope");
+        assert_eq!(
+            ReleaseRequest::decode(envelope).err(),
+            Some(LinkError::UnknownOp(5))
+        );
+
+        let mut cbor = link_header(LinkMessageType::CommsReleaseAck)
+            .write(3, &mut bytes)
+            .expect("the envelope opens");
+        cbor.key(1).expect("outcome");
+        cbor.u64(8).expect("nobody's outcome");
+        cbor.key(2).expect("version");
+        cbor.text("0.1.0").expect("value");
+        cbor.key(3).expect("bytes_have");
+        cbor.u64(0).expect("value");
+        let len = cbor.finish().expect("it closes");
+        let envelope = crate::envelope::LinkEnvelope::decode(bytes.get(..len).expect("the frame"))
+            .expect("an envelope");
+        assert_eq!(
+            ReleaseVerdict::decode(envelope).err(),
+            Some(LinkError::UnknownOutcome(8))
+        );
+    }
+
+    /// A version past the link's text cap is refused on both ends of both
+    /// bodies, and the refusal names the release field rather than
+    /// `net_version`, which is a different thing wearing a similar name.
+    #[test]
+    fn a_release_version_past_the_cap_is_refused_where_it_is_read() {
+        let mut bytes = [0u8; 256];
+        let long = "v".repeat(MAX_LINK_TEXT + 1);
+        let too_long = LinkError::TooLong {
+            key: LinkField::ReleaseVersion,
+            len: MAX_LINK_TEXT + 1,
+        };
+        assert_eq!(
+            ReleaseRequest {
+                version: &long,
+                ..an_authorise()
+            }
+            .write(link_header(LinkMessageType::CommsRelease), &mut bytes)
+            .err(),
+            Some(too_long)
+        );
+        assert_eq!(
+            ReleaseVerdict {
+                outcome: CommsRelease::Installed,
+                version: &long,
+                bytes_have: 0,
+            }
+            .write(link_header(LinkMessageType::CommsReleaseAck), &mut bytes)
+            .err(),
+            Some(too_long)
+        );
+
+        let mut cbor = link_header(LinkMessageType::CommsReleaseAck)
+            .write(3, &mut bytes)
+            .expect("the envelope opens");
+        cbor.key(1).expect("outcome");
+        cbor.u64(2).expect("installed");
+        cbor.key(2).expect("version");
+        cbor.text(&long).expect("value");
+        cbor.key(3).expect("bytes_have");
+        cbor.u64(0).expect("value");
+        let len = cbor.finish().expect("it closes");
+        let envelope = crate::envelope::LinkEnvelope::decode(bytes.get(..len).expect("the frame"))
+            .expect("an envelope");
+        assert_eq!(ReleaseVerdict::decode(envelope).err(), Some(too_long));
+    }
+
+    /// An ack without its resume point is refused rather than read as 0. Zero
+    /// is a value — *start from the top* — and a missing key is a board that
+    /// did not say, which after a brown-out mid-install is the ordinary case.
+    #[test]
+    fn a_release_ack_without_bytes_have_is_refused_not_read_as_zero() {
+        let mut bytes = [0u8; 256];
+        let mut cbor = link_header(LinkMessageType::CommsReleaseAck)
+            .write(2, &mut bytes)
+            .expect("the envelope opens");
+        cbor.key(1).expect("outcome");
+        cbor.u64(2).expect("installed");
+        cbor.key(2).expect("version");
+        cbor.text("0.2.0").expect("value");
+        let len = cbor.finish().expect("it closes");
+        let envelope = crate::envelope::LinkEnvelope::decode(bytes.get(..len).expect("the frame"))
+            .expect("an envelope");
+        assert_eq!(
+            ReleaseVerdict::decode(envelope).err(),
+            Some(LinkError::Missing(LinkField::BytesHave))
+        );
+    }
     /// Every strict prefix of a link frame is refused, at the envelope or in
     /// the body. The decoders take an envelope, so the cut is applied to the
     /// frame and whichever layer meets it first has to say no.
@@ -2549,7 +2971,7 @@ mod tests {
         );
     }
 
-    /// The seven link requests, none of which had a truncation test. The cable
+    /// The eight link requests, none of which had a truncation test. The cable
     /// inside the enclosure drops bytes like any other, and a comms processor
     /// that resynchronises hands the controller arbitrary prefixes.
     #[test]
@@ -2621,9 +3043,16 @@ mod tests {
         refused_at_every_cut(bytes.get(..len).expect("the frame"), |e| {
             ClockOffer::decode(e).map(|_| ())
         });
+
+        let len = an_authorise()
+            .write(link_header(LinkMessageType::CommsRelease), &mut bytes)
+            .expect("encodes");
+        refused_at_every_cut(bytes.get(..len).expect("the frame"), |e| {
+            ReleaseRequest::decode(e).map(|_| ())
+        });
     }
 
-    /// The five acks, cut the same way.
+    /// The six acks, cut the same way.
     #[test]
     fn every_link_ack_cut_short_at_any_byte_is_refused() {
         let mut bytes = [0u8; 256];
@@ -2675,6 +3104,17 @@ mod tests {
         .expect("encodes");
         refused_at_every_cut(bytes.get(..len).expect("the frame"), |e| {
             NetVerdict::decode(e).map(|_| ())
+        });
+
+        let len = ReleaseVerdict {
+            outcome: CommsRelease::RefusedDigestMismatch,
+            version: "0.1.0+g9f8e7d6",
+            bytes_have: 524_288,
+        }
+        .write(link_header(LinkMessageType::CommsReleaseAck), &mut bytes)
+        .expect("encodes");
+        refused_at_every_cut(bytes.get(..len).expect("the frame"), |e| {
+            ReleaseVerdict::decode(e).map(|_| ())
         });
     }
 }
