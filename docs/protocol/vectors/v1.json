@@ -505,6 +505,28 @@
       "crc16_ccitt_false": "0xc4e4",
       "encoded_with_delimiter": "048418e80705a10102e4c400",
       "encoded_len": 12
+    },
+    "comms_release_0x67": {
+      "type": 103,
+      "authentication": "none; this link is a cable inside one enclosure and carries no MAC (L-010)",
+      "session_id": 0,
+      "req_id": 6,
+      "body_readable": "{1:op=authorise, 2:version, 3:image_len=31, 4:digest=sha256 of the ASCII text \"km43 comms release vector image\"}",
+      "envelope_cbor": "8418670006a40101026f302e322e302b67316132623363346403181f045820fc8f369d8a142a44d9ccdcd90c87c3b0f917acfaccb64cc6338f848663f96ace",
+      "crc16_ccitt_false": "0x9b89",
+      "encoded_with_delimiter": "048418673e06a40101026f302e322e302b67316132623363346403181f045820fc8f369d8a142a44d9ccdcd90c87c3b0f917acfaccb64cc6338f848663f96ace899b00",
+      "encoded_len": 67
+    },
+    "comms_release_ack_0xe7": {
+      "type": 231,
+      "authentication": "none; this link is a cable inside one enclosure and carries no MAC (L-010)",
+      "session_id": 0,
+      "req_id": 6,
+      "body_readable": "{1:outcome=refused_digest_mismatch, 2:version, 3:bytes_have=524288}",
+      "envelope_cbor": "8418e70006a30104026f302e312e302b673966386537643663031a00080000",
+      "crc16_ccitt_false": "0x48db",
+      "encoded_with_delimiter": "048418e71806a30104026f302e312e302b673966386537643663031a02080103db4800",
+      "encoded_len": 35
     }
   }
 }
