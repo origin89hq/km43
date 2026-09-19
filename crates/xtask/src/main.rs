@@ -16,6 +16,7 @@ mod bodies;
 mod check;
 mod codegen;
 mod diagram;
+mod index;
 mod preimage;
 mod registry;
 mod rows;
@@ -63,6 +64,7 @@ fn main() -> Result<()> {
             let root = check::repo_root()?;
             codegen::Codegen::load(&root)?.write(&root)?;
             diagram::Diagram::load(&root)?.write(&root)?;
+            index::Index::load(&root)?.write(&root)?;
             bindings::Bindings::load(&root)?.write(&root)
         }
         Cmd::Vectors => {
