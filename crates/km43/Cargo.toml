@@ -1,6 +1,6 @@
 [package]
 name = "km43"
-version = "0.2.0"
+version = "0.3.0"
 description = "KM43, the bounded, authenticated message protocol between an Origin89 controller and its clients"
 readme = "../../README.md"
 keywords = ["protocol", "no-std", "embedded", "cbor"]
