@@ -15,7 +15,7 @@
 //! The task index and the file hash belong to the image that was running, as
 //! a panic site always has.
 //!
-//! cites: P-214, L-143
+//! cites: P-214
 
 use core::fmt;
 
@@ -323,7 +323,7 @@ mod tests {
     /// Every reason round trips with every combination of the three flags,
     /// and the reason on the wire is the registry's.
     #[test]
-    fn l_143_every_boot_reads_back_with_its_backup_domain_as_it_was() {
+    fn every_boot_reads_back_with_its_backup_domain_as_it_was() {
         for cause in EVERY_CAUSE {
             for flags in 0u8..8 {
                 let sent = Boot {

@@ -2709,9 +2709,9 @@ Keys 5 to 8 are the previous run's last words. `task` and `file` are numbered by
 the image that was running, which a reader resolves against that image; the
 record names the reason and the place, and the build says what the place was.
 
-**P-214** — Keys 5 and 6 MUST appear together or not at all, and only with
-reason 2. Keys 7 and 8 MUST appear together, and with reason 5 and no other. A
-receiver MUST refuse a boot body that breaks either.
+**P-214** — A boot body MUST carry keys 5 and 6 together or not at all and only
+with reason 2, and keys 7 and 8 together with reason 5 and no other; a receiver
+MUST refuse one that breaks either.
 
 A panic is a software reset that left words behind, so reason 5 without a site
 is a software reset reported as something it cannot show. Words beside any other

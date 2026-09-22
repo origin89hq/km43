@@ -2236,7 +2236,8 @@ fn the_published_readlog_request_is_the_one_this_crate_writes_and_reads() {
 ///
 /// Its first record has no `at`: a boot written before the clock was ever set.
 /// A decoder that defaults an absent key 2 to zero reads a record from 1970,
-/// and an encoder that writes one puts it there. The second record carries
+/// and an encoder that writes one puts it there. Its body is a boot body the
+/// `0x0601` codec reads, not filler. The second record carries
 /// the time, kind and body of `macs.event`, read out of that vector rather
 /// than restated here.
 #[test]
@@ -2245,15 +2246,21 @@ fn the_published_logpage_is_the_one_this_crate_writes_and_reads() {
     let published_event = blob_under("event", "inner_body_cbor");
     let event = Event::decode(&published_event).expect("the published event decodes");
 
-    let mut nothing = [0u8; 1];
-    let mut cbor = CborWriter::new(&mut nothing);
-    cbor.map(0).expect("an empty map");
-    let len = cbor.finish().expect("one byte");
-    let empty = nothing.get(..len).expect("the writer's own length");
+    let cold = Boot {
+        cause: BootCause::Power,
+        backup_valid: false,
+        rtc_crystal: true,
+        rail_cycled: true,
+    };
+    let mut boot_body = [0u8; BOOT_MAX_BYTES];
+    let len = cold.encode(&mut boot_body).expect("the boot body encodes");
+    let cold_body = boot_body.get(..len).expect("the writer's own length");
 
     let mut page = LogPage::new(LogSeq(1216), LogSeq(1), false);
-    page.push(LogEntry::new(LogSeq(1216), None, EventKind::BOOT, empty).expect("a boot record"))
-        .expect("room for it");
+    page.push(
+        LogEntry::new(LogSeq(1216), None, EventKind::BOOT, cold_body).expect("a boot record"),
+    )
+    .expect("room for it");
     page.push(
         LogEntry::new(LogSeq(1217), event.at, event.kind, event.body())
             .expect("the published event as a record"),
@@ -2283,7 +2290,12 @@ fn the_published_logpage_is_the_one_this_crate_writes_and_reads() {
         "a record with no clock read back with a time"
     );
     assert_eq!(boot.kind, EventKind::BOOT, "the first record's key 3 moved");
-    assert_eq!(boot.body(), empty, "the boot record's body moved");
+    assert_eq!(boot.body(), cold_body, "the boot record's body moved");
+    assert_eq!(
+        Boot::decode(boot.body()),
+        Ok(cold),
+        "a boot record in a page is one the boot codec reads"
+    );
     assert_eq!(state.seq, LogSeq(1217), "the second record's key 1 moved");
     assert_eq!(state.at, event.at, "the second record's key 2 moved");
     assert_eq!(

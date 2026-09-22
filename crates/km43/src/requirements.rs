@@ -729,7 +729,7 @@ pub const REQUIREMENTS: &[Requirement] = &[
         id: "P-214",
         document: "docs/PROTOCOL.md",
         section: "Event — `0x04`",
-        statement: "Keys 5 and 6 MUST appear together or not at all, and only with reason 2.",
+        statement: "A boot body MUST carry keys 5 and 6 together or not at all and only with reason 2, and keys 7 and 8 together with reason 5 and no other; a receiver MUST refuse one that breaks either.",
     },
     Requirement {
         id: "P-182",

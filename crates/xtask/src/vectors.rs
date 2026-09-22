@@ -1089,11 +1089,18 @@ impl Builder {
     ///
     /// The first record has no `at` — a boot written before the clock was ever
     /// set, which is the one record that genuinely has no time — so a decoder
-    /// that defaults an absent key 2 to 0 reads back a different page.
+    /// that defaults an absent key 2 to 0 reads back a different page. Its body
+    /// is a cold boot after the backup cell died: reason 1 power, the backup
+    /// domain invalid, the RTC on its crystal, the comms rail cycled.
     fn logpage_body() -> Vec<u8> {
         cbor(&cmap! {
             1 => Cb::A(vec![
-                cmap! { 1 => Cb::U(0x04C0), 3 => Cb::U(0x0601), 4 => Cb::M(BTreeMap::new()) },
+                cmap! {
+                    1 => Cb::U(0x04C0), 3 => Cb::U(0x0601),
+                    4 => cmap! {
+                        1 => Cb::U(1), 2 => Cb::Bool(false), 3 => Cb::Bool(true), 4 => Cb::Bool(true),
+                    },
+                },
                 cmap! {
                     1 => Cb::U(0x04C1), 2 => Cb::U(0x0000_018F_1E2A_3B40), 3 => Cb::U(0x0201),
                     4 => cmap! {1 => Cb::U(3), 2 => Cb::U(1)},
@@ -2163,7 +2170,7 @@ impl Builder {
                 (
                     "values_readable",
                     json!(
-                        "next_seq is one past the highest seq the page carries (P-029), oldest_seq 1 is what the controller still holds, and complete is false so the client passes 1218 back"
+                        "two records: 1216 a boot with no at, its body {1:1, 2:false, 3:true, 4:true} a power boot with the backup domain invalid, and 1217 a generator state change. next_seq is one past the highest seq the page carries (P-029), oldest_seq 1 is what the controller still holds, and complete is false so the client passes 1218 back"
                     ),
                 ),
                 ("body_cbor", json!(hex(&body))),
