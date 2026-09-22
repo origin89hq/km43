@@ -166,18 +166,17 @@ impl Boot {
             match body.key()? {
                 1 => {
                     let number = body.u8()?;
-                    reason = Some(
-                        BootReason::try_from(number)
-                            .map_err(|()| BootError::UnknownReason(number))?,
-                    );
+                    let known = BootReason::try_from(number)
+                        .map_err(|()| BootError::UnknownReason(number))?;
+                    once(&mut reason, 1, known)?;
                 }
-                2 => backup_valid = Some(body.bool()?),
-                3 => rtc_crystal = Some(body.bool()?),
-                4 => rail_cycled = Some(body.bool()?),
-                5 => task = Some(body.u8()?),
-                6 => overdue_ms = Some(body.u32()?),
-                7 => file = Some(body.u32()?),
-                8 => line = Some(body.u32()?),
+                2 => once(&mut backup_valid, 2, body.bool()?)?,
+                3 => once(&mut rtc_crystal, 3, body.bool()?)?,
+                4 => once(&mut rail_cycled, 4, body.bool()?)?,
+                5 => once(&mut task, 5, body.u8()?)?,
+                6 => once(&mut overdue_ms, 6, body.u32()?)?,
+                7 => once(&mut file, 7, body.u32()?)?,
+                8 => once(&mut line, 8, body.u32()?)?,
                 _ => body.skip()?,
             }
         }
@@ -227,12 +226,24 @@ impl Boot {
     }
 }
 
+/// Keep the first value of a key and refuse a second: two decoders that
+/// resolved a repeat differently would read two records out of one (P-015).
+fn once<T>(slot: &mut Option<T>, key: u8, value: T) -> Result<(), BootError> {
+    if slot.is_some() {
+        return Err(BootError::Duplicate(key));
+    }
+    *slot = Some(value);
+    Ok(())
+}
+
 /// Why a boot body was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum BootError {
     /// A required key never arrived (P-015), or half of a pair of last words.
     MissingKey(u8),
+    /// A key carried twice (P-015).
+    Duplicate(u8),
     /// A boot reason this version does not allocate, or one it retired.
     UnknownReason(u8),
     /// Last words beside a reason they do not explain (P-214).
@@ -254,6 +265,7 @@ impl BootError {
     pub const fn refusal(self) -> Refusal {
         match self {
             Self::MissingKey(_)
+            | Self::Duplicate(_)
             | Self::UnknownReason(_)
             | Self::WordsWithoutTheirReason(_)
             | Self::Cbor(_) => Refusal::Client(ErrorCode::MalformedFrame),
@@ -265,6 +277,7 @@ impl fmt::Display for BootError {
     fn fmt(&self, w: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::MissingKey(k) => write!(w, "a boot record with no key {k}"),
+            Self::Duplicate(k) => write!(w, "a boot record carrying key {k} twice"),
             Self::UnknownReason(n) => write!(w, "boot reason {n} is not allocated"),
             Self::WordsWithoutTheirReason(reason) => write!(
                 w,
@@ -447,6 +460,35 @@ mod tests {
         );
     }
 
+    /// A key carried twice is refused rather than resolved, whichever key it
+    /// is and whether or not the two values agree: a reader that kept the
+    /// last would read a panic where one that kept the first reads a power cut.
+    #[test]
+    fn p_015_a_boot_body_carrying_a_key_twice_is_refused() {
+        // Reason 1 and then reason 5, with a site: the last one would read as a panic.
+        let two_reasons = [
+            0xA7, 0x01, 0x01, 0x02, 0xF5, 0x03, 0xF5, 0x04, 0xF5, 0x01, 0x05, 0x07, 0x01, 0x08,
+            0x02,
+        ];
+        assert_eq!(Boot::decode(&two_reasons), Err(BootError::Duplicate(1)));
+        // The same flag twice, agreeing with itself.
+        let same_flag = [
+            0xA5, 0x01, 0x01, 0x02, 0xF5, 0x02, 0xF5, 0x03, 0xF5, 0x04, 0xF5,
+        ];
+        assert_eq!(Boot::decode(&same_flag), Err(BootError::Duplicate(2)));
+        // Each of the last words' keys, repeated.
+        let task_twice = [
+            0xA7, 0x01, 0x02, 0x02, 0xF5, 0x03, 0xF5, 0x04, 0xF5, 0x05, 0x01, 0x05, 0x01, 0x06,
+            0x02,
+        ];
+        assert_eq!(Boot::decode(&task_twice), Err(BootError::Duplicate(5)));
+        let line_twice = [
+            0xA7, 0x01, 0x05, 0x02, 0xF5, 0x03, 0xF5, 0x04, 0xF5, 0x07, 0x01, 0x08, 0x02, 0x08,
+            0x03,
+        ];
+        assert_eq!(Boot::decode(&line_twice), Err(BootError::Duplicate(8)));
+    }
+
     /// Every truncation of every shape is refused, never read as a shorter
     /// record, and garbage never panics.
     #[test]
@@ -469,8 +511,9 @@ mod tests {
     /// Every refusal is error 1 and reads as its own sentence.
     #[test]
     fn every_boot_refusal_is_a_malformed_body_with_its_own_sentence() {
-        const EVERY: [BootError; 4] = [
+        const EVERY: [BootError; 5] = [
             BootError::MissingKey(2),
+            BootError::Duplicate(2),
             BootError::UnknownReason(3),
             BootError::WordsWithoutTheirReason(BootReason::Power),
             BootError::Cbor(CborError::WrongType),
