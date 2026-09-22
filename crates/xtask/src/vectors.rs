@@ -1089,11 +1089,18 @@ impl Builder {
     ///
     /// The first record has no `at` — a boot written before the clock was ever
     /// set, which is the one record that genuinely has no time — so a decoder
-    /// that defaults an absent key 2 to 0 reads back a different page.
+    /// that defaults an absent key 2 to 0 reads back a different page. Its body
+    /// is a cold boot after the backup cell died: reason 1 power, the backup
+    /// domain invalid, the RTC on its crystal, the comms rail cycled.
     fn logpage_body() -> Vec<u8> {
         cbor(&cmap! {
             1 => Cb::A(vec![
-                cmap! { 1 => Cb::U(0x04C0), 3 => Cb::U(0x0601), 4 => Cb::M(BTreeMap::new()) },
+                cmap! {
+                    1 => Cb::U(0x04C0), 3 => Cb::U(0x0601),
+                    4 => cmap! {
+                        1 => Cb::U(1), 2 => Cb::Bool(false), 3 => Cb::Bool(true), 4 => Cb::Bool(true),
+                    },
+                },
                 cmap! {
                     1 => Cb::U(0x04C1), 2 => Cb::U(0x0000_018F_1E2A_3B40), 3 => Cb::U(0x0201),
                     4 => cmap! {1 => Cb::U(3), 2 => Cb::U(1)},
@@ -1807,6 +1814,43 @@ impl Builder {
         ]
     }
 
+    /// The boot record `0x0601`, as a panic leaves it: the site in keys 7
+    /// and 8 at full `u32` width, a dead backup cell, and no task, because
+    /// keys 5 and 6 belong to a watchdog (P-214).
+    fn boot_events() -> Vec<(&'static str, Value)> {
+        let panicked = cbor(&cmap! {
+            1 => Cb::U(5), 2 => Cb::Bool(false), 3 => Cb::Bool(true), 4 => Cb::Bool(false),
+            7 => Cb::U(0x9E37_79B9), 8 => Cb::U(212),
+        });
+        vec![(
+            "boot_0x0601",
+            obj(vec![
+                ("kind", json!(0x0601u16)),
+                ("class", json!("A")),
+                (
+                    "authentication",
+                    json!(
+                        "an event body; on the wire it is Event 0x04 key 4, inside a wrapper MAC'd under session_key with the label 'km43/v1/evt'"
+                    ),
+                ),
+                ("body_cbor", json!(hex(&panicked))),
+                ("body_len", json!(panicked.len())),
+                (
+                    "body_readable",
+                    json!(
+                        "{1:reason, 2:backup, 3:rtc_crystal, 4:rail_cycled, 5:task, 6:overdue, 7:file, 8:line}"
+                    ),
+                ),
+                (
+                    "values_readable",
+                    json!(
+                        "reason 5 panic, the backup domain invalid, the RTC on its crystal, the comms processor left powered, and the site: file hash 0x9E3779B9 at line 212, both resolved against the image that was running. Keys 5 and 6 are absent because they belong to a watchdog, and a panic without keys 7 and 8 is refused (P-214)"
+                    ),
+                ),
+            ]),
+        )]
+    }
+
     /// Link-local frames, whole and framed.
     ///
     /// **The reason this belongs in the published file at all**: the ESP32
@@ -2022,6 +2066,7 @@ impl Builder {
         .into_iter()
         .chain(Self::concern_events())
         .chain(Self::change_events())
+        .chain(Self::boot_events())
         .chain(self.whole_envelope_entries())
         .chain([Self::readlog_entry(), Self::logpage_entry()])
         .collect::<Vec<_>>())
@@ -2125,7 +2170,7 @@ impl Builder {
                 (
                     "values_readable",
                     json!(
-                        "next_seq is one past the highest seq the page carries (P-029), oldest_seq 1 is what the controller still holds, and complete is false so the client passes 1218 back"
+                        "two records: 1216 a boot with no at, its body {1:1, 2:false, 3:true, 4:true} a power boot with the backup domain invalid, and 1217 a generator state change. next_seq is one past the highest seq the page carries (P-029), oldest_seq 1 is what the controller still holds, and complete is false so the client passes 1218 back"
                     ),
                 ),
                 ("body_cbor", json!(hex(&body))),

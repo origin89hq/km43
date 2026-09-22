@@ -2569,12 +2569,12 @@ Event  0x04             wrapper under session_key, req_id = 0
   1: seq          u64
   2: at           u64      optional, omitted when the clock was never set
   3: kind         u16      see REGISTRY
-  4: body         map      kind-specific. Two kinds are defined below; the rest
+  4: body         map      kind-specific. Six kinds are defined below; the rest
                            are deferred — see REGISTRY and DEFERRED.md
 ```
 
-**The two concern records are defined and the other twenty kinds are not.** They
-are here rather than in [DEFERRED.md](protocol/DEFERRED.md) entry 10 because the
+**Six kinds are defined here and the rest are not.** The two concern records
+come first. They are here rather than in [DEFERRED.md](protocol/DEFERRED.md) entry 10 because the
 concern table is built and P-180 already says a row leaves it only by an
 `0x0502` carrying state 5 — a rule about a record nobody could write.
 
@@ -2611,7 +2611,7 @@ lifecycle that never happened.
 altogether. *Concern 12 is over* is unrenderable on its own; *the pack's
 under-temperature protection is over* is a sentence, and it costs six bytes.
 
-**The other three bodies this document defines** are `signal validity changed`
+**Three more bodies this document defines** are `signal validity changed`
 (`0x0102`), `topology changed` (`0x0901`) and `device presence changed`
 (`0x0902`). Two of them carry an array, which is the whole of why they are
 shaped the way they are: one RS-485 pair going intermittent flips every signal
@@ -2687,6 +2687,38 @@ Zero counts at boot would be a controller reporting that it came up with no
 topology, on the one event where the client has the least other evidence — so the
 first `0x0901` after a restart carries what the tables hold, not the delta from
 nothing.
+
+**The boot record is the sixth body**, and it is the one a controller writes
+before any other: the reset reason and the RTC's state are read out of registers
+the next reset overwrites, so the log is the only place they outlive the boot.
+A board powered up after a night unplugged is the boot nobody had a probe on.
+
+```text
+Boot  0x0601                class A, carried in Event 0x04 key 4
+  1: reason       u8      boot_reason, see REGISTRY
+  2: backup       bool    false when the RTC reported its backup domain invalid
+  3: rtc_crystal  bool    true when the RTC runs from its crystal, ready and selected
+  4: rail_cycled  bool    true when this reset power-cycled the comms processor
+  5: task         u8      reason 2 only: the task that stopped checking in
+  6: overdue      u32     reason 2 only: ms past its window when the feed stopped
+  7: file         u32     reason 5 only: a hash of the panicking source file's path
+  8: line         u32     reason 5 only: the line
+```
+
+Keys 5 to 8 are the previous run's last words. `task` and `file` are numbered by
+the image that was running, which a reader resolves against that image; the
+record names the reason and the place, and the build says what the place was.
+
+**P-214** — A boot body MUST carry keys 5 and 6 together or not at all and only
+with reason 2, and keys 7 and 8 together with reason 5 and no other; a receiver
+MUST refuse one that breaks either.
+
+A panic is a software reset that left words behind, so reason 5 without a site
+is a software reset reported as something it cannot show. Words beside any other
+reason are worse: a power cut carrying a panic site is a record that contradicts
+itself, and whoever reads it in April cannot tell which half happened. A watchdog
+may arrive without a task, because the run that starved it did not always get
+as far as saying who.
 
 **P-182** — The controller MUST NOT enqueue more than one `0x0102` and one
 `0x0902` per tick. Each carries an array of what fits its cap; entries that do

@@ -10,21 +10,21 @@
 //! cites: P-011, P-013, P-016, P-001, P-038
 
 use km43::{
-    Attempt, CONCERN_MAX_BYTES, Caps, CborReader, CborWriter, ClientId, ClientKind, Closed,
-    CmdList, Concern, ConcernChanged, ConcernRaised, ConcernRows, ConcernState, ConcernsBody,
-    ConcernsHeader, ConcernsOutcome, ConcernsPage, Condition, Counter, DeviceId, DeviceSecret,
-    Discovery, ElementAt, Enrolment, Envelope, Epoch, ErrorBody, ErrorBodyError, ErrorCode, Event,
-    EventKind, Handshake, Header, HelloClaim, HelloInner, HelloReport, Id, Incoming,
-    InventoryHeader, InventoryOutcome, LogEntry, LogPage, LogSeq, MAX_DISCOVER_BODY, MAX_FRAME,
-    MAX_HELLO_INNER, MAX_HELLO_REPORT, MAX_LOG_PAGE_BYTES, MAX_PAIR_ACK_BODY, MAX_PAIR_BODY,
-    MAX_PAYLOAD, MAX_SERIES_LEN, MessageType, Outcome, Page, Pair, PairAck, PairAckClaim,
-    PairClaim, PairProof, PairRequest, PairResponse, Part, PresenceChanged, PrintedSecret,
-    Provenance, ReadConcerns, ReadInventory, ReadLog, ReadSignals, ReadingsBody, ReadingsHeader,
-    ReadingsOutcome, ReadingsPage, ReqId, Row, RowKind, RowSlots, SAMPLE_MAX_BYTES,
-    SERIES_MAX_BYTES, Sample, Sel, Series, Session, SessionId, SessionKey, Severity, SignalQuality,
-    Signed, SignedClaim, SignedKey, StateSeq, Subject, Tagged, TopologyChangeReason,
-    TopologyChanged, Validity, ValidityChanged, Value, VendorCode, VendorNamespace, Version,
-    Wrapped, Wrapper,
+    Attempt, BOOT_MAX_BYTES, Boot, BootCause, CONCERN_MAX_BYTES, Caps, CborReader, CborWriter,
+    ClientId, ClientKind, Closed, CmdList, Concern, ConcernChanged, ConcernRaised, ConcernRows,
+    ConcernState, ConcernsBody, ConcernsHeader, ConcernsOutcome, ConcernsPage, Condition, Counter,
+    DeviceId, DeviceSecret, Discovery, ElementAt, Enrolment, Envelope, Epoch, ErrorBody,
+    ErrorBodyError, ErrorCode, Event, EventKind, Handshake, Header, HelloClaim, HelloInner,
+    HelloReport, Id, Incoming, InventoryHeader, InventoryOutcome, LogEntry, LogPage, LogSeq,
+    MAX_DISCOVER_BODY, MAX_FRAME, MAX_HELLO_INNER, MAX_HELLO_REPORT, MAX_LOG_PAGE_BYTES,
+    MAX_PAIR_ACK_BODY, MAX_PAIR_BODY, MAX_PAYLOAD, MAX_SERIES_LEN, MessageType, Outcome, Page,
+    Pair, PairAck, PairAckClaim, PairClaim, PairProof, PairRequest, PairResponse, PanicSite, Part,
+    PresenceChanged, PrintedSecret, Provenance, ReadConcerns, ReadInventory, ReadLog, ReadSignals,
+    ReadingsBody, ReadingsHeader, ReadingsOutcome, ReadingsPage, ReqId, Row, RowKind, RowSlots,
+    SAMPLE_MAX_BYTES, SERIES_MAX_BYTES, Sample, Sel, Series, Session, SessionId, SessionKey,
+    Severity, SignalQuality, Signed, SignedClaim, SignedKey, StateSeq, Subject, Tagged,
+    TopologyChangeReason, TopologyChanged, Validity, ValidityChanged, Value, VendorCode,
+    VendorNamespace, Version, Wrapped, Wrapper,
 };
 
 const VECTORS: &str = include_str!("../../../docs/protocol/vectors/v1.json");
@@ -75,7 +75,7 @@ fn every_published_body_is_one_this_reader_walks_to_the_end() {
             seen += 1;
         }
     }
-    assert_eq!(seen, 26, "the vector file grew or shrank a body");
+    assert_eq!(seen, 27, "the vector file grew or shrank a body");
 }
 
 /// The envelope the generator publishes must decode here to the same four
@@ -294,9 +294,9 @@ fn the_pairing_and_hello_tags_are_ones_this_crate_recomputes_too() {
 
 /// The bodies under `bodies`, in the order the file writes them: the
 /// `Discover 0x80`, the `Hello 0x81`, the `Inventory 0x8D`, the
-/// `Readings 0x8E`, the `Concerns 0x8F`, the five event bodies — the two
-/// concern records `0x0501` and `0x0502`, then `0x0102`, `0x0901` and `0x0902`
-/// — and the five read by name rather than by position: `Pair 0x0B`,
+/// `Readings 0x8E`, the `Concerns 0x8F`, the six event bodies — the two
+/// concern records `0x0501` and `0x0502`, then `0x0102`, `0x0901` and `0x0902`,
+/// then the boot record `0x0601` — and the five read by name rather than by position: `Pair 0x0B`,
 /// `Pair 0x8B`, the bare `Error 0xFF`, `ReadLog 0x05` and `LogPage 0x85`.
 ///
 /// Asserted rather than assumed, so a file that lost one does not hand the
@@ -306,7 +306,7 @@ fn the_pairing_and_hello_tags_are_ones_this_crate_recomputes_too() {
 /// after that message was retired.
 fn published_bodies() -> Vec<Vec<u8>> {
     let found = blobs("body_cbor");
-    assert_eq!(found.len(), 15, "the vector file grew or shrank a body");
+    assert_eq!(found.len(), 16, "the vector file grew or shrank a body");
     found
 }
 
@@ -1712,6 +1712,24 @@ fn the_published_change_records_are_the_ones_this_crate_reads() {
     let len = moved.encode(&mut dst).expect("and re-encodes");
     assert_eq!(dst.get(..len), Some(published.as_slice()));
 
+    let published = blob_under("boot_0x0601", "body_cbor");
+    let boot = Boot::decode(&published).expect("the panic boot decodes");
+    assert_eq!(
+        boot.cause,
+        BootCause::Panic(PanicSite {
+            file: 0x9E37_79B9,
+            line: 212
+        })
+    );
+    assert!(
+        !boot.backup_valid,
+        "the cell that kept the calendar was dead"
+    );
+    assert!(boot.rtc_crystal && !boot.rail_cycled);
+    let mut dst = [0u8; BOOT_MAX_BYTES];
+    let len = boot.encode(&mut dst).expect("and re-encodes");
+    assert_eq!(dst.get(..len), Some(published.as_slice()));
+
     let published = blob_under("presencechanged_0x0902", "body_cbor");
     let (rev, entries) = PresenceChanged::decode(&published).expect("the presence sweep decodes");
     assert_eq!(rev, 41, "presence does not move rev (P-155)");
@@ -2218,7 +2236,8 @@ fn the_published_readlog_request_is_the_one_this_crate_writes_and_reads() {
 ///
 /// Its first record has no `at`: a boot written before the clock was ever set.
 /// A decoder that defaults an absent key 2 to zero reads a record from 1970,
-/// and an encoder that writes one puts it there. The second record carries
+/// and an encoder that writes one puts it there. Its body is a boot body the
+/// `0x0601` codec reads, not filler. The second record carries
 /// the time, kind and body of `macs.event`, read out of that vector rather
 /// than restated here.
 #[test]
@@ -2227,15 +2246,21 @@ fn the_published_logpage_is_the_one_this_crate_writes_and_reads() {
     let published_event = blob_under("event", "inner_body_cbor");
     let event = Event::decode(&published_event).expect("the published event decodes");
 
-    let mut nothing = [0u8; 1];
-    let mut cbor = CborWriter::new(&mut nothing);
-    cbor.map(0).expect("an empty map");
-    let len = cbor.finish().expect("one byte");
-    let empty = nothing.get(..len).expect("the writer's own length");
+    let cold = Boot {
+        cause: BootCause::Power,
+        backup_valid: false,
+        rtc_crystal: true,
+        rail_cycled: true,
+    };
+    let mut boot_body = [0u8; BOOT_MAX_BYTES];
+    let len = cold.encode(&mut boot_body).expect("the boot body encodes");
+    let cold_body = boot_body.get(..len).expect("the writer's own length");
 
     let mut page = LogPage::new(LogSeq(1216), LogSeq(1), false);
-    page.push(LogEntry::new(LogSeq(1216), None, EventKind::BOOT, empty).expect("a boot record"))
-        .expect("room for it");
+    page.push(
+        LogEntry::new(LogSeq(1216), None, EventKind::BOOT, cold_body).expect("a boot record"),
+    )
+    .expect("room for it");
     page.push(
         LogEntry::new(LogSeq(1217), event.at, event.kind, event.body())
             .expect("the published event as a record"),
@@ -2265,7 +2290,12 @@ fn the_published_logpage_is_the_one_this_crate_writes_and_reads() {
         "a record with no clock read back with a time"
     );
     assert_eq!(boot.kind, EventKind::BOOT, "the first record's key 3 moved");
-    assert_eq!(boot.body(), empty, "the boot record's body moved");
+    assert_eq!(boot.body(), cold_body, "the boot record's body moved");
+    assert_eq!(
+        Boot::decode(boot.body()),
+        Ok(cold),
+        "a boot record in a page is one the boot codec reads"
+    );
     assert_eq!(state.seq, LogSeq(1217), "the second record's key 1 moved");
     assert_eq!(state.at, event.at, "the second record's key 2 moved");
     assert_eq!(

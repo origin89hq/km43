@@ -726,6 +726,12 @@ pub const REQUIREMENTS: &[Requirement] = &[
         statement: "A `0x0901` MUST carry the reason the revision moved.",
     },
     Requirement {
+        id: "P-214",
+        document: "docs/PROTOCOL.md",
+        section: "Event — `0x04`",
+        statement: "A boot body MUST carry keys 5 and 6 together or not at all and only with reason 2, and keys 7 and 8 together with reason 5 and no other; a receiver MUST refuse one that breaks either.",
+    },
+    Requirement {
         id: "P-182",
         document: "docs/PROTOCOL.md",
         section: "Event — `0x04`",

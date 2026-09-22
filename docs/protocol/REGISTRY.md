@@ -381,16 +381,23 @@ one is an operator override, at the controller.
 
 ## Boot reasons — `u8`
 
-| Value | Name |
-|---|---|
-| 1 | power-on |
-| 2 | watchdog |
-| 3 | brown-out |
-| 4 | software reset |
-| 5 | panic |
+| Value | Name | Meaning | Status |
+|---|---|---|---|
+| 1 | power | Power-on, power-down or brown-out. The controller reports all three with one flag and cannot tell them apart | live |
+| 2 | watchdog | The independent watchdog fired | live |
+| 3 | brown-out | Folded into 1: the flag that reports a brown-out also reports a power-on | retired |
+| 4 | software reset | A reset the image asked for, with no panic before it | live |
+| 5 | panic | The image panicked and reset itself | live |
+| 6 | pin reset | The reset pin, with no power flag beside it | live |
+| 7 | option-byte reload | The option bytes reloaded, which is how the controller swaps its image banks | live |
+| 8 | window watchdog | The window watchdog fired | live |
+| 9 | low-power entry | An illegal entry into a low-power mode | live |
 
-Five different situations, and a generator that was running through one of them
-is a sixth — the log record carries that, not this metric.
+Eight situations the controller can tell apart. `1 power` is power-on,
+power-down and brown-out together, because one flag reports all three; `3` was
+brown-out and is retired rather than reused. A generator that was running through
+one of them is another situation again — the log record carries that, not this
+metric. The boot record `0x0601` carries this value in its key 1.
 
 ---
 
@@ -440,7 +447,7 @@ argument for leaving the numbers overlapping is at the head of the metric table.
 | `0x0401` | output changed | A | reserved |
 | `0x0501` | concern raised | A | live |
 | `0x0502` | concern changed | A | live |
-| `0x0601` | boot | A | reserved |
+| `0x0601` | boot | A | live |
 | `0x0602` | config changed | A | reserved |
 | `0x0603` | client enrolled | A | reserved |
 | `0x0604` | time set | A | reserved |

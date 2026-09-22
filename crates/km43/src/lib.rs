@@ -22,6 +22,7 @@ macro_rules! const_assert {
 }
 
 mod admission;
+mod boot;
 mod cbor;
 mod changes;
 mod cobs;
@@ -54,6 +55,7 @@ mod subscribe;
 mod wrapper;
 
 pub use admission::*;
+pub use boot::*;
 pub use cbor::*;
 pub use changes::*;
 pub use cobs::*;
