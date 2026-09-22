@@ -1,5 +1,13 @@
 # @origin89/km43
 
+## 0.2.0
+
+### Minor Changes
+
+- b660cf2: `BootReason` follows what the controller can tell apart: `PowerOn` becomes
+  `Power`, `BrownOut` is retired, and `PinReset`, `OptionByteReload`,
+  `WindowWatchdog` and `LowPowerEntry` are added.
+
 ## 0.1.1
 
 ### Patch Changes
