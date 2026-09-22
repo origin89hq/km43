@@ -2136,7 +2136,7 @@ status = "live"
 kind = 1537
 name = "boot"
 class = "A"
-status = "reserved"
+status = "live"
 
 [[events]]
 kind = 1538
@@ -2440,23 +2440,49 @@ meaning = "The operator is driving. The controller monitors and logs only"
 
 [[enums.boot_reason]]
 value = 1
-name = "power-on"
+name = "power"
+meaning = "Power-on, power-down or brown-out. The controller reports all three with one flag and cannot tell them apart"
 
 [[enums.boot_reason]]
 value = 2
 name = "watchdog"
+meaning = "The independent watchdog fired"
 
 [[enums.boot_reason]]
 value = 3
 name = "brown-out"
+status = "retired"
+meaning = "Folded into 1: the flag that reports a brown-out also reports a power-on"
 
 [[enums.boot_reason]]
 value = 4
 name = "software reset"
+meaning = "A reset the image asked for, with no panic before it"
 
 [[enums.boot_reason]]
 value = 5
 name = "panic"
+meaning = "The image panicked and reset itself"
+
+[[enums.boot_reason]]
+value = 6
+name = "pin reset"
+meaning = "The reset pin, with no power flag beside it"
+
+[[enums.boot_reason]]
+value = 7
+name = "option-byte reload"
+meaning = "The option bytes reloaded, which is how the controller swaps its image banks"
+
+[[enums.boot_reason]]
+value = 8
+name = "window watchdog"
+meaning = "The window watchdog fired"
+
+[[enums.boot_reason]]
+value = 9
+name = "low-power entry"
+meaning = "An illegal entry into a low-power mode"
 
 # The link-local enum spaces. Allocated here for the same reason the link error
 # codes are: a space allocated somewhere else is a space two people can allocate

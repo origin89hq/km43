@@ -719,9 +719,21 @@ kinds of its twenty. The three that followed the concern records did not wait fo
 P-182: what the coalescing decides is how many entries go in a tick, and what the
 body decides is that there is an array to put them in.
 
+***The boot record has landed, and this entry is down to fourteen.***
+`Boot 0x0601` is defined under `Event 0x04` with P-214, has a codec and a vector,
+and carries the reset reason, the backup-domain flag L-143 promises, and the
+previous run's last words. It went next because the controller was already
+writing it with an empty body: a record on a unit's ring that said *a boot
+happened* and nothing about why, which is the evidence a bench session after a
+night unplugged went looking for and could not find. The `boot reason` space
+moved with it: the controller reports power-on, power-down and brown-out with
+one flag, so `1` became `power` and `3 brown-out` is retired; pin reset,
+option-byte reload, the window watchdog and low-power entry were added, because
+the part tells them apart and a bank swap is not a power cut.
+
 *What stays owed:* `0x0604 time set`'s body, which is one of the six promises
 above and is now load-bearing for two more requirements than it was — P-115 and
-P-116 point at it for the size of a clock step — and the other fourteen.
+P-116 point at it for the size of a clock step — and the other thirteen.
 
 If the space keeps gaining producers, the honest answer is to allocate distinct
 event kinds rather than to keep widening a discriminator inside one — but that is

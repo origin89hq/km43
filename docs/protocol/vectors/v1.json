@@ -296,6 +296,15 @@
       "body_readable": "{1:rev, 2:e}",
       "values_readable": "rev 41, device 3 gone from 1 online to 3 offline and device 5 from 1 online to 2 degraded. Presence does not move rev (P-155), which is why this event carries the current one rather than a new one"
     },
+    "boot_0x0601": {
+      "kind": 1537,
+      "class": "A",
+      "authentication": "an event body; on the wire it is Event 0x04 key 4, inside a wrapper MAC'd under session_key with the label 'km43/v1/evt'",
+      "body_cbor": "a6010502f403f504f4071a9e3779b90818d4",
+      "body_len": 18,
+      "body_readable": "{1:reason, 2:backup, 3:rtc_crystal, 4:rail_cycled, 5:task, 6:overdue, 7:file, 8:line}",
+      "values_readable": "reason 5 panic, the backup domain invalid, the RTC on its crystal, the comms processor left powered, and the site: file hash 0x9E3779B9 at line 212, both resolved against the image that was running. Keys 5 and 6 are absent because they belong to a watchdog, and a panic without keys 7 and 8 is refused (P-214)"
+    },
     "pair_0x0B": {
       "type": 11,
       "authentication": "key 3 is macs.pair_proof.out16, computed over keys 1 and 2 and the trio the Discover above fixed; no wrapper, the proof is the authentication",

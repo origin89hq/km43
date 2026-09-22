@@ -726,6 +726,12 @@ pub const REQUIREMENTS: &[Requirement] = &[
         statement: "A `0x0901` MUST carry the reason the revision moved.",
     },
     Requirement {
+        id: "P-214",
+        document: "docs/PROTOCOL.md",
+        section: "Event — `0x04`",
+        statement: "Keys 5 and 6 MUST appear together or not at all, and only with reason 2.",
+    },
+    Requirement {
         id: "P-182",
         document: "docs/PROTOCOL.md",
         section: "Event — `0x04`",

@@ -10,21 +10,21 @@
 //! cites: P-011, P-013, P-016, P-001, P-038
 
 use km43::{
-    Attempt, CONCERN_MAX_BYTES, Caps, CborReader, CborWriter, ClientId, ClientKind, Closed,
-    CmdList, Concern, ConcernChanged, ConcernRaised, ConcernRows, ConcernState, ConcernsBody,
-    ConcernsHeader, ConcernsOutcome, ConcernsPage, Condition, Counter, DeviceId, DeviceSecret,
-    Discovery, ElementAt, Enrolment, Envelope, Epoch, ErrorBody, ErrorBodyError, ErrorCode, Event,
-    EventKind, Handshake, Header, HelloClaim, HelloInner, HelloReport, Id, Incoming,
-    InventoryHeader, InventoryOutcome, LogEntry, LogPage, LogSeq, MAX_DISCOVER_BODY, MAX_FRAME,
-    MAX_HELLO_INNER, MAX_HELLO_REPORT, MAX_LOG_PAGE_BYTES, MAX_PAIR_ACK_BODY, MAX_PAIR_BODY,
-    MAX_PAYLOAD, MAX_SERIES_LEN, MessageType, Outcome, Page, Pair, PairAck, PairAckClaim,
-    PairClaim, PairProof, PairRequest, PairResponse, Part, PresenceChanged, PrintedSecret,
-    Provenance, ReadConcerns, ReadInventory, ReadLog, ReadSignals, ReadingsBody, ReadingsHeader,
-    ReadingsOutcome, ReadingsPage, ReqId, Row, RowKind, RowSlots, SAMPLE_MAX_BYTES,
-    SERIES_MAX_BYTES, Sample, Sel, Series, Session, SessionId, SessionKey, Severity, SignalQuality,
-    Signed, SignedClaim, SignedKey, StateSeq, Subject, Tagged, TopologyChangeReason,
-    TopologyChanged, Validity, ValidityChanged, Value, VendorCode, VendorNamespace, Version,
-    Wrapped, Wrapper,
+    Attempt, BOOT_MAX_BYTES, Boot, BootCause, CONCERN_MAX_BYTES, Caps, CborReader, CborWriter,
+    ClientId, ClientKind, Closed, CmdList, Concern, ConcernChanged, ConcernRaised, ConcernRows,
+    ConcernState, ConcernsBody, ConcernsHeader, ConcernsOutcome, ConcernsPage, Condition, Counter,
+    DeviceId, DeviceSecret, Discovery, ElementAt, Enrolment, Envelope, Epoch, ErrorBody,
+    ErrorBodyError, ErrorCode, Event, EventKind, Handshake, Header, HelloClaim, HelloInner,
+    HelloReport, Id, Incoming, InventoryHeader, InventoryOutcome, LogEntry, LogPage, LogSeq,
+    MAX_DISCOVER_BODY, MAX_FRAME, MAX_HELLO_INNER, MAX_HELLO_REPORT, MAX_LOG_PAGE_BYTES,
+    MAX_PAIR_ACK_BODY, MAX_PAIR_BODY, MAX_PAYLOAD, MAX_SERIES_LEN, MessageType, Outcome, Page,
+    Pair, PairAck, PairAckClaim, PairClaim, PairProof, PairRequest, PairResponse, PanicSite, Part,
+    PresenceChanged, PrintedSecret, Provenance, ReadConcerns, ReadInventory, ReadLog, ReadSignals,
+    ReadingsBody, ReadingsHeader, ReadingsOutcome, ReadingsPage, ReqId, Row, RowKind, RowSlots,
+    SAMPLE_MAX_BYTES, SERIES_MAX_BYTES, Sample, Sel, Series, Session, SessionId, SessionKey,
+    Severity, SignalQuality, Signed, SignedClaim, SignedKey, StateSeq, Subject, Tagged,
+    TopologyChangeReason, TopologyChanged, Validity, ValidityChanged, Value, VendorCode,
+    VendorNamespace, Version, Wrapped, Wrapper,
 };
 
 const VECTORS: &str = include_str!("../../../docs/protocol/vectors/v1.json");
@@ -75,7 +75,7 @@ fn every_published_body_is_one_this_reader_walks_to_the_end() {
             seen += 1;
         }
     }
-    assert_eq!(seen, 26, "the vector file grew or shrank a body");
+    assert_eq!(seen, 27, "the vector file grew or shrank a body");
 }
 
 /// The envelope the generator publishes must decode here to the same four
@@ -294,9 +294,9 @@ fn the_pairing_and_hello_tags_are_ones_this_crate_recomputes_too() {
 
 /// The bodies under `bodies`, in the order the file writes them: the
 /// `Discover 0x80`, the `Hello 0x81`, the `Inventory 0x8D`, the
-/// `Readings 0x8E`, the `Concerns 0x8F`, the five event bodies — the two
-/// concern records `0x0501` and `0x0502`, then `0x0102`, `0x0901` and `0x0902`
-/// — and the five read by name rather than by position: `Pair 0x0B`,
+/// `Readings 0x8E`, the `Concerns 0x8F`, the six event bodies — the two
+/// concern records `0x0501` and `0x0502`, then `0x0102`, `0x0901` and `0x0902`,
+/// then the boot record `0x0601` — and the five read by name rather than by position: `Pair 0x0B`,
 /// `Pair 0x8B`, the bare `Error 0xFF`, `ReadLog 0x05` and `LogPage 0x85`.
 ///
 /// Asserted rather than assumed, so a file that lost one does not hand the
@@ -306,7 +306,7 @@ fn the_pairing_and_hello_tags_are_ones_this_crate_recomputes_too() {
 /// after that message was retired.
 fn published_bodies() -> Vec<Vec<u8>> {
     let found = blobs("body_cbor");
-    assert_eq!(found.len(), 15, "the vector file grew or shrank a body");
+    assert_eq!(found.len(), 16, "the vector file grew or shrank a body");
     found
 }
 
@@ -1710,6 +1710,24 @@ fn the_published_change_records_are_the_ones_this_crate_reads() {
     assert_eq!((moved.added, moved.removed), (17, 0));
     let mut dst = [0u8; 64];
     let len = moved.encode(&mut dst).expect("and re-encodes");
+    assert_eq!(dst.get(..len), Some(published.as_slice()));
+
+    let published = blob_under("boot_0x0601", "body_cbor");
+    let boot = Boot::decode(&published).expect("the panic boot decodes");
+    assert_eq!(
+        boot.cause,
+        BootCause::Panic(PanicSite {
+            file: 0x9E37_79B9,
+            line: 212
+        })
+    );
+    assert!(
+        !boot.backup_valid,
+        "the cell that kept the calendar was dead"
+    );
+    assert!(boot.rtc_crystal && !boot.rail_cycled);
+    let mut dst = [0u8; BOOT_MAX_BYTES];
+    let len = boot.encode(&mut dst).expect("and re-encodes");
     assert_eq!(dst.get(..len), Some(published.as_slice()));
 
     let published = blob_under("presencechanged_0x0902", "body_cbor");

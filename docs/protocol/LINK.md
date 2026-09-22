@@ -970,8 +970,8 @@ always right for, and it is the only case it is right for.
 **L-143** — A boot at which the RTC reports its backup domain invalid MUST be
 recorded in the class A boot record (`0x0601`). A dead backup cell should be an observation
 somebody can read, not something inferred months later from a controller that
-keeps asking what time it is. The field itself lands with the event body schemas
-— see [DEFERRED.md](DEFERRED.md).
+keeps asking what time it is. It is key 2 of the boot body, defined under
+`Event 0x04` in [PROTOCOL.md](../PROTOCOL.md).
 
 **L-150** — Once the clock is known the controller MUST refuse an offer that
 would move it by more than 5 seconds, in either direction, with
