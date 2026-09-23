@@ -830,16 +830,50 @@ enum ErrorCode {
 /// name by a typo nothing catches.
 #[derive(Clone, Copy)]
 enum Link {
-    Up = 0x60,
-    ClientConnected = 0x62,
-    ClientConnectedAck = 0xe2,
-    TimeOffer = 0x66,
-    TimeOfferAck = 0xe6,
-    NetConfigAck = 0xe5,
-    CommsRelease = 0x67,
-    CommsReleaseAck = 0xe7,
-    EnterDownload = 0x68,
-    EnterDownloadAck = 0xe8,
+    Up,
+    ClientConnected,
+    ClientConnectedAck,
+    TimeOffer,
+    TimeOfferAck,
+    NetConfigAck,
+    CommsRelease,
+    CommsReleaseAck,
+    EnterDownload,
+    EnterDownloadAck,
+    PairingWindow,
+    PairingWindowAck,
+}
+
+impl Link {
+    /// Allocation comes from the registry; the independent encoder below still
+    /// supplies the wire bytes without importing the implementation it checks.
+    fn opcode(self, registry: &crate::registry::Registry) -> Result<u8> {
+        let (name, response) = match self {
+            Self::Up => ("LinkUp", false),
+            Self::ClientConnected => ("ClientConnected", false),
+            Self::ClientConnectedAck => ("ClientConnected", true),
+            Self::TimeOffer => ("TimeOffer", false),
+            Self::TimeOfferAck => ("TimeOffer", true),
+            Self::NetConfigAck => ("NetConfig", true),
+            Self::CommsRelease => ("CommsRelease", false),
+            Self::CommsReleaseAck => ("CommsRelease", true),
+            Self::EnterDownload => ("EnterDownload", false),
+            Self::EnterDownloadAck => ("EnterDownload", true),
+            Self::PairingWindow => ("PairingWindow", false),
+            Self::PairingWindowAck => ("PairingWindow", true),
+        };
+        let entry = registry
+            .link_messages
+            .iter()
+            .find(|entry| entry.name == name)
+            .ok_or_else(|| anyhow::anyhow!("no link allocation for {name}"))?;
+        let opcode = if response {
+            entry.response
+        } else {
+            entry.request
+        };
+        Ok(u8::try_from(opcode.0)?)
+    }
 }
 
 /// One published link frame before it is framed: the envelope's three header
@@ -2003,6 +2037,7 @@ impl Builder {
     /// generator that imports the thing it checks publishes the implementation's
     /// opinion of itself.
     fn link() -> Result<Value> {
+        let registry = crate::registry::Registry::load(&crate::check::repo_root()?)?;
         let mut out = Vec::new();
         for LinkCase {
             name,
@@ -2013,8 +2048,9 @@ impl Builder {
             readable,
         } in Self::link_cases()?
         {
+            let opcode = kind.opcode(&registry)?;
             let envelope = cbor(&Cb::A(vec![
-                Cb::U(kind as u64),
+                Cb::U(u64::from(opcode)),
                 Cb::U(u64::from(session)),
                 Cb::U(u64::from(req_id)),
                 body,
@@ -2036,7 +2072,7 @@ impl Builder {
             out.push((
                 name,
                 obj(vec![
-                    ("type", json!(kind as u8)),
+                    ("type", json!(opcode)),
                     (
                         "authentication",
                         json!(
@@ -2148,8 +2184,39 @@ impl Builder {
                 readable: "{1:outcome=refused_outside_window}".into(),
             },
         ];
+        cases.extend(Self::pairing_window_cases());
         cases.extend(Self::release_cases()?);
         Ok(cases)
+    }
+
+    /// Open, closed and acknowledgement bodies for the radio-availability report.
+    fn pairing_window_cases() -> [LinkCase; 3] {
+        [
+            LinkCase {
+                name: "pairing_window_open_0x69",
+                kind: Link::PairingWindow,
+                session: 0,
+                req_id: 7,
+                body: cmap! {1 => Cb::U(1), 2 => Cb::U(120_000)},
+                readable: "{1:revision=1, 2:remaining_ms=120000}".into(),
+            },
+            LinkCase {
+                name: "pairing_window_closed_0x69",
+                kind: Link::PairingWindow,
+                session: 0,
+                req_id: 8,
+                body: cmap! {1 => Cb::U(2), 2 => Cb::U(0)},
+                readable: "{1:revision=2, 2:remaining_ms=0}".into(),
+            },
+            LinkCase {
+                name: "pairing_window_ack_0xe9",
+                kind: Link::PairingWindowAck,
+                session: 0,
+                req_id: 8,
+                body: cmap! {1 => Cb::U(2)},
+                readable: "{1:revision=2}".into(),
+            },
+        ]
     }
 
     /// The comms firmware release pair, apart because its digest is computed
@@ -2980,6 +3047,50 @@ mod tests {
             assert!(error.to_string().contains("past the end"));
         }
         assert_eq!(super::cobs_decode(&block).expect("full block"), [0x41; 254]);
+    }
+
+    #[test]
+    fn link_vectors_read_allocations_and_refuse_missing_or_oversized_opcodes() {
+        use super::Link;
+        use crate::registry::{Opcode, Registry};
+
+        let mut registry = Registry::load(&crate::check::repo_root().unwrap()).unwrap();
+        let entry = registry
+            .link_messages
+            .iter_mut()
+            .find(|entry| entry.name == "PairingWindow")
+            .unwrap();
+        let request = u8::try_from(entry.request.0).unwrap();
+        let response = u8::try_from(entry.response.0).unwrap();
+        assert_eq!(Link::PairingWindow.opcode(&registry).unwrap(), request);
+        assert_eq!(Link::PairingWindowAck.opcode(&registry).unwrap(), response);
+
+        // Mutate only the loaded fixture: the generator must read the registry,
+        // and refuse a value that cannot fit on the wire rather than truncate it.
+        for value in [u16::from(u8::MAX), u16::from(u8::MAX) + 1] {
+            let entry = registry
+                .link_messages
+                .iter_mut()
+                .find(|entry| entry.name == "PairingWindow")
+                .unwrap();
+            entry.request = Opcode(value);
+            entry.response = Opcode(value);
+            for kind in [Link::PairingWindow, Link::PairingWindowAck] {
+                match u8::try_from(value) {
+                    Ok(expected) => assert_eq!(kind.opcode(&registry).unwrap(), expected),
+                    Err(_) => assert!(kind.opcode(&registry).is_err()),
+                }
+            }
+        }
+        registry
+            .link_messages
+            .retain(|entry| entry.name != "PairingWindow");
+        for kind in [Link::PairingWindow, Link::PairingWindowAck] {
+            assert_eq!(
+                kind.opcode(&registry).unwrap_err().to_string(),
+                "no link allocation for PairingWindow"
+            );
+        }
     }
 
     /// A capacity dropped from the body leaves a client using the number it was

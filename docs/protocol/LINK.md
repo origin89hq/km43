@@ -91,7 +91,8 @@ has to be remembered.
 | TimeOffer | `0x66` | `0xE6` | comms → controller |
 | CommsRelease | `0x67` | `0xE7` | controller → comms |
 | EnterDownload | `0x68` | `0xE8` | controller → comms |
-| *reserved* | `0x69`–`0x7E` | `0xE9`–`0xFE` | — |
+| PairingWindow | `0x69` | `0xE9` | controller → comms |
+| *reserved* | `0x6A`–`0x7E` | `0xEA`–`0xFE` | — |
 
 **L-001** — A receiver MUST refuse a link-local message arriving from the side
 the direction column does not permit, with code 256 — the same code as an opcode
@@ -215,10 +216,11 @@ link that has stopped carrying traffic behind a sender that looks busy.
 
 Nothing in this range is cryptographic, so its vectors in
 [vectors/v1.json](vectors/v1.json) are wire bytes only, and they are a subset
-of the eighteen opcodes: `LinkUp`, `ClientConnected` and its acknowledgement,
+of the allocated opcodes: `LinkUp`, `ClientConnected` and its acknowledgement,
 `TimeOffer` and its refusal, `NetConfigAck`, and `EnterDownload` and its
-refusal, chosen for the bodies with the most keys and, for `TimeOffer` and
-`EnterDownload`, the refusal rather than the acceptance. They exist because the
+refusal, plus `PairingWindow` open, closed and acknowledgement, chosen for the
+bodies with the most keys and, for `TimeOffer` and `EnterDownload`, the refusal
+rather than the acceptance. They exist because the
 two ends of this link are two codebases, and bytes two implementations agree on
 with nothing else checking them are how a format drifts.
 
@@ -1146,6 +1148,76 @@ The two checks answer different questions and fail at different times:
 
 Delete L-172 and the failure is not "an attacker gets in". It is a comms board
 executing garbage after a power cut, and no drive short enough to fix it.
+
+---
+
+## Pairing reachability
+
+A cached network can be unreachable from the phone at the panel. The provisioning
+access point therefore runs while no network is cached **or** while the controller
+reports an open pairing window. This message changes reachability only: P-066's
+physical act and the controller's proof checks still decide whether enrolment is
+allowed. It carries no credentials and cannot open the controller's window.
+
+```text
+PairingWindow  0x69
+  1: revision       u64     increases for each new report, from 1
+  2: remaining_ms   u32     0 closed; 1..120000 remaining duration
+
+PairingWindowAck  0xE9
+  1: revision       u64     echoes the request, including an ignored old revision
+```
+
+**L-193** — A `PairingWindow` body MUST carry a non-zero `revision` and
+`remaining_ms` in 0..120000; its acknowledgement MUST carry a non-zero revision.
+Missing, duplicate or out-of-range fields are malformed under L-010. Zero duration
+means closed, not unknown; no message received means unknown and grants no
+pairing-based access-point lifetime.
+
+**L-194** — The comms processor MUST act on `PairingWindow` only from the
+controller UART, with session zero, after its own `LinkUp` has been validly
+answered under L-033. It MUST NOT act on bytes in a relayed client stream,
+including a nested or text representation of this message. L-002's code 257
+still answers a link-local opcode on a client transport. A request received
+before linking is discarded without acknowledgement or access-point changes.
+
+**L-195** — The controller MUST send its current window state after linking,
+on the physical opening, and on every closure, including successful enrolment
+or reclaim and expiry. For successful enrolment or reclaim it MUST queue
+the client response before the closed report. It MUST compute `remaining_ms` from
+its monotonic deadline when first sending, never from the original duration after
+a delay. Each new report, including a resynchronisation of unchanged state, has a
+strictly increasing revision within the controller boot; retries
+retain the same revision and body. Revisions MUST NOT wrap: at exhaustion the
+controller takes the link down and only a controller reboot permits another
+opening. A closed state supersedes pending open retries; an unsent expired opening
+is replaced by the closed state.
+
+**L-196** — The comms processor MUST retain only the greatest accepted revision
+and one local monotonic deadline. On a newer open revision it sets that deadline
+to the first receipt time plus `remaining_ms`, using checked arithmetic and
+refusing an unrepresentable deadline. A duplicate or older revision is acknowledged
+but MUST NOT change the deadline or reopen a closed window. A newer closed state,
+local deadline expiry, link loss, or either processor reboot MUST clear the
+pairing-based access-point lifetime. A repeated `LinkUp` for the same boot MUST
+NOT clear revision history; a changed controller boot clears it. A controller
+resynchronising after link loss MUST issue a fresh revision. An acknowledgement
+confirms processing, not successful enrolment or that an access point is usable.
+
+The clocks are not synchronised: the local deadline bounds radio availability
+from receipt, so UART delivery delay can leave the access point up briefly after
+the controller's deadline. It never extends enrolment, which the controller checks
+on its own clock. An early close is applied on receipt; a lost close is bounded by
+the local deadline and link-loss detection. No wall-clock time enters this rule.
+When a closed report would take the access point down, the comms processor
+MUST first transmit client responses already queued ahead of that report, allowing
+at most 500 ms to drain them and accepting no new access-point connections during
+that drain. This lets the phone receive the successful `Pair` response before its
+transport disappears; it does not delay the controller closing enrolment.
+After the drain, the access point stays up only if no network is cached; cached
+credentials are neither cleared nor replaced by this message.
+The firmware implements the radio and window lifecycle in
+[firmware#11](https://github.com/origin89hq/firmware/issues/11).
 
 ---
 

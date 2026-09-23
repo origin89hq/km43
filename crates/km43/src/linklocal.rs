@@ -238,6 +238,10 @@ pub enum LinkField {
     ImageLen,
     Digest,
     BytesHave,
+    /// Revision of the controller's pairing-window report.
+    PairingRevision,
+    /// Remaining radio availability, with zero explicitly closed.
+    RemainingMs,
 }
 
 impl fmt::Display for LinkField {
@@ -271,6 +275,8 @@ impl fmt::Display for LinkField {
             Self::ImageLen => "image_len",
             Self::Digest => "digest",
             Self::BytesHave => "bytes_have",
+            Self::PairingRevision => "revision",
+            Self::RemainingMs => "remaining_ms",
         })
     }
 }
@@ -324,6 +330,10 @@ pub enum LinkError {
     /// padded or cut: a digest of any other length matches no image, and an
     /// `authorise` built on one is a release nothing can ever install.
     DigestNotSha256(usize),
+    /// Pairing-window revisions start at one within each controller boot.
+    ZeroPairingRevision,
+    /// A pairing report cannot grant more time than P-066.
+    PairingWindowTooLong(u32),
     /// The CBOR underneath was refused.
     Cbor(CborError),
 }
@@ -370,6 +380,8 @@ impl fmt::Display for LinkError {
             Self::DigestNotSha256(len) => {
                 write!(f, "a digest of {len} bytes is not a SHA-256")
             }
+            Self::ZeroPairingRevision => f.write_str("pairing-window revision is zero"),
+            Self::PairingWindowTooLong(ms) => write!(f, "pairing window of {ms} ms exceeds 120000"),
             Self::Cbor(why) => write!(f, "{why}"),
         }
     }
@@ -579,7 +591,7 @@ fn versioned(key: LinkField, text: &str) -> Result<&str, LinkError> {
 }
 
 /// Fill a slot once, refusing the second copy before either is used (P-015).
-fn once<T>(slot: &mut Option<T>, key: LinkField, value: T) -> Result<(), LinkError> {
+pub(crate) fn once<T>(slot: &mut Option<T>, key: LinkField, value: T) -> Result<(), LinkError> {
     if slot.is_some() {
         return Err(LinkError::Duplicate(key));
     }

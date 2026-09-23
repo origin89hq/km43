@@ -2803,6 +2803,14 @@ response = 0xE8
 name = "EnterDownload"
 direction = "controller-to-comms"
 
+# Pairing reachability follows the controller's physical window.
+[[link_messages]]
+request = 0x69
+response = 0xE9
+name = "PairingWindow"
+direction = "controller-to-comms"
+
+
 # ---------------------------------------------------------------------------
 # The public equipment dataset's names for readings.
 #

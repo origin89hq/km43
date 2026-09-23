@@ -1314,6 +1314,30 @@ pub const REQUIREMENTS: &[Requirement] = &[
         statement: "The controller MUST hold at most one authorised release at a time, a new `authorise` MUST replace the previous one with both logged, and an authorisation MUST lapse when its 10-minute install window expires.",
     },
     Requirement {
+        id: "L-193",
+        document: "docs/protocol/LINK.md",
+        section: "Pairing reachability",
+        statement: "A `PairingWindow` body MUST carry a non-zero `revision` and `remaining_ms` in 0..120000; its acknowledgement MUST carry a non-zero revision.",
+    },
+    Requirement {
+        id: "L-194",
+        document: "docs/protocol/LINK.md",
+        section: "Pairing reachability",
+        statement: "The comms processor MUST act on `PairingWindow` only from the controller UART, with session zero, after its own `LinkUp` has been validly answered under L-033.",
+    },
+    Requirement {
+        id: "L-195",
+        document: "docs/protocol/LINK.md",
+        section: "Pairing reachability",
+        statement: "The controller MUST send its current window state after linking, on the physical opening, and on every closure, including successful enrolment or reclaim and expiry.",
+    },
+    Requirement {
+        id: "L-196",
+        document: "docs/protocol/LINK.md",
+        section: "Pairing reachability",
+        statement: "The comms processor MUST retain only the greatest accepted revision and one local monotonic deadline.",
+    },
+    Requirement {
         id: "L-190",
         document: "docs/protocol/LINK.md",
         section: "The download window",

@@ -611,6 +611,39 @@
       "encoded_with_delimiter": "048418e80705a10102e4c400",
       "encoded_len": 12
     },
+    "pairing_window_open_0x69": {
+      "type": 105,
+      "authentication": "none; this link is a cable inside one enclosure and carries no MAC (L-010)",
+      "session_id": 0,
+      "req_id": 7,
+      "body_readable": "{1:revision=1, 2:remaining_ms=120000}",
+      "envelope_cbor": "8418690007a20101021a0001d4c0",
+      "crc16_ccitt_false": "0x7628",
+      "encoded_with_delimiter": "048418690707a20101021a0601d4c0287600",
+      "encoded_len": 18
+    },
+    "pairing_window_closed_0x69": {
+      "type": 105,
+      "authentication": "none; this link is a cable inside one enclosure and carries no MAC (L-010)",
+      "session_id": 0,
+      "req_id": 8,
+      "body_readable": "{1:revision=2, 2:remaining_ms=0}",
+      "envelope_cbor": "8418690008a201020200",
+      "crc16_ccitt_false": "0x1b9b",
+      "encoded_with_delimiter": "048418690608a2010202039b1b00",
+      "encoded_len": 14
+    },
+    "pairing_window_ack_0xe9": {
+      "type": 233,
+      "authentication": "none; this link is a cable inside one enclosure and carries no MAC (L-010)",
+      "session_id": 0,
+      "req_id": 8,
+      "body_readable": "{1:revision=2}",
+      "envelope_cbor": "8418e90008a10102",
+      "crc16_ccitt_false": "0xb8c2",
+      "encoded_with_delimiter": "048418e90708a10102c2b800",
+      "encoded_len": 12
+    },
     "comms_release_0x67": {
       "type": 103,
       "authentication": "none; this link is a cable inside one enclosure and carries no MAC (L-010)",

@@ -878,7 +878,7 @@ fn every_published_link_frame_is_the_one_this_crate_frames_and_checksums() {
     let envelopes = strings_of(link, "envelope_cbor");
     let frames = strings_of(link, "encoded_with_delimiter");
     let crcs = strings_of(link, "crc16_ccitt_false");
-    assert_eq!(envelopes.len(), 10, "the link block changed shape");
+    assert_eq!(envelopes.len(), 13, "the link block changed shape");
     assert_eq!(frames.len(), envelopes.len());
     assert_eq!(crcs.len(), envelopes.len());
 
@@ -1768,7 +1768,7 @@ fn every_published_link_frame_is_one_this_crate_decodes() {
     let frames = link_envelopes();
     assert_eq!(
         frames.len(),
-        10,
+        13,
         "the published link section changed shape; this test walks it by count \
          so a vector that stops being published cannot go unnoticed"
     );
@@ -1865,10 +1865,48 @@ fn every_published_link_frame_is_one_this_crate_decodes() {
                 assert_eq!(verdict.outcome, EnterDownload::RefusedOutsideWindow);
                 seen += 1;
             }
+            kind @ (LinkMessageType::PairingWindow | LinkMessageType::PairingWindowAck) => {
+                a_published_pairing_window_reads_and_writes(kind, envelope, bytes);
+                seen += 1;
+            }
             other => panic!("a published link frame this test does not cover: {other:?}"),
         }
     }
     assert_eq!(seen, frames.len(), "a published frame was walked past");
+}
+
+/// Re-encode the actual committed bytes, so moving a field changes the witness.
+fn a_published_pairing_window_reads_and_writes(
+    kind: km43::LinkMessageType,
+    envelope: km43::LinkEnvelope<'_>,
+    bytes: &[u8],
+) {
+    let header = km43::LinkHeader {
+        kind,
+        session: km43::SessionId::None,
+        req_id: envelope.req_id(),
+    };
+    let mut written = [0; 64];
+    let len = if kind == km43::LinkMessageType::PairingWindow {
+        let notice = km43::PairingWindowNotice::decode(envelope).expect("published notice");
+        match header.req_id {
+            km43::ReqId(7) => {
+                assert_eq!(notice.revision().get(), 1);
+                assert_eq!(notice.remaining_ms(), km43::MAX_PAIRING_WINDOW_MS);
+            }
+            km43::ReqId(8) => {
+                assert_eq!(notice.revision().get(), 2);
+                assert_eq!(notice.remaining_ms(), 0);
+            }
+            other => panic!("unexpected pairing report request id: {other:?}"),
+        }
+        notice.write(header, &mut written).expect("writes")
+    } else {
+        let ack = km43::PairingWindowAck::decode(envelope).expect("published ack");
+        assert_eq!(ack.revision.get(), 2);
+        ack.write(header, &mut written).expect("writes")
+    };
+    assert_eq!(&written[..len], bytes);
 }
 
 /// The comms firmware release pair, read out of the published link section.
@@ -1921,7 +1959,7 @@ fn a_published_release_frame_reads(kind: km43::LinkMessageType, envelope: km43::
 fn receiving(opcode: u8) -> km43::Side {
     use km43::Side::{Comms, Controller};
 
-    const AT: [(u8, km43::Side); 10] = [
+    const AT: [(u8, km43::Side); 12] = [
         (0x60, Controller), // LinkUp, either way; the STM32 receives this one
         (0x62, Controller), // ClientConnected, comms → controller
         (0x66, Controller), // TimeOffer, comms → controller
@@ -1932,6 +1970,8 @@ fn receiving(opcode: u8) -> km43::Side {
         (0xe7, Controller), // CommsReleaseAck, back to the controller
         (0x68, Comms),      // EnterDownload, controller → comms
         (0xe8, Controller), // EnterDownloadAck, back to the controller
+        (km43::LinkMessageType::PairingWindow as u8, Comms),
+        (km43::LinkMessageType::PairingWindowAck as u8, Controller),
     ];
 
     AT.into_iter()
