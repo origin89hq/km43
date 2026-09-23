@@ -796,6 +796,8 @@ enum PairOutcome {
 enum Msg {
     Event = 0x04,
     ReadLog = 0x05,
+    GetConfig = 0x06,
+    SetConfig = 0x07,
     Command = 0x08,
     Time = 0x0A,
     Pair = 0x0B,
@@ -803,6 +805,8 @@ enum Msg {
     // `Hello` is the 0x81 *response*; the request 0x01 has no vector here.
     Hello = 0x81,
     LogPage = 0x85,
+    Config = 0x86,
+    SetConfigAck = 0x87,
     Ack = 0x88,
     TimeAck = 0x8A,
     PairAck = 0x8B,
@@ -2281,7 +2285,191 @@ impl Builder {
         .chain(self.whole_envelope_entries()?)
         .chain([Self::readlog_entry()?, Self::logpage_entry()?])
         .chain(Self::time_entries()?)
+        .chain(Self::config_section_entries()?)
+        .chain(Self::config_message_entries()?)
         .collect::<Vec<_>>()))
+    }
+
+    /// The four configuration messages, around the network section bodies
+    /// published beside them: the write a client signs, the ack, the answer
+    /// that reads it back without the passphrase, and the answer for a section
+    /// never written, which has no key 3 at all (P-108).
+    fn config_message_entries() -> Result<Vec<(&'static str, Value)>> {
+        const WRAPPED: &str = "this is the inner body; on the wire it is key 1 of the wrapper, whose key 2 is a MAC under session_key with the label 'km43/v1/rsp'";
+        const REQUEST: &str = "this is the inner body; on the wire it is key 1 of the wrapper, whose key 2 is a MAC under session_key with the label 'km43/v1/wrq'";
+        const OPERATION: &str = "this is the operation body; on the wire it is key 3 of the signed body, and the MAC in key 4 covers these bytes as they arrived";
+        let network = || {
+            cmap! {
+                1 => Cb::T("cabin".into()),
+                4 => Cb::T("CA".into()),
+                5 => Cb::T("origin89-cabin".into()),
+            }
+        };
+        let Cb::M(mut write) = network() else {
+            bail!("the network body is a map");
+        };
+        write.insert(2, Cb::T("correct horse battery".into()));
+        let Cb::M(mut read) = network() else {
+            bail!("the network body is a map");
+        };
+        read.insert(3, Cb::Bool(true));
+        [
+            (
+                "getconfig_0x06",
+                Msg::GetConfig,
+                REQUEST,
+                cmap! { 1 => Cb::U(0x20) },
+                Some("{1:section}"),
+                "section 0x0020 network",
+            ),
+            (
+                "setconfig_0x07",
+                Msg::SetConfig,
+                OPERATION,
+                cmap! { 1 => Cb::U(0x20), 2 => Cb::U(0), 3 => Cb::M(write) },
+                Some("{1:section, 2:expected_version, 3:body}"),
+                "the first write of the network section, so expected_version 0; key 3 is networkwrite_0x0020 byte for byte",
+            ),
+            (
+                "setconfigack_0x87",
+                Msg::SetConfigAck,
+                WRAPPED,
+                cmap! { 1 => Cb::U(0x20), 2 => Cb::U(1), 3 => Cb::U(1) },
+                Some("{1:section, 2:version, 3:outcome}"),
+                "section 0x0020 accepted at version 1",
+            ),
+            (
+                "config_0x86",
+                Msg::Config,
+                WRAPPED,
+                cmap! { 1 => Cb::U(0x20), 2 => Cb::U(1), 3 => Cb::M(read) },
+                Some("{1:section, 2:version, 3:body}"),
+                "the network section at version 1; key 3 is networkread_0x0020 byte for byte, the passphrase absent (P-106)",
+            ),
+            (
+                "config_unwritten_0x86",
+                Msg::Config,
+                WRAPPED,
+                cmap! { 1 => Cb::U(0x01), 2 => Cb::U(0) },
+                None,
+                "identity and site never written: version 0 and no key 3, never an empty body (P-108)",
+            ),
+        ]
+        .into_iter()
+        .map(|(name, kind, authentication, body, readable, meaning)| {
+            let bytes = cbor(&body)?;
+            Ok((
+                name,
+                obj(vec![
+                    ("type", json!(kind as u8)),
+                    ("authentication", json!(authentication)),
+                    ("body_readable", json!(readable)),
+                    ("values_readable", json!(meaning)),
+                    ("body_cbor", json!(hex(&bytes))),
+                    ("body_len", json!(bytes.len())),
+                ]),
+            ))
+        })
+        .collect()
+    }
+
+    /// The section bodies `Config 0x86` and `SetConfig 0x07` carry as key 3.
+    /// The network is published in both shapes, and the read shape is the
+    /// answer to the write above it: the passphrase gone and `psk_set` saying
+    /// one is held (P-106). The keep and clear writes and the empty read have
+    /// no readable form because they omit keys the definition lists.
+    fn config_section_entries() -> Result<Vec<(&'static str, Value)>> {
+        const WRITE: &str = "this is a section body; on the wire it is key 3 of the SetConfig 0x07 operation, and the MAC in the signed body's key 4 covers the operation as it arrived";
+        const READ: &str = "this is a section body; on the wire it is key 3 of Config 0x86, inside a wrapper MAC'd under session_key with the label 'km43/v1/rsp'";
+        const BOTH: &str = "this is a section body; on the wire it is key 3 of Config 0x86 or of the SetConfig 0x07 operation, the same in both";
+        let site = Cb::T("Chalet du Lac-\u{e0}-l'Eau".into());
+        let ssid = || Cb::T("cabin".into());
+        let country = || Cb::T("CA".into());
+        let hostname = || Cb::T("origin89-cabin".into());
+        [
+            (
+                "identity_0x0001",
+                0x0001,
+                BOTH,
+                cmap! { 1 => site },
+                Some("{1:site_name}"),
+                "site_name \"Chalet du Lac-\u{e0}-l'Eau\", 22 bytes of UTF-8 for 21 characters",
+            ),
+            (
+                "behaviour_0x0010",
+                0x0010,
+                BOTH,
+                cmap! { 1 => Cb::Bool(true) },
+                Some("{1:shadow}"),
+                "shadow true: the behaviour decides and actuates nothing (P-103); the same key in 0x0010 to 0x0013",
+            ),
+            (
+                "networkwrite_0x0020",
+                0x0020,
+                WRITE,
+                cmap! {
+                    1 => ssid(),
+                    2 => Cb::T("correct horse battery".into()),
+                    4 => country(),
+                    5 => hostname(),
+                },
+                Some("{1:ssid, 2:psk, 4:country, 5:hostname}"),
+                "join cabin with a 21-byte passphrase, in Canada, as origin89-cabin",
+            ),
+            (
+                "network_write_keep_0x0020",
+                0x0020,
+                WRITE,
+                cmap! { 1 => ssid(), 4 => country(), 5 => hostname() },
+                None,
+                "cabin again with no psk: keeps the held passphrase because the ssid is byte-identical to the one it was given for, and is refused invalid otherwise (P-107)",
+            ),
+            (
+                "network_write_clear_0x0020",
+                0x0020,
+                WRITE,
+                cmap! { 4 => country(), 5 => hostname() },
+                None,
+                "no ssid and no psk: no network, pushed to the comms processor as NetConfig op = clear",
+            ),
+            (
+                "networkread_0x0020",
+                0x0020,
+                READ,
+                cmap! {
+                    1 => ssid(),
+                    3 => Cb::Bool(true),
+                    4 => country(),
+                    5 => hostname(),
+                },
+                Some("{1:ssid, 3:psk_set, 4:country, 5:hostname}"),
+                "the answer to GetConfig after networkwrite_0x0020: key 2 absent, psk_set true (P-106)",
+            ),
+            (
+                "network_read_none_0x0020",
+                0x0020,
+                READ,
+                cmap! { 4 => country(), 5 => hostname() },
+                None,
+                "no network held: keys 1 and 3 both absent, never an empty ssid or psk_set false",
+            ),
+        ]
+        .into_iter()
+        .map(|(name, section, carried, body, readable, meaning)| {
+            let bytes = cbor(&body)?;
+            Ok((
+                name,
+                obj(vec![
+                    ("section", json!(section)),
+                    ("authentication", json!(carried)),
+                    ("body_readable", json!(readable)),
+                    ("values_readable", json!(meaning)),
+                    ("body_cbor", json!(hex(&bytes))),
+                    ("body_len", json!(bytes.len())),
+                ]),
+            ))
+        })
+        .collect()
     }
 
     /// `Time 0x0A`'s operation body and `TimeAck 0x8A` twice: an accepted set

@@ -349,6 +349,7 @@ impl Codegen {
         match key {
             "capability_bit" => ("Bit", "Meaning"),
             "config_section" => ("Section", "Name"),
+            "behaviour_key" => ("Key", "Name"),
             _ => ("Kind", "Name"),
         }
     }
@@ -359,7 +360,7 @@ impl Codegen {
             let cell = e.number.map_or_else(
                 || e.range.clone().unwrap_or_default(),
                 |n| {
-                    if first == "Bit" {
+                    if first == "Bit" || first == "Key" {
                         n.to_string()
                     } else {
                         format!("`0x{n:04X}`")
@@ -505,6 +506,7 @@ pub fn heading_for(key: &str) -> String {
         "time_source" => "## Time sources",
         "client_kind" => "## Client kinds",
         "config_section" => "## Config sections",
+        "behaviour_key" => "## Behaviour section keys",
         "command_kind" => "## Command kinds",
         "capability_bit" => "## Capability bits",
         "inventory" => "## Inventory outcomes",

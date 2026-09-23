@@ -32,6 +32,15 @@ impl fmt::Write for Sink<'_> {
     }
 }
 
+/// The form a secret reached a rendering in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Leak {
+    /// Its own characters.
+    AsText,
+    /// Its bytes as decimals, which is how a derived `Debug` prints `&[u8]`.
+    AsNumbers,
+}
+
 /// One rendered value: `WIDTH` bytes of room and the length actually written.
 ///
 /// `WIDTH` is the caller's promise about the longest sentence its values
@@ -55,6 +64,27 @@ impl<const WIDTH: usize> Rendering<WIDTH> {
     /// `{:?}`.
     pub(crate) fn debugged(value: &impl fmt::Debug) -> Self {
         Self::of(format_args!("{value:?}"))
+    }
+
+    /// How `value`'s `Debug` shows `secret`, if it does: as text, or as the
+    /// decimal list a derived `Debug` prints for `&[u8]`. Checking the text
+    /// alone passes a passphrase that went to the log as `[99, 111, 114, …]`.
+    pub(crate) fn leak(value: &impl fmt::Debug, secret: &str) -> Option<Leak> {
+        let rendered = Self::debugged(value);
+        if rendered.shows(secret.as_bytes()) {
+            return Some(Leak::AsText);
+        }
+        let listed = Self::debugged(&secret.as_bytes());
+        let numbers = listed
+            .bytes()
+            .strip_prefix(b"[")
+            .and_then(|inner| inner.strip_suffix(b"]"))
+            .expect("a byte slice debugs as a bracketed list");
+        rendered.shows(numbers).then_some(Leak::AsNumbers)
+    }
+
+    fn shows(&self, needle: &[u8]) -> bool {
+        !needle.is_empty() && self.bytes().windows(needle.len()).any(|w| w == needle)
     }
 
     /// The bytes that were written, and none of the room that was not.

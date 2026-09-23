@@ -393,7 +393,7 @@ pub struct HelloProof<'a> {
 }
 
 /// What a signed request covers.
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct SignedRequest<'a> {
     /// P-046: inside the preimage, so a signed `SetConfig` cannot be replayed as
     /// a signed `Command`.
@@ -410,6 +410,22 @@ pub struct SignedRequest<'a> {
     pub counter: u64,
     /// The signed blob exactly as it arrived (P-048), never re-encoded.
     pub operation: &'a [u8],
+}
+
+/// The operation's length, never the operation: a signed `SetConfig` of the
+/// network section carries the passphrase (P-106), and this preimage is what a
+/// caller logs while chasing a tag that did not verify.
+impl fmt::Debug for SignedRequest<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SignedRequest")
+            .field("kind", &self.kind)
+            .field("session", &self.session)
+            .field("req_id", &self.req_id)
+            .field("client_id", &self.client_id)
+            .field("counter", &self.counter)
+            .field("operation", &format_args!("{} bytes", self.operation.len()))
+            .finish()
+    }
 }
 
 /// What a wrapper-authenticated request or response covers.
@@ -530,6 +546,7 @@ fn block_key(key: &[u8]) -> [u8; BLOCK_BYTES] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::MAX_NETWORK_WRITE_BYTES;
     use crate::render::Rendering;
 
     /// Fixtures go in as the hexadecimal the documents publish. Retyping
@@ -615,6 +632,46 @@ mod tests {
             counter: COUNTER,
             operation: &OPERATION,
         }
+    }
+
+    /// A signed `SetConfig` of the network section carries the passphrase in
+    /// its operation, and a derived `Debug` prints that as decimals. The
+    /// preimage is exactly what a caller would log while chasing a tag that
+    /// did not verify.
+    #[test]
+    fn p_106_a_signed_request_never_prints_its_operation() {
+        use crate::config::{Country, Hostname, JoinWrite, NetworkWrite, Passphrase, Ssid};
+        use crate::config_messages::{CONFIG_HEADER_BYTES, SetConfigOperation};
+        use crate::generated::ConfigSection;
+
+        const PSK: &str = "correct horse battery";
+        let mut body = [0; MAX_NETWORK_WRITE_BYTES];
+        let len = NetworkWrite {
+            join: Some(JoinWrite {
+                ssid: Ssid::new("cabin").expect("an ssid"),
+                psk: Some(Passphrase::new(PSK).expect("a passphrase")),
+            }),
+            country: Country::new("CA").expect("a country"),
+            hostname: Hostname::new("origin89").expect("a hostname"),
+        }
+        .encode(&mut body)
+        .expect("the write fits");
+        let mut operation = [0; CONFIG_HEADER_BYTES + MAX_NETWORK_WRITE_BYTES];
+        let len = SetConfigOperation {
+            section: ConfigSection::Network,
+            expected_version: 3,
+            body: body.get(..len).expect("the length came from the encoder"),
+        }
+        .encode(&mut operation)
+        .expect("the operation fits");
+        let request = SignedRequest {
+            kind: MessageType::SetConfig,
+            operation: operation
+                .get(..len)
+                .expect("the length came from the encoder"),
+            ..signed_request_fields()
+        };
+        assert_eq!(Rendering::<512>::leak(&request, PSK), None);
     }
 
     fn read_log_fields() -> Wrapped<'static> {

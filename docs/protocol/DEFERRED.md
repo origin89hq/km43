@@ -66,7 +66,7 @@ is not deferred, it is forgotten.
 | 6 | Firmware bodies and the signing manifest | **Manifest before the first unit ships with a locked bootloader** |
 | 7 | BLE and MQTT conformance | The first byte over either link |
 | 8 | Command argument schemas | The first output granted authority — it needs exactly one kind |
-| 9 | Config section body schemas | The first configuration written over the API rather than flashed |
+| 9 | Config section body schemas: behaviour parameters, channels, devices and cloud | The first behaviour parameter, channel, device or cloud setting written over the API rather than flashed |
 | 10 | Event body schemas per kind | The first event on the wire |
 | 11 | Checks that test the specification rather than an implementation | Before the next audit round |
 | 13 | Multi-device topology and complete equipment coverage | Before the `channels` or `buses and devices` config body becomes live, or the first repeated component is exposed over KM43 |
@@ -528,10 +528,19 @@ shadow.**
 
 ## 9. Config section body schemas
 
-**The question.** `GetConfig` answers with `3: body map` and `SetConfig` sends
-one, and no section says what is in it. What integer key is the frost setpoint?
-What unit is it in, and at what scale? What key is `shadow`, which P-103 says
-every behaviour section must carry?
+**Settled and moved out.** `0x0001 identity and site` and `0x0020 network` have
+bodies in [PROTOCOL.md](../PROTOCOL.md) under *Section bodies*, with the
+validation P-101 names and vectors in [`vectors/v1.json`](vectors/v1.json). The
+`shadow` key every behaviour section carries is allocated as key 1 in
+[REGISTRY](REGISTRY.md#behaviour-section-keys--u16) (P-103). The rule that a
+`secret` field is never returned by `GetConfig` is P-106, and keeping a held
+passphrase only for the SSID it was given for is P-107. What stays here is the
+rest of the section space.
+
+**The question.** `0x0002 channels`, `0x0003 buses and devices`, the four
+behaviour sections `0x0010` to `0x0013` beyond `shadow`, and `0x0021 cloud` have
+numbers and no field lists. What integer key is the frost setpoint? What unit is
+it in, and at what scale?
 
 **Why it is not guessed.** The candidate parameters have names already —
 `autostart_source (voltage | soc) · threshold · duration` — and names are the
@@ -544,67 +553,36 @@ left shadow mode will actually read. That is the same mistake entry 8 refuses to
 make for command arguments, one message over. A setpoint written in the wrong
 unit does not fail loudly — it starts an engine at the wrong voltage.
 
+The two sections that did land are the ones where nothing had to be guessed:
+the network's fields are `NetConfig`'s, fixed by LINK.md, and a site's name is a
+label. Neither has a unit.
+
 **Why the numbers are allocated anyway.** The section numbers are settled and
 stay in [REGISTRY](REGISTRY.md#config-sections--u16): nothing squats on `0x0011`,
 and a client asking for a section it may not read still gets a straight answer
-about whether it exists. Only the contents are open, which is why every section
-row is marked **reserved** rather than live.
+about whether it exists. Only the contents are open, which is why those rows
+are marked **reserved** rather than live.
 
-**What is settled now, while the schemas are still open: a field marked `secret`
-is never returned by `GetConfig`.**
-
-`0x0020 network` holds the site's Wi-Fi passphrase. It holds it for a good reason
-— the controller keeps the master copy because the ESP32 is the part that gets
-replaced, and credentials living only on the radio board turn a board swap into a
-drive with a laptop and a serial cable ([LINK.md](LINK.md)). What follows from
-that and was never written down is the other half: `GetConfig` answers with a
-section body, nothing marks a field unreadable, and so **all eight enrolled
-clients can read the passphrase — the cloud client included.** That is the only
-leak in this corpus that crosses the product boundary: a customer's Wi-Fi
-passphrase, readable by our own relay, through a message written for reading
-setpoints. `0x0021 cloud` is the same shape with a different credential inside it.
-
-The rule: **a field marked `secret` in a section schema is never returned by
-`GetConfig`. The response carries the field's presence and the section's
-`version`, never its value.** *Set* or *not set* is what a person needs on a
-screen, and the section's `version` already says when it last changed. `SetConfig`
-still writes it — the field is write-only, not unwritable — and the passphrase
-reaches the radio exactly as it did, pushed one way over `NetConfig` with no
-read-back message. **The link already refuses to hand a passphrase back; it is
-`GetConfig` that would hand it to anybody holding a session.**
-
-**Presence is its own key, and never the value's key carrying a placeholder.** A
-`psk` returned as `"********"` is a default that can be mistaken for a
-measurement, and the thing that eventually happens to it is that a client reads
-the section, edits one unrelated field, and writes the whole body back — setting
-the site's passphrase to eight asterisks from four hours away.
-
-The marking belongs to the schema, not to the client. A client deciding for itself
-which fields are sensitive is a client the comms processor can talk out of it.
-
-This is a different mechanism from the per-client capability mask in
-[REGISTRY](REGISTRY.md#client-capability-mask--u16), and both are needed. The mask
-stops a cloud client **writing** `0x0020` and `0x0021`; `secret` stops **every**
-client reading a value out of them. A client that may legitimately edit the
-network section still has no business reading the passphrase back, and no editing
-flow needs it — nobody re-types a passphrase they have just been shown.
-
-**It is written now because it becomes an observable behaviour change the moment
-the schemas land.** A section body drafted without it produces a `GetConfig` that
-returns a passphrase, and by the time anybody notices, a relay has been logging
-them.
+**What a body drafted from here must keep.** `0x0021 cloud` holds a credential
+the same way the network holds a passphrase, and P-106 already binds it: the
+credential is `secret`, never in a `Config` body, with its presence under a key
+of its own. The capability mask in [REGISTRY](REGISTRY.md#client-capability-mask--u16)
+stops a cloud client **writing** a section; `secret` stops **every** client
+reading a value out of one. Both are needed, and the second is the one a body
+drafted from a list of fields forgets.
 
 **What must be true first.** A behaviour has run in shadow long enough that the
 parameters it reads have stopped moving, and somebody has wanted to change one
 from a phone rather than from a build. Half of a config schema is what an
 operator tried to adjust and could not; a schema written before anybody tried is
-a list of everything the code happens to hold, which is a different list.
+a list of everything the code happens to hold, which is a different list. The
+channel and device sections wait on entry 13 as well.
 
-**Trigger.** The first configuration written over the API rather than flashed. A
-controller configured by flashing a struct needs no wire schema at all — the
-compiler is the schema. The first `SetConfig` that has to land on a controller
-nobody is holding needs all of it, including the `shadow` key, because a shadow
-flag a client cannot read is a shadow deployment nobody can confirm.
+**Trigger.** The first behaviour parameter, channel, device or cloud setting
+written over the API rather than flashed. A controller configured by flashing a
+struct needs no wire schema at all — the compiler is the schema. The first
+`SetConfig` that has to change one on a controller nobody is holding needs the
+whole body.
 
 ---
 

@@ -939,7 +939,7 @@ impl CloseReport {
 ///
 /// So the two shapes are two variants rather than one struct with four options,
 /// and a `clear` that carries credentials is not something a caller can build.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum NetChange<'a> {
     /// Join this network.
     Set {
@@ -965,11 +965,44 @@ pub enum NetChange<'a> {
     },
 }
 
+/// The passphrase's length, never the passphrase (L-131): a derived `Debug`
+/// writes the site's Wi-Fi credential into whatever log either side keeps.
+impl fmt::Debug for NetChange<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Set {
+                version,
+                ssid,
+                psk,
+                country,
+                hostname,
+            } => f
+                .debug_struct("Set")
+                .field("version", version)
+                .field("ssid", ssid)
+                .field("psk", &format_args!("{} bytes", psk.len()))
+                .field("country", country)
+                .field("hostname", hostname)
+                .finish(),
+            Self::Clear {
+                version,
+                country,
+                hostname,
+            } => f
+                .debug_struct("Clear")
+                .field("version", version)
+                .field("country", country)
+                .field("hostname", hostname)
+                .finish(),
+        }
+    }
+}
+
 /// The passphrase bounds L-131 fixes, which are WPA's own.
-const PSK_SHORTEST: usize = 8;
-const PSK_LONGEST: usize = 63;
+pub(crate) const PSK_SHORTEST: usize = 8;
+pub(crate) const PSK_LONGEST: usize = 63;
 /// ISO 3166-1 alpha-2, and there is no other length.
-const COUNTRY_BYTES: usize = 2;
+pub(crate) const COUNTRY_BYTES: usize = 2;
 
 impl<'a> NetChange<'a> {
     /// # Errors
@@ -2960,6 +2993,17 @@ mod tests {
             country: "CA",
             hostname: "o89",
         }
+    }
+
+    /// The passphrase goes to the comms processor in this message and nowhere
+    /// else. A derived `Debug` prints it in the clear, so one `debug!(?change)`
+    /// on either side of the link writes the site's Wi-Fi credential to a log.
+    #[test]
+    fn l_131_a_net_config_never_prints_its_passphrase() {
+        let NetChange::Set { psk, .. } = a_set() else {
+            panic!("the fixture is a set");
+        };
+        assert_eq!(Rendering::<256>::leak(&a_set(), psk), None);
     }
 
     /// Both shapes round-trip, and a `clear` comes back as a `clear` rather than
