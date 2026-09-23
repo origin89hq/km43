@@ -16,10 +16,11 @@
 //!
 //! **P-022 is not cited here.** This file reads `req_id` off the wire as the
 //! `u32` the rule says it is, and that sentence is a statement of the field
-//! rather than one of its three MUSTs. All three bind a controller holding
-//! per-session state — the highest accepted and the last `MAX_INFLIGHT` — and
-//! there is no controller-side session in this crate to hold it. See DEFERRED
-//! entry 12.
+//! rather than one of its MUSTs. The ones that make it true bind a controller
+//! holding per-session state — the highest accepted and the last
+//! `MAX_INFLIGHT` — and there is no controller-side session in this crate to
+//! hold it. The window, and the silence P-022 requires when it refuses, belong
+//! to the controller.
 //!
 //! cites: P-010, P-020, P-021, P-028, L-002, L-180
 //!

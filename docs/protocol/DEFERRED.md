@@ -15,7 +15,7 @@ tableOfContents:
 <dl class="o89-doc-facts">
   <div>
     <dt>Open entries</dt>
-    <dd>Thirteen</dd>
+    <dd>Twelve</dd>
   </div>
   <div>
     <dt>Normative</dt>
@@ -39,13 +39,14 @@ tableOfContents:
 
 ## How deferral works
 
-Thirteen things this corpus deliberately does not answer — ten of them questions
-about the wire, the eleventh about how these documents get checked for the
-questions nobody thought to ask, the twelfth a rule that is written and has
-nowhere to be enforced yet, and the thirteenth the equipment model the first ten
-quietly assumed was flat. They live here rather than inline because an
-open question sitting in a normative document reads as a specification to
-somebody who skimmed to their section and stopped. A paragraph saying "most
+Twelve things this corpus deliberately does not answer — ten of them questions
+about the wire, entry 11 about how these documents get checked for the
+questions nobody thought to ask, and entry 13 the equipment model the first ten
+quietly assumed was flat. Entry 12 was answered and moved into P-022; its number
+is not reused, so a reference to entry 13 still means the same thing. They live
+here rather than inline because an open question sitting in a normative
+document reads as a specification to somebody who skimmed to their section and
+stopped. A paragraph saying "most
 likely we retire the number" is indistinguishable, at implementation time, from a
 paragraph saying "the number is retired" — and the person who implemented the
 wrong one is four hours from a road when it matters.
@@ -68,7 +69,6 @@ is not deferred, it is forgotten.
 | 9 | Config section body schemas | The first configuration written over the API rather than flashed |
 | 10 | Event body schemas per kind | The first event on the wire |
 | 11 | Checks that test the specification rather than an implementation | Before the next audit round |
-| 12 | What answers a `req_id` P-022 refuses, and where the refusal happens | Before the first controller accepts a request from a client somebody else wrote |
 | 13 | Multi-device topology and complete equipment coverage | Before the `channels` or `buses and devices` config body becomes live, or the first repeated component is exposed over KM43 |
 
 ---
@@ -851,90 +851,6 @@ field list.
 
 ---
 
-## 12. What answers a `req_id` P-022 refuses, and where the refusal happens
-
-**The question.** P-022's second paragraph is the strongest enforcement rule in
-this document — *the controller MUST enforce this rather than trust it*, holding
-per session the highest `req_id` accepted and a record of the last
-`MAX_INFLIGHT`, refusing a repeat **without acting and before the counter is
-read**. It names no error code. Every other refusal in the corpus names one, and
-[REGISTRY.md](REGISTRY.md) is explicit that a code is allocated there before it
-appears in an implementation — so an implementer either invents a number or
-answers with a code that means something else. Two firmwares picking differently
-is the collision that registry exists to stop.
-
-**Why it is not guessed.** The obvious reach is error 7 `busy`, and it is taken:
-the limits table gives 7 to a controller refusing a client that exceeds
-`MAX_INFLIGHT` — the *count*, not a repeated number. Error 11 is the signed
-counter, one layer further in and after the point P-022 says the refusal must
-happen. A new code is not free either: it moves `[meta] protocol`, the title of
-this specification, `REGISTRY.md`, both generated bindings and the published
-vectors, and 13, 15, 16 and 17 are withdrawn rather than free, so the number
-itself is a decision somebody argues for out loud.
-
-**The second half is worse than the first, and it is why this is deferred rather
-than allocated.** There is nowhere in `km43` to put the check. `Session` is
-the *client's* view of a `Hello 0x81`; no controller-side session type exists in
-the crate at all. The four signed types have a chain to insert into —
-`SignedClaim` → `SignedWrite` → `FreshWrite` — but the five wrapper-authenticated
-requests (`0x02`, `0x03`, `0x05`, `0x06`, `0x0C`) reach their bodies through one
-`Wrapper::verify`, which serves requests, responses and events alike. Gating that
-accessor on an admission token makes an `Event 0x04` body unreachable by
-construction and breaks the `Hello` path that reads through it. So a window built
-today is a data structure no caller consults, wearing a `P-022` citation that
-nothing can make red — and the traceability matrix would report the strongest
-rule in the document as covered.
-
-**What must be true first.** A controller-side session exists, in whichever crate
-ends up owning one, so the window has a caller and the ordering has a chokepoint.
-Then the code allocation is one line and the citation is honest.
-
-**Both halves of the *where* are now closed, and the trigger was already met
-when this was written.** The entry says the window waits on *a controller-side
-session, in whichever crate ends up owning one*. It is precise that `km43`
-has no such type and it is right — and it stops one repository short. In
-origin89, `o89-core`'s `Sessions` is the controller's view, it has held the rows
-and the bindings all along, and `admit` is a gate that already answers P-143's error 4 and error 9. So
-the window went in beside them, and *without acting, and before the counter is
-read* is true by construction: nothing downstream of `admit` has run.
-
-What is left of this entry is the **number**. `Admission::Replay` is its own
-answer rather than a refusal carrying a code, because there is still none to
-carry — and that allocation is the part somebody argues for out loud.
-
-**The window itself exists**, and its arithmetic is the part worth reading before
-it changes. `o89-core`'s `Accepted` holds the highest `req_id` a session has taken
-and the recent ones, and refuses a repeat or anything below the floor. It
-remembers
-`MAX_INFLIGHT` **+ 1**, because the floor is inclusive, so the band of ids that
-are at once accepted and not below it is five values and not four. Remember four
-and the oldest falls out of memory while still inside the window, and a replay of
-it passes both checks at once: not remembered, not too old.
-
-*This entry said P-022 "is listed uncovered by `traceability.toml`", and it was
-not.* A `cites:` header on `envelope.rs` had it reading covered for as long as
-the header existed — the exact state this entry was written to prevent, arriving
-through a file that parses the field rather than enforcing the rule. That header
-is gone; the citation is on the controller's `session.rs`, where the refusal
-happens.
-
-**A finding this turned up that does not wait for the answer.** P-077 refreshes
-the fifteen-minute session timer on any *authenticated* inbound frame — the
-trigger is MAC verification, which happens **before** P-022's check. So a relay
-replaying a captured signed request holds a session open indefinitely and stays
-clear of `MAX_AUTH_FAILURES`, because the frame verifies. P-022 refuses the
-*request*; nothing refuses what it did to the session on the way past. That is a
-rule to write, not a rule to implement, and it belongs with this entry because
-the same paragraph is where the answer goes.
-
-**Trigger.** Before the first controller accepts a request from a client
-somebody else wrote. What remains is the error code and nothing else: the check
-runs at the gate, four tests are named after the rule, and until a number is
-allocated a replayed request is refused as `Admission::Replay` — an answer with
-no wire representation, which is honest and is not shippable.
-
----
-
 ## 13. Multi-device topology and complete equipment coverage
 
 **The question.** What is the smallest bounded model that lets a controller
@@ -1004,7 +920,7 @@ questions are preserved in [Equipment coverage research](COVERAGE-RESEARCH.md).
 | Firmware targets | Controller and comms images are discussed, while attached-device and component firmware identity, compatibility, progress, and ownership are not modelled | Entry 6 owns firmware bodies and manifest; its target vocabulary depends on this entry's inventory rather than inventing a second device-id space |
 | Communication health | Value staleness cannot distinguish an absent instrument, unsupported signal, bad CRC, open/short/reversed sensor, changing module list, or a healthy device behind a broken bus | This entry: device/component presence and health separate from signal validity, with last-seen and bounded diagnostic counters where a source provides them |
 | Evolution and limits | There is no topology generation, descriptor/schema identity, per-device capability negotiation, or reported cap for devices, components, signals, vector length, and descriptor pages | This entry: every new collection is bounded, capability-discovered, and versioned; unknown normalized and vendor extensions remain skippable under P-019 |
-| Security and conformance | A complete data model would still sit on known open security and verification work | Entries 2, 4, 5, 7, 11, and 12 remain the owners of confidentiality, rate limiting, the later Noise handshake, BLE/MQTT evidence, spec checks, and `req_id` admission. This entry does not duplicate or hide them |
+| Security and conformance | A complete data model would still sit on known open security and verification work | Entries 2, 4, 5, 7, and 11 remain the owners of confidentiality, rate limiting, the later Noise handshake, BLE/MQTT evidence, and spec checks. This entry does not duplicate or hide them. `req_id` admission, once entry 12, is settled in P-022 |
 
 **The minimum proof before choosing bytes.** Build six source-backed fixtures:
 

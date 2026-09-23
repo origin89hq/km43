@@ -1213,14 +1213,18 @@ send a zero somebody renders as *rev 0*."""
 
 [[clauses]]
 id = "P-022"
-each = ["already_took", "older_than_the_reorder_window"]
+each = ["already_took", "older_than_the_reorder_window", "unanswered"]
 reason = """
-The two refusals the controller owes fail differently. A repeat replays an \
+The two refusals the controller owes fail differently, and what follows them \
+fails a third way. A repeat replays an \
 **answer** as well as a request, because the response MAC covers \
 `(type, session_id, req_id)` and nothing that moves. A stale one is a frame \
 captured off the air in the morning and delivered at midnight, whose MAC, \
 counter and dedup entry are all satisfied by the time it lands -- and P-022's \
-receiver rule is the only thing in the corpus that notices. The client's own \
+receiver rule is the only thing in the corpus that notices. Either refusal \
+answered under the session key mints a second genuine response to a pair \
+already answered, and a refusal that refreshes the session is a keep-alive the \
+relay holds, so the silence gets a test of its own. The client's own \
 half -- strictly increasing, never reused, no more than `MAX_INFLIGHT` \
 outstanding -- stays uncounted, because the rule says in bold that the \
 controller MUST enforce rather than trust it, so the client half is not what \
