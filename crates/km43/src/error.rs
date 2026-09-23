@@ -408,6 +408,43 @@ mod tests {
         );
     }
 
+    /// A failed challenge generator must produce a readable refusal before
+    /// there is a session key. Both decoder entry points preserve it as a hint.
+    #[test]
+    fn an_unavailable_challenge_is_readable_without_a_session_key() {
+        let sent = ErrorBody {
+            code: Incoming::Client(ErrorCode::ChallengeUnavailable),
+            detail: "challenge unavailable",
+        };
+        let (body, len) = encoded(sent);
+        let hint = ErrorBody::bare(&body[..len]).expect("pre-session retry hint");
+        assert_eq!(hint.code(), sent.code);
+        assert_eq!(hint.detail(), sent.detail);
+
+        // The controller echoes the connection handle stamped by the comms
+        // processor; the client-facing envelope has no session yet.
+        for session in [SessionId::None, SessionId::from(3)] {
+            let header = Header {
+                kind: MessageType::ErrorResponse,
+                session,
+                req_id: ReqId(17),
+            };
+            let mut frame = [0u8; SCRATCH];
+            let len = sent.write(header, &mut frame).expect("refusal fits");
+            let envelope = Envelope::decode(&frame[..len]).expect("valid envelope");
+            assert_eq!(envelope.header(), header);
+            let hint = ErrorBody::from_envelope(envelope).expect("readable refusal");
+            assert_eq!(hint.code(), sent.code);
+            assert_eq!(hint.detail(), sent.detail);
+            for cut in 0..len {
+                if let Ok(envelope) = Envelope::decode(&frame[..cut]) {
+                    assert!(ErrorBody::from_envelope(envelope).is_err());
+                }
+            }
+        }
+        assert_eq!(ErrorBody::authenticated(&body[..len]), Ok(sent));
+    }
+
     /// An envelope naming another message is refused rather than read as one.
     #[test]
     fn an_envelope_that_is_not_an_error_is_not_read_as_one() {

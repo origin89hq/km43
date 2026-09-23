@@ -152,7 +152,7 @@ is the state it was in before somebody checked it the first time.
 
 | Name | Value | Behaviour when reached |
 |---|---|---|
-| `MAX_CHALLENGES` | 8 | Error 7 `busy`; nothing is evicted |
+| `MAX_CHALLENGES` | 8 | Error 18 `challenge unavailable`; nothing is evicted |
 | `MAX_AUTH_FAILURES` | 8 per connection in 60 seconds | Connection closed, `CloseConnection` reason 3 `authentication_failures`; a fresh `Hello` does not clear the count |
 
 Both bound what the controller will spend on a peer that has proved nothing, and
@@ -1060,18 +1060,35 @@ requires an authenticated session. Configuration alone would otherwise leak
 occupancy, generator activity, energy use and network settings to anyone within
 BLE range.
 
-**P-060** — The controller MUST mint a **fresh challenge per connection**, using
-the connection handle from [LINK.md](protocol/LINK.md) L-060, and MUST hold at most
-`MAX_CHALLENGES`. A single device-wide challenge livelocks two clients against
+**P-060** — The controller MUST attempt to mint a **fresh challenge per connection**,
+using the connection handle from [LINK.md](protocol/LINK.md) L-060, and MUST hold
+at most `MAX_CHALLENGES`. A single device-wide challenge livelocks two clients against
 each other exactly the way a device-wide counter would.
 
-A `Discover` MUST be answered with that connection's **current** challenge. If
-the connection holds none — the one it had was consumed, or it expired at 120
-seconds — the controller MUST mint another for that handle and discard the old,
-so at most one challenge exists per connection at any moment and a client always
-proves against something live. Handing back a challenge that is already dead
+A `Discover` MUST be answered with that connection's **current** challenge
+when one is available. If the connection holds none — the one it had was
+consumed, it expired at 120 seconds, or initial minting failed under L-070 —
+the controller MUST discard any expired challenge and attempt to mint another
+for that handle. If minting fails, the connection holds no challenge and the
+controller MUST send the refusal below. At most one challenge exists per
+connection at any moment; only a live challenge may be returned. Handing back a challenge that is already dead
 sends a client off to compute a proof that cannot verify, and error 14 is the
 only way it finds out.
+
+If the controller cannot supply a valid challenge, it MUST refuse `Discover`
+with error 18 `challenge unavailable`, using the error shape P-142 requires
+and echoing the request under P-027. This includes exhausted challenge storage,
+a failed challenge generator, and missing provisioning material needed to
+produce a valid response. It MUST NOT send a placeholder or expired challenge,
+or evict another connection's challenge. Error 18 is readable bare; under
+P-055 and P-140 it permits retrying or reconnecting, never a conclusion about
+the site or a guarantee that the next attempt will succeed. Error 7 remains
+MAC-required and MUST NOT be used for this refusal.
+
+A bare `busy` is discarded by a conforming client, leaving it to time out.
+Giving this refusal its own code lets the client read it before a session exists
+without allowing a forged bare `busy` to stand in for an authenticated refusal
+of an in-session request.
 
 **P-061** — A challenge MUST be **single-use**: consumed by the first `Hello` or
 `Pair` that presents it. A second use is error 14.
@@ -3416,7 +3433,8 @@ and the meaning is *what a receiver will accept*.
 
 **P-141** — A request that reaches its handler MUST be answered by its own
 response type, carrying an outcome. `Error 0xFF` is for conditions that stop a
-request reaching a handler at all. Where a registry lists both an outcome and an
+request reaching a handler at all, plus P-060's challenge-unavailable refusal:
+`Discover` has no refusal outcome. Where a registry lists both an outcome and an
 error code for the same condition, **the outcome is what is sent**.
 
 Two answers to one refusal is one implementer emitting an error while another

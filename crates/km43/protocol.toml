@@ -288,6 +288,12 @@ meaning = "Clock not set"
 macd = true
 status = "withdrawn"
 
+[[errors]]
+code = 18
+meaning = "Challenge unavailable"
+macd = false
+status = "live"
+
 [[error_ranges]]
 lo = 256
 hi = 511
