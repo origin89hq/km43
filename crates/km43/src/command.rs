@@ -274,29 +274,12 @@ impl<'a> CommandAck<'a> {
     }
 }
 
-/// Refuse `args` that are not one map, the shape a kind's schema will be
-/// written against, or that carry one of its keys twice (P-015): a later
-/// schema decoder and a client could each pick a different copy.
-///
-/// Keys are compared pairwise rather than by order, because a receiver reads
-/// an unsorted map from a sloppy sender (P-016 binds encoders). Quadratic in
-/// the pairs, which `MAX_OPERATION` bounds, and it needs no table.
+/// Refuse `args` that are not one map: the spec's shape, and the one a kind's
+/// schema will be written against. A key it carries twice, at any depth, is
+/// refused by the walk that reads it (P-015).
 fn a_map(args: &[u8]) -> Result<(), CommandError> {
-    let mut walk = CborReader::new(args);
-    let pairs = walk.map().map_err(|_| CommandError::ArgsNotAMap)?;
-    for seen in 0..pairs {
-        let key = walk.key()?;
-        walk.skip()?;
-        let mut earlier = CborReader::new(args);
-        earlier.map()?;
-        for _ in 0..seen {
-            if earlier.key()? == key {
-                return Err(CommandError::ArgsKeyRepeated(key));
-            }
-            earlier.skip()?;
-        }
-    }
-    walk.finish()?;
+    let mut probe = CborReader::new(args);
+    probe.map().map_err(|_| CommandError::ArgsNotAMap)?;
     Ok(())
 }
 
@@ -326,8 +309,6 @@ pub enum CommandError {
     UnknownOutcome(u8),
     /// `args` is not a map.
     ArgsNotAMap,
-    /// `args` carries this key twice (P-015).
-    ArgsKeyRepeated(i64),
     /// The CBOR underneath was refused.
     Cbor(CborError),
 }
@@ -350,7 +331,6 @@ impl CommandError {
             | Self::UnknownKind(_)
             | Self::UnknownOutcome(_)
             | Self::ArgsNotAMap
-            | Self::ArgsKeyRepeated(_)
             | Self::Cbor(_) => Refusal::Client(ErrorCode::MalformedFrame),
         }
     }
@@ -364,9 +344,6 @@ impl fmt::Display for CommandError {
             Self::UnknownKind(value) => write!(f, "unallocated command kind {value:#06x}"),
             Self::UnknownOutcome(value) => write!(f, "unallocated Ack outcome {value}"),
             Self::ArgsNotAMap => f.write_str("Command 0x08 args (key 3) is not a map"),
-            Self::ArgsKeyRepeated(key) => {
-                write!(f, "Command 0x08 args (key 3) carries key {key} twice")
-            }
             Self::Cbor(why) => write!(f, "{why}"),
         }
     }
@@ -624,23 +601,26 @@ mod tests {
         assert!(op.encode(&mut [0; 32]).is_err());
     }
 
-    /// P-015 for the one map this body carries unread: a key twice is refused
-    /// on both sides, wherever the copies sit, while unique keys out of order
-    /// are still read, because P-016 binds the encoder and not the receiver.
+    /// P-015 where no decoder reads: `args`, at its top level and inside it,
+    /// and a key this version does not know arriving twice in either body. Each
+    /// is refused on the way in and, for `args`, on the way out, while unique
+    /// keys out of order are still read, because P-016 binds the encoder.
     #[test]
-    fn p_015_args_carrying_a_key_twice_are_refused_both_ways() {
-        for (args, key) in [
-            (&[0xa2, 1, 0, 1, 1][..], 1),
-            (&[0xa3, 1, 0, 2, 0, 1, 1][..], 1),
-            (&[0xa3, 0x20, 0, 2, 0x81, 0, 0x20, 1][..], -1),
-            (&[0xa2, 5, 0xa1, 1, 0, 5, 0][..], 5),
+    fn p_015_a_key_twice_where_nothing_reads_it_is_refused_both_ways() {
+        let repeated = CommandError::Cbor(CborError::RepeatedKey);
+        for args in [
+            &[0xa2, 1, 0, 1, 1][..],
+            &[0xa3, 1, 0, 2, 0, 1, 1],
+            &[0xa3, 0x20, 0, 2, 0x81, 0, 0x20, 1],
+            &[0xa1, 5, 0xa2, 1, 0, 1, 0],
+            &[0xa1, 5, 0x81, 0xa2, 2, 0, 2, 1],
         ] {
             let mut bytes = [0; 32];
             bytes[..8].copy_from_slice(&[0xa3, 1, 7, 2, 0x19, 1, 1, 3]);
             bytes[8..8 + args.len()].copy_from_slice(args);
             assert_eq!(
                 CommandOperation::decode(&bytes[..8 + args.len()]),
-                Err(CommandError::ArgsKeyRepeated(key)),
+                Err(repeated),
                 "{args:02x?}"
             );
             let op = CommandOperation {
@@ -648,16 +628,26 @@ mod tests {
                 kind: CommandKind::StartGenerator,
                 args,
             };
-            assert_eq!(
-                op.encode(&mut [0; 32]),
-                Err(CommandError::ArgsKeyRepeated(key))
-            );
+            assert_eq!(op.encode(&mut [0; 32]), Err(repeated), "{args:02x?}");
         }
+        assert_eq!(
+            CommandOperation::decode(&[0xa5, 1, 7, 2, 0x19, 1, 1, 3, 0xa0, 4, 0, 4, 1]),
+            Err(repeated)
+        );
+        assert_eq!(
+            CommandOperation::decode(&[0xa5, 4, 0, 1, 7, 2, 0x19, 1, 1, 4, 0, 3, 0xa0]),
+            Err(repeated)
+        );
+        assert_eq!(
+            CommandAck::decode(&[0xa5, 1, 7, 2, 1, 3, 0x60, 4, 0, 4, 1]),
+            Err(repeated)
+        );
         let unsorted = [0xa3, 1, 7, 2, 0x19, 1, 1, 3, 0xa2, 2, 0, 1, 1];
         assert_eq!(
             CommandOperation::decode(&unsorted).map(|op| op.args),
             Ok(&unsorted[8..])
         );
+        assert!(CommandOperation::decode(&[0xa4, 4, 0, 1, 7, 2, 0x19, 1, 1, 3, 0xa0]).is_ok());
     }
 
     /// A `detail` past the cap is refused rather than truncated, because a
@@ -741,7 +731,6 @@ mod tests {
             CommandError::UnknownKind(0),
             CommandError::UnknownOutcome(0),
             CommandError::ArgsNotAMap,
-            CommandError::ArgsKeyRepeated(-1),
             CommandError::Cbor(CborError::WrongType),
         ];
         Rendering::<100>::each_says_something_of_its_own(&errors);
