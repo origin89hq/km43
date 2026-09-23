@@ -243,12 +243,9 @@ fn shaped(body: &[u8]) -> Result<(), EventError> {
     if body.len() > MAX_EVENT_BODY {
         return Err(EventError::BodyTooLong(body.len()));
     }
+    CborReader::new(body).map()?;
     let mut cbor = CborReader::new(body);
-    let pairs = cbor.map()?;
-    for _ in 0..pairs {
-        cbor.key()?;
-        cbor.skip()?;
-    }
+    cbor.skip()?;
     cbor.finish()?;
     Ok(())
 }
@@ -508,6 +505,28 @@ mod tests {
                 Err(EventError::Cbor(CborError::WrongType)),
                 "{body:?} carried as a body"
             );
+        }
+    }
+
+    /// P-015 must hold when construction succeeds, before encoding is attempted.
+    #[test]
+    fn p_015_event_construction_refuses_repeated_body_keys() {
+        for body in [
+            &[0xa2, 1, 0, 1, 1][..],
+            &[0xa2, 1, 0, 0x18, 1, 1][..],
+            &[0xa1, 1, 0xa2, 2, 0, 2, 1][..],
+        ] {
+            assert_eq!(
+                Event::new(LogSeq(1), None, EventKind::RECORDS_DROPPED, body),
+                Err(EventError::Cbor(CborError::DuplicateKey))
+            );
+        }
+        for body in [&[0xa0][..], &[0xa2, 2, 0, 1, 1][..]] {
+            let event = Event::new(LogSeq(1), None, EventKind::RECORDS_DROPPED, body)
+                .expect("unique keys remain valid, even out of order");
+            assert_eq!(event.body(), body);
+            let mut dst = [0; SCRATCH];
+            assert!(event.encode(&mut dst).is_ok());
         }
     }
 
