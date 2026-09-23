@@ -326,6 +326,10 @@ pub enum LinkError {
     CountryNotTwoBytes(usize),
     /// A `clear` carrying an `ssid` or a `psk`, which L-131 forbids.
     ClearCarriedCredentials,
+    /// A written network operation used the unwritten section version.
+    ZeroNetworkVersion,
+    /// An unwritten clear carried radio metadata absent from its master.
+    UnwrittenClearCarriedMetadata,
     /// A `digest` that is not the 32 bytes a SHA-256 is. Carried rather than
     /// padded or cut: a digest of any other length matches no image, and an
     /// `authorise` built on one is a release nothing can ever install.
@@ -377,6 +381,10 @@ impl fmt::Display for LinkError {
             Self::ClearCarriedCredentials => {
                 f.write_str("a clear carried credentials, which is what it exists to remove")
             }
+            Self::ZeroNetworkVersion => f.write_str("a written network version is zero"),
+            Self::UnwrittenClearCarriedMetadata => {
+                f.write_str("an unwritten clear carried radio metadata")
+            }
             Self::DigestNotSha256(len) => {
                 write!(f, "a digest of {len} bytes is not a SHA-256")
             }
@@ -417,7 +425,7 @@ pub struct LinkUp<'a> {
     /// them (L-034).
     pub hw: &'a str,
     /// Key 7, comms only: the version of the last `NetConfig` it stored, a
-    /// clear included, and 0 only if it was never given one (L-132).
+    /// clear included; 0 for an empty cache or stored unwritten clear (L-132).
     pub net_version: Option<u32>,
 }
 
@@ -927,18 +935,8 @@ impl CloseReport {
     }
 }
 
-/// `NetConfig 0x65` — the controller handing the comms processor the network to
-/// join, or telling it to forget one.
-///
-/// **A `clear` carries neither the passphrase nor the network name (L-131).**
-/// The passphrase for the obvious reason: putting it on the internal link one
-/// more time to accomplish its own deletion is the opposite of deleting it. The
-/// name for a duller one — a controller sending a clear may hold no network to
-/// name, and an empty string in that field would be a value meaning *no
-/// network* rather than the absence of a field.
-///
-/// So the two shapes are two variants rather than one struct with four options,
-/// and a `clear` that carries credentials is not something a caller can build.
+/// The controller's network master, including an explicitly unwritten section.
+/// Clears carry no credentials; an unwritten clear also carries no radio metadata.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum NetChange<'a> {
     /// Join this network.
@@ -954,7 +952,10 @@ pub enum NetChange<'a> {
         /// Key 6, at most [`MAX_LINK_TEXT`].
         hostname: &'a str,
     },
-    /// Forget whatever is stored.
+    /// Forget a foreign cache when the master section has never been written.
+    /// Encodes `clear` at version zero without country or hostname (L-133).
+    ClearUnwritten,
+    /// Forget credentials at a nonzero, written master version.
     Clear {
         /// Key 2.
         version: u32,
@@ -970,6 +971,7 @@ pub enum NetChange<'a> {
 impl fmt::Debug for NetChange<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::ClearUnwritten => f.write_str("ClearUnwritten"),
             Self::Set {
                 version,
                 ssid,
@@ -1005,62 +1007,63 @@ pub(crate) const PSK_LONGEST: usize = 63;
 pub(crate) const COUNTRY_BYTES: usize = 2;
 
 impl<'a> NetChange<'a> {
-    /// # Errors
-    /// A passphrase outside L-131's bounds, a country that is not two bytes, a
-    /// text field past the cap, or a `dst` too small.
+    /// Rejects invalid credentials, metadata, or a zero written version before
+    /// encoding. An unwritten clear needs only its operation and version.
     pub fn write(&self, header: LinkHeader, dst: &mut [u8]) -> Result<usize, LinkError> {
-        let (op, version, country, hostname) = match self {
+        let (op, version, metadata, keys) = match self {
+            Self::ClearUnwritten => (NetConfigOp::Clear, 0, None, 2),
             Self::Set {
                 version,
+                ssid,
+                psk,
                 country,
                 hostname,
-                ..
-            } => (NetConfigOp::Set, version, country, hostname),
-            Self::Clear {
-                version,
-                country,
-                hostname,
-            } => (NetConfigOp::Clear, version, country, hostname),
-        };
-        if country.len() != COUNTRY_BYTES {
-            return Err(LinkError::CountryNotTwoBytes(country.len()));
-        }
-        bounded(LinkField::Hostname, hostname)?;
-
-        let keys = match self {
-            Self::Set { ssid, psk, .. } => {
+            } => {
                 bounded(LinkField::Ssid, ssid)?;
                 if psk.len() < PSK_SHORTEST || psk.len() > PSK_LONGEST {
                     return Err(LinkError::PassphraseLength(psk.len()));
                 }
-                6
+                (NetConfigOp::Set, *version, Some((*country, *hostname)), 6)
             }
-            Self::Clear { .. } => 4,
+            Self::Clear {
+                version,
+                country,
+                hostname,
+            } => (NetConfigOp::Clear, *version, Some((*country, *hostname)), 4),
         };
-
+        if let Some((country, hostname)) = metadata {
+            if version == 0 {
+                return Err(LinkError::ZeroNetworkVersion);
+            }
+            if country.len() != COUNTRY_BYTES {
+                return Err(LinkError::CountryNotTwoBytes(country.len()));
+            }
+            bounded(LinkField::Hostname, hostname)?;
+        }
         let mut cbor = header
             .write(keys, dst)
             .map_err(|_| LinkError::Cbor(CborError::DestinationTooSmall))?;
         cbor.key(1)?;
         cbor.u64(u64::from(op as u8))?;
         cbor.key(2)?;
-        cbor.u64(u64::from(*version))?;
+        cbor.u64(u64::from(version))?;
         if let Self::Set { ssid, psk, .. } = self {
             cbor.key(3)?;
             cbor.text(ssid)?;
             cbor.key(4)?;
             cbor.text(psk)?;
         }
-        cbor.key(5)?;
-        cbor.text(country)?;
-        cbor.key(6)?;
-        cbor.text(hostname)?;
+        if let Some((country, hostname)) = metadata {
+            cbor.key(5)?;
+            cbor.text(country)?;
+            cbor.key(6)?;
+            cbor.text(hostname)?;
+        }
         Ok(cbor.finish()?)
     }
 
-    /// # Errors
-    /// A `clear` carrying credentials, an `op` this version does not allocate, a
-    /// key absent, or CBOR that will not read.
+    /// Refuses credentials on any clear and metadata on an unwritten clear.
+    /// Written operations require a nonzero version and both metadata fields.
     pub fn decode(envelope: LinkEnvelope<'a>) -> Result<Self, LinkError> {
         let pairs = envelope.keys();
         let mut body = envelope.into_body();
@@ -1089,6 +1092,21 @@ impl<'a> NetChange<'a> {
         body.finish()?;
 
         let version = version.ok_or(LinkError::Missing(LinkField::NetVersion))?;
+        let op = op.ok_or(LinkError::Missing(LinkField::Op))?;
+        if op == NetConfigOp::Clear {
+            if ssid.is_some() || psk.is_some() {
+                return Err(LinkError::ClearCarriedCredentials);
+            }
+            if version == 0 {
+                if country.is_some() || hostname.is_some() {
+                    return Err(LinkError::UnwrittenClearCarriedMetadata);
+                }
+                return Ok(Self::ClearUnwritten);
+            }
+        }
+        if version == 0 {
+            return Err(LinkError::ZeroNetworkVersion);
+        }
         let country = country.ok_or(LinkError::Missing(LinkField::Country))?;
         if country.len() != COUNTRY_BYTES {
             return Err(LinkError::CountryNotTwoBytes(country.len()));
@@ -1098,7 +1116,7 @@ impl<'a> NetChange<'a> {
             hostname.ok_or(LinkError::Missing(LinkField::Hostname))?,
         )?;
 
-        match op.ok_or(LinkError::Missing(LinkField::Op))? {
+        match op {
             NetConfigOp::Set => {
                 let psk = psk.ok_or(LinkError::Missing(LinkField::Psk))?;
                 if psk.len() < PSK_SHORTEST || psk.len() > PSK_LONGEST {
@@ -1115,20 +1133,11 @@ impl<'a> NetChange<'a> {
                     hostname,
                 })
             }
-            // **Refused, not ignored.** A `clear` that arrived carrying a
-            // passphrase already put it on the link; reading past it would make
-            // this end complicit in the thing L-131 forbids, and the sender is
-            // the one that needs to hear about it.
-            NetConfigOp::Clear => {
-                if ssid.is_some() || psk.is_some() {
-                    return Err(LinkError::ClearCarriedCredentials);
-                }
-                Ok(Self::Clear {
-                    version,
-                    country,
-                    hostname,
-                })
-            }
+            NetConfigOp::Clear => Ok(Self::Clear {
+                version,
+                country,
+                hostname,
+            }),
         }
     }
 }
@@ -1394,26 +1403,16 @@ impl ClientDownAck {
     }
 }
 
-/// `NetConfigAck 0xE5` — what the comms processor stored, and what it now
-/// holds.
-///
-/// **The version is not the one it was sent** (L-132). It is what is in NVS
-/// after the attempt, and 0 is the honest answer from a board never given a
-/// network — the controller decides whether to push by comparing it, so an ack
-/// that echoed the offered version would stop the pushes to a board with no
-/// credentials on it. A stored `clear` is held at the version it carried and
-/// reported as such: a board that answered 0 after a clear would be sent the
-/// same clear on every link-up for the life of the unit.
+/// The outcome and version actually persisted after a network change (L-132).
+/// Echoing an offered version after a failed write would stop the controller's
+/// retries; zero means an empty cache or a durably stored unwritten clear.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct NetVerdict {
     /// Key 1.
     pub outcome: NetConfig,
-    /// Key 2, the version of what it now holds, a clear included. **0 only
-    /// when it was never given a network**, and never defaulted — an absent
-    /// version read as 0 is a board that failed to store reporting itself
-    /// never provisioned, which happens to be right for the wrong reason and
-    /// stops being right the moment a write fails over an old credential.
+    /// The persisted version, never defaulted when absent. Ordinary clears
+    /// retain their nonzero version; an unwritten clear stores zero.
     pub version: u32,
 }
 
@@ -2245,12 +2244,12 @@ mod tests {
         assert_eq!(reported, 2, "the ack carries the version of the clear");
         assert_ne!(
             reported, 0,
-            "0 is a board never given a network, not this one"
+            "an ordinary clear preserves its written version"
         );
     }
 
     /// **An absent version is not 0.** They look the same and they are opposite
-    /// claims: 0 is a board saying it was never provisioned, and absent is a
+    /// claims: 0 is an unwritten master state, and absent is a
     /// board that did not say. Read as 0, a failed write over an existing
     /// credential reports a board nobody provisioned — right by accident until
     /// the moment it matters.

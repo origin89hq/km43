@@ -337,7 +337,7 @@ LinkUp  0x60  ·  LinkUp  0xE0
   6: hw               text    ≤ 32 bytes, board name and revision (L-034)
   7: net_version      u32     *optional*, comms only: the version of the last
                               `NetConfig` it stored, a clear included; 0 if it
-                              was never given one
+                              has no written master (L-132)
 ```
 
 Request and response carry the same fields, except field 7, which only the comms
@@ -826,13 +826,13 @@ NetConfig  0x65
   2: version      u32     the controller's config version for this section
   3: ssid         text    ≤ 32 bytes, omitted when op = clear
   4: psk          text    8–63 bytes, omitted when op = clear
-  5: country      text    exactly 2 bytes, ISO 3166-1 alpha-2
-  6: hostname     text    ≤ 32 bytes
+  5: country      text    exactly 2 bytes, ISO 3166-1 alpha-2; omitted for unwritten clear
+  6: hostname     text    ≤ 32 bytes; omitted for unwritten clear
 
 NetConfigAck  0xE5
   1: outcome      u8      1 stored · 2 rejected_invalid · 3 nvs_write_failed
   2: version      u32     the version of what it now holds, a clear included;
-                          0 if it was never given a network
+                          0 for an unwritten master or a stored unwritten clear
 ```
 
 **L-131** — A `NetConfig` with `op = clear` MUST omit both `psk` and `ssid`, and
@@ -847,23 +847,16 @@ anything outside it is a credential no radio can use — refused here with
 `rejected_invalid` rather than at association, where the only symptom is a board
 that never comes on the air.
 
-**L-132** — `NetConfigAck` MUST report in `version` the version of the
-`NetConfig` the comms processor now holds, a stored `clear` included, and MUST
-report 0 only when it was never given a network. It is the other end of the push
-rule below: the controller decides whether to push by comparing the version the
-comms processor reports against its own, so a comms processor that acknowledges a
-version it did not store is a controller that stops pushing to a board with no
-credentials on it. Zero is the honest answer from a board with an empty NVS, and
-it is what gets it provisioned.
+**L-132** — `NetConfigAck` and `LinkUp.net_version` MUST report the version
+persisted in NVS, including a stored clear. A successful unwritten clear MUST
+persist the absence of the network section and report 0, even if the module
+previously held another unit's network. A successful ordinary clear MUST store
+and report its nonzero version. An empty NVS also reports 0. Zero describes the
+current unwritten master state, not the module's provisioning history.
 
-A clear is stored at the version it carried, not as an empty NVS. The version is
-one monotonic fact both ends share, and a clear has to move it or a cache still
-holding the old network is never told (L-131, L-135). A comms processor that
-reported 0 after a clear would be pushed the same clear on every `LinkUp` for the
-life of the unit: the controller holds version *n* and nothing, the cache
-reports 0, and L-133 compares for *different*. Reporting *n* ends that; 0 then
-means one thing, *never provisioned*, which is the case L-133's rationale was
-written for.
+Reporting the version actually stored lets the controller retry a failed write.
+Reporting 0 after an ordinary clear would instead repeat that clear forever:
+the controller holds version *n* and the cache reports 0.
 
 **L-133** — The controller MUST push `NetConfig` after every `LinkUp` whose
 `net_version` does not equal its own version, and MUST NOT withhold the push
@@ -873,18 +866,38 @@ reports some larger number and gets overwritten anyway, because those credential
 belong to somebody else's site and a version comparison is not a claim about who
 is right. Comparing for newer is what turns a board swap into a drive.
 
-**L-134** — `NetConfig` MUST carry `country` as exactly two bytes of ISO 3166-1
+When the versions differ and the master section has never been written (P-108),
+the controller MUST
+send `op = clear`, `version = 0`, with keys 3 through 6 omitted. This unwritten
+clear MUST erase cached credentials, country, and hostname, stop Wi-Fi station
+association and any Wi-Fi access point, and keep Wi-Fi transmission disabled
+until a subsequent valid nonzero `NetConfig` supplies radio metadata. It MUST
+NOT reuse the foreign cache's country or invent one. BLE and USB remain
+available under their existing authorization rules. Applying the clear again
+MUST be safe. `stored` MUST be sent only after erasure is durable; subsequent
+`LinkUp` reports 0, ending the version mismatch.
+
+A receiver MUST reject a version-zero `set`, an unwritten clear carrying any
+of keys 3 through 6, or a nonzero clear missing country or hostname with
+`rejected_invalid`, without changing its cache or radio state. Unknown extension
+keys retain the ordinary unknown-key behavior. Zero is reserved for the unwritten
+clear; ordinary sets and factory clears use the written section's nonzero version.
+
+**L-134** — A nonzero-version `NetConfig` MUST carry `country` as exactly two bytes of ISO 3166-1
 alpha-2. It is on the wire rather than in a firmware build because a radio in the wrong
 regulatory domain is an illegal transmitter, and the domain is a property of
 where the box is installed, not of the image somebody flashed — built into
 firmware, a board that is legal in one country is contraband in the next and
 nobody finds out from the device.
 
-**L-135** — The controller MUST send `NetConfig` with `op = clear` on a factory
-reset, so a passphrase does not survive on a board that is about to be pulled and
+**L-135** — On a factory reset of a written network section, the controller
+MUST send `NetConfig` with `op = clear` at the incremented, nonzero section
+version, retaining the section's country and hostname, so a passphrase does not
+survive on a board that is about to be pulled and
 shipped somewhere. The controller is the only side that knows a reset happened,
 so if it does not say so the credential stays where nobody will think to look for
-it.
+it. If the master section is unwritten, the controller MUST instead send the
+unwritten clear defined by L-133 without creating a network section.
 
 **L-136** — The comms processor MUST cache at most one network, and a `NetConfig`
 with `op = set` MUST replace what it holds rather than adding to it. This is a
@@ -899,6 +912,14 @@ board with worn-out NVS otherwise associates fine until its next reboot and then
 goes dark for no visible reason. Staying on the air with the RAM copy keeps the
 site reachable now; the ack and the log entry are what tell somebody the flash is
 finished, before the trip rather than after it.
+
+For an unwritten clear, an erase failure MUST still clear the RAM copy and stop
+Wi-Fi transmission. It MUST NOT resume the foreign network. The acknowledgement
+MUST be `nvs_write_failed` with the previously persisted version, and `LinkUp`
+MUST continue to report that version until erasure succeeds. The controller
+retries the unwritten clear at the next `LinkUp`. After a reboot, the existing
+cached-boot rules apply until the controller resends the clear; an unsuccessful
+erase cannot promise durable removal.
 
 ---
 
@@ -1168,7 +1189,10 @@ executing garbage after a power cut, and no drive short enough to fix it.
 
 A cached network can be unreachable from the phone at the panel. The provisioning
 access point therefore runs while no network is cached **or** while the controller
-reports an open pairing window. This message changes reachability only: P-066's
+reports an open pairing window, provided valid radio metadata is available.
+The unwritten-clear Wi-Fi shutdown rule (L-133) takes precedence, including
+across reboot after successful erasure; a pairing report supplies no regulatory
+country. This message changes reachability only: P-066's
 physical act and the controller's proof checks still decide whether enrolment is
 allowed. It carries no credentials and cannot open the controller's window.
 
@@ -1227,8 +1251,8 @@ MUST first transmit client responses already queued ahead of that report, allowi
 at most 500 ms to drain them and accepting no new access-point connections during
 that drain. This lets the phone receive the successful `Pair` response before its
 transport disappears; it does not delay the controller closing enrolment.
-After the drain, the access point stays up only if no network is cached; cached
-credentials are neither cleared nor replaced by this message.
+After the drain, the access point stays up only if no network is cached and valid
+radio metadata is available; cached credentials are neither cleared nor replaced by this message.
 The firmware implements the radio and window lifecycle in
 [firmware#11](https://github.com/origin89hq/firmware/issues/11).
 
