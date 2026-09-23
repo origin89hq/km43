@@ -1187,7 +1187,11 @@ ever makes fails as stale and recovery is a four-hour drive.
 **P-066** — A physical act at the controller MUST gate enrolment: the pushbutton
 on a board that has one, otherwise the selector gesture the controller's design
 defines under *Auto / off / manual* ([CONTROLLER-V1](https://github.com/origin89hq/origin89/blob/main/docs/CONTROLLER-V1.md)). No message opens the window. Knowing the printed
-secret is not by itself sufficient. The window is 120 seconds. A `Pair`
+secret is not by itself sufficient. The window is 120 seconds. The controller
+reports its open and closed state to
+the comms processor using [PairingWindow](protocol/LINK.md#pairing-reachability)
+so a phone can reach it without the house network; that report grants no
+enrolment permission. A `Pair`
 arriving with no window open MUST be answered with `Pair 0x8B` outcome 2
 `window_closed` and `client_id = 0`, carrying the MAC above — not with an
 unauthenticated error. A refusal the comms processor can forge is a refusal
