@@ -1,16 +1,27 @@
 /** Bounded BLE values; adapters own discovery, FIFO stack admission and connection cleanup. */
-import { BLE_INDEX_MASK, BLE_LAST_FLAG } from "./generated.js";
+import {
+  BLE_INDEX_MASK,
+  BLE_LAST_FLAG,
+  BLE_MAX_MTU,
+  BLE_MAX_VALUE,
+  BLE_MIN_MTU,
+  BLE_TIMEOUT_MS,
+  MAX_PAYLOAD,
+} from "./generated.js";
 
-/** The entire encoded envelope must fit this buffer. */
-export const BLE_MAX_PAYLOAD = 1024;
-/** GATT caps values even when ATT negotiates a larger MTU. */
-export const BLE_MAX_VALUE = 512;
-/** Incomplete reception expires at this inactivity boundary. */
-export const BLE_TIMEOUT_MS = 5000;
+export {
+  BLE_MAX_MTU,
+  BLE_MAX_VALUE,
+  BLE_MIN_MTU,
+  BLE_TIMEOUT_MS,
+  BLE_TX_CAPACITY,
+  MAX_PAYLOAD as BLE_MAX_PAYLOAD,
+} from "./generated.js";
 
 /** Transport errors never stand for controller authorization or remote receipt. */
 export type BleFailure =
   | "mtu"
+  | "value_limit"
   | "length"
   | "sequence"
   | "busy"
@@ -35,14 +46,51 @@ export type BleReceiveResult =
 
 /** Validates an ATT MTU, returning a value length including the two KM43 bytes. */
 export function bleValueLength(mtu: number): number | undefined {
-  return Number.isInteger(mtu) && mtu >= 23 && mtu <= 517
+  return Number.isInteger(mtu) && mtu >= BLE_MIN_MTU && mtu <= BLE_MAX_MTU
     ? Math.min(mtu - 3, BLE_MAX_VALUE)
     : undefined;
 }
 
+/** A selected transmit value length that remains fixed for one queued message. */
+export class BleValueLimit {
+  readonly #length: number;
+
+  private constructor(length: number) {
+    this.#length = length;
+  }
+
+  /** Use a platform's value length directly, including the two KM43 header bytes. */
+  static fromValueLength(length: number): BleValueLimit | undefined {
+    if (
+      !Number.isInteger(length) ||
+      length < BLE_MIN_MTU - 3 ||
+      length > BLE_MAX_VALUE
+    )
+      return undefined;
+    return new BleValueLimit(length);
+  }
+
+  /** Validate a selected length against a known MTU, or use its maximum when omitted. */
+  static fromMtu(
+    mtu: number,
+    selectedLength?: number,
+  ): BleValueLimit | undefined {
+    const maximum = bleValueLength(mtu);
+    if (maximum === undefined) return undefined;
+    const selected = selectedLength ?? maximum;
+    if (selected > maximum) return undefined;
+    return BleValueLimit.fromValueLength(selected);
+  }
+
+  /** Includes KM43's header; subtract it only when sizing fragment data. */
+  get valueLength(): number {
+    return this.#length;
+  }
+}
+
 /** One assembly per receiving direction; disconnect must reset it. */
 export class BleReceiver {
-  private readonly bytes = new Uint8Array(BLE_MAX_PAYLOAD);
+  private readonly bytes = new Uint8Array(MAX_PAYLOAD);
   private length = 0;
   private active: { id: number; index: number; at: number } | undefined;
 
@@ -86,8 +134,8 @@ export class BleReceiver {
     if (!this.active) this.length = 0;
     const end = this.length + value.length - 2;
     if (
-      end > BLE_MAX_PAYLOAD ||
-      (!last && (end === BLE_MAX_PAYLOAD || index === BLE_INDEX_MASK))
+      end > MAX_PAYLOAD ||
+      (!last && (end === MAX_PAYLOAD || index === BLE_INDEX_MASK))
     ) {
       return this.reject("length");
     }
@@ -122,7 +170,7 @@ export type BleFragmentResult =
 
 /** One owned message slot; a full queue refuses admission without eviction. */
 export class BleSender {
-  private readonly bytes = new Uint8Array(BLE_MAX_PAYLOAD);
+  private readonly bytes = new Uint8Array(MAX_PAYLOAD);
   private nextId = 0;
   private pending:
     | {
@@ -135,18 +183,15 @@ export class BleSender {
     | undefined;
 
   /** Keeps the prior message intact on every refusal. */
-  enqueue(message: Uint8Array, mtu: number): "ok" | BleFailure {
+  enqueue(message: Uint8Array, limit: BleValueLimit): "ok" | BleFailure {
     if (this.pending) return "busy";
-    const limit = bleValueLength(mtu);
-    if (limit === undefined) return "mtu";
-    if (message.length === 0 || message.length > BLE_MAX_PAYLOAD)
-      return "length";
+    if (message.length === 0 || message.length > MAX_PAYLOAD) return "length";
     this.bytes.set(message);
     this.pending = {
       length: message.length,
       offset: 0,
       index: 0,
-      limit,
+      limit: limit.valueLength,
       offered: undefined,
     };
     return "ok";

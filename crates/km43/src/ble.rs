@@ -6,18 +6,10 @@
 //!
 //! cites: P-036, P-037, P-039
 
-use crate::{BLE_INDEX_MASK, BLE_LAST_FLAG, MAX_PAYLOAD};
-
-/// Largest GATT attribute value, even when the negotiated ATT MTU is larger.
-pub const BLE_MAX_VALUE: usize = 512;
-/// Minimum ATT MTU, used until an exchange completes.
-pub const BLE_MIN_MTU: u16 = 23;
-/// Largest ATT MTU this transport accepts.
-pub const BLE_MAX_MTU: u16 = 517;
-/// Inactivity at this boundary discards a partial message.
-pub const BLE_TIMEOUT_MS: u64 = 5000;
-/// One pending message per direction; admission refuses rather than evicts.
-pub const BLE_TX_CAPACITY: usize = 1;
+use crate::{
+    BLE_INDEX_MASK, BLE_LAST_FLAG, BLE_MAX_MTU, BLE_MAX_VALUE, BLE_MIN_MTU, BLE_TIMEOUT_MS,
+    MAX_PAYLOAD,
+};
 
 /// A negotiated ATT MTU, distinct from a platform's maximum value length.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,6 +30,44 @@ impl BleMtu {
     pub fn value_len(self) -> usize {
         usize::from(self.0).saturating_sub(3).min(BLE_MAX_VALUE)
     }
+
+    /// Uses the negotiated maximum when the adapter has no smaller value bound.
+    #[must_use]
+    pub fn value_limit(self) -> BleValueLimit {
+        BleValueLimit(self.value_len())
+    }
+
+    /// Rejects a selected value length that exceeds this connection's ATT budget.
+    pub fn select(self, value_len: usize) -> Result<BleValueLimit, BleError> {
+        if value_len > self.value_len() {
+            return Err(BleError::ValueLimit);
+        }
+        BleValueLimit::new(value_len)
+    }
+}
+
+/// A selected transmit value length, including the two KM43 fragment bytes.
+/// It may be smaller than the negotiated ATT budget and is frozen on enqueue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct BleValueLimit(usize);
+
+impl BleValueLimit {
+    /// Accepts a platform-reported value length without pretending it is an MTU.
+    /// When the ATT MTU is also known, use `BleMtu::select` to check that bound.
+    pub fn new(value_len: usize) -> Result<Self, BleError> {
+        let minimum = usize::from(BLE_MIN_MTU).saturating_sub(3);
+        if !(minimum..=BLE_MAX_VALUE).contains(&value_len) {
+            return Err(BleError::ValueLimit);
+        }
+        Ok(Self(value_len))
+    }
+
+    /// Includes KM43's header; subtract it only when sizing fragment data.
+    #[must_use]
+    pub const fn value_len(self) -> usize {
+        self.0
+    }
 }
 
 /// Refusals leave no partially accepted new message in the transmit slot.
@@ -46,6 +76,8 @@ impl BleMtu {
 pub enum BleError {
     /// ATT MTU is outside the supported range.
     Mtu,
+    /// Selected value length is outside GATT or negotiated ATT bounds.
+    ValueLimit,
     /// Empty or oversized message, or malformed fragment value.
     Length,
     /// Fragment continuity was lost; the assembly was discarded.
@@ -168,7 +200,7 @@ struct BlePending {
     len: usize,
     offset: usize,
     index: u8,
-    mtu: BleMtu,
+    limit: BleValueLimit,
     offered: Option<usize>,
 }
 
@@ -190,7 +222,7 @@ impl BleSender {
     }
 
     /// Invalid or busy admission preserves the old message and its ID.
-    pub fn enqueue(&mut self, message: &[u8], mtu: BleMtu) -> Result<(), BleError> {
+    pub fn enqueue(&mut self, message: &[u8], limit: BleValueLimit) -> Result<(), BleError> {
         if self.pending.is_some() {
             return Err(BleError::Busy);
         }
@@ -205,7 +237,7 @@ impl BleSender {
             len: message.len(),
             offset: 0,
             index: 0,
-            mtu,
+            limit,
             offered: None,
         });
         Ok(())
@@ -216,7 +248,7 @@ impl BleSender {
         let pending = self.pending.as_mut().ok_or(BleError::Idle)?;
         let end = pending
             .offset
-            .saturating_add(pending.mtu.value_len().saturating_sub(2))
+            .saturating_add(pending.limit.value_len().saturating_sub(2))
             .min(pending.len);
         let data = self
             .bytes
@@ -259,6 +291,53 @@ mod tests {
     use super::*;
 
     #[test]
+    fn p_037_selected_limit_checks_the_known_mtu_and_value_bounds() {
+        let mtu = BleMtu::new(247).expect("negotiated");
+        assert_eq!(mtu.value_limit().value_len(), 244);
+        for length in [20, 64, 244] {
+            assert_eq!(mtu.select(length).expect("fits").value_len(), length);
+        }
+        for length in [0, 19, 245, usize::MAX] {
+            assert_eq!(mtu.select(length), Err(BleError::ValueLimit));
+        }
+        for length in [20, 512] {
+            assert_eq!(
+                BleValueLimit::new(length)
+                    .expect("platform length")
+                    .value_len(),
+                length
+            );
+        }
+        for length in [0, 19, 513, usize::MAX] {
+            assert_eq!(BleValueLimit::new(length), Err(BleError::ValueLimit));
+        }
+    }
+
+    #[test]
+    fn p_037_platform_limit_stays_fixed_during_backpressure() {
+        let mut tx = BleSender::new();
+        let small = BleValueLimit::new(20).expect("platform limit without an MTU");
+        let large = BleValueLimit::new(64).expect("new platform limit");
+        tx.enqueue(&[7; 40], small).expect("queue");
+        let mut out = [0; BLE_MAX_VALUE];
+        assert_eq!(tx.fragment(&mut out), Ok(20));
+        assert_eq!(tx.enqueue(&[8; 40], large), Err(BleError::Busy));
+        assert_eq!(tx.fragment(&mut out), Ok(20));
+        assert_eq!(&out[..2], &[0, 0]);
+        tx.accepted().expect("first value admitted");
+        assert_eq!(tx.fragment(&mut out), Ok(20));
+        assert_eq!(&out[..2], &[0, 1]);
+        tx.accepted().expect("second value admitted");
+        assert_eq!(tx.fragment(&mut out), Ok(6));
+        assert_eq!(&out[..2], &[0, BLE_LAST_FLAG | 2]);
+        tx.accepted().expect("last value admitted");
+        tx.enqueue(&[8; 40], large)
+            .expect("next message may use a different limit");
+        assert_eq!(tx.fragment(&mut out), Ok(42));
+        assert_eq!(&out[..2], &[1, BLE_LAST_FLAG]);
+    }
+
+    #[test]
     fn p_037_mtu_rejects_outside_range_and_caps_attribute_length() {
         for invalid in [0, 22, 518, u16::MAX] {
             assert_eq!(BleMtu::new(invalid), Err(BleError::Mtu));
@@ -284,8 +363,8 @@ mod tests {
             Ok(Some(&[1, 3][..]))
         );
         let mut tx = BleSender::new();
-        tx.enqueue(&[1], mtu).expect("queue");
-        assert_eq!(tx.enqueue(&[2], mtu), Err(BleError::Busy));
+        tx.enqueue(&[1], mtu.value_limit()).expect("queue");
+        assert_eq!(tx.enqueue(&[2], mtu.value_limit()), Err(BleError::Busy));
         assert_eq!(
             second.receive(&[0, BLE_LAST_FLAG, 4], mtu, 2),
             Ok(Some(&[4][..]))
@@ -300,7 +379,8 @@ mod tests {
             for len in 1..=MAX_PAYLOAD {
                 let mut tx = BleSender::new();
                 let mut rx = BleReceiver::new();
-                tx.enqueue(&message[..len], mtu).expect("fits");
+                tx.enqueue(&message[..len], mtu.value_limit())
+                    .expect("fits");
                 let mut completed = false;
                 let mut out = [0; BLE_MAX_VALUE];
                 for _ in 0..128 {

@@ -135,11 +135,14 @@ impl Codegen {
 
     fn sections(&self) -> Vec<Section> {
         let mut ble = String::from("| Name | Value |\n|---|---|\n");
-        for (name, uuid) in self.registry.ble.uuids() {
+        for (name, uuid, _) in self.registry.ble.uuids() {
             let _ = writeln!(ble, "| `{name}` | `{uuid}` |");
         }
-        for (name, value) in self.registry.ble.flags() {
+        for (name, value, _) in self.registry.ble.flags() {
             let _ = writeln!(ble, "| `{name}` | `{value:#04x}` |");
+        }
+        for limit in self.registry.transport_limits() {
+            let _ = writeln!(ble, "| `{}` | `{}` |", limit.name, limit.value);
         }
         let mut out = vec![
             Section {

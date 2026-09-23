@@ -100,7 +100,8 @@ is not yet written. A status that forbids a MUST is a status that is wrong.
 ## BLE GATT identifiers
 
 Private UUIDs in canonical text form. Discover handles by UUID on each connection;
-see PROTOCOL.md's BLE GATT section for properties and byte order.
+see PROTOCOL.md's BLE GATT section for properties and byte order. The table
+also carries the shared envelope budget and BLE transport limits.
 
 | Name | Value |
 |---|---|
@@ -109,6 +110,12 @@ see PROTOCOL.md's BLE GATT section for properties and byte order.
 | `BLE_TX_UUID` | `ab43e89a-7c21-4a5d-9b62-19e430000003` |
 | `BLE_LAST_FLAG` | `0x80` |
 | `BLE_INDEX_MASK` | `0x7f` |
+| `MAX_PAYLOAD` | `1024` |
+| `BLE_MIN_MTU` | `23` |
+| `BLE_MAX_MTU` | `517` |
+| `BLE_MAX_VALUE` | `512` |
+| `BLE_TIMEOUT_MS` | `5000` |
+| `BLE_TX_CAPACITY` | `1` |
 
 ## Message types — `u8`
 

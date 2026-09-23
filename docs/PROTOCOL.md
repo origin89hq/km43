@@ -742,7 +742,9 @@ lifecycle. Opposite directions are independent, so uploading does not block
 reassembly of notifications.
 
 `vectors/v1.json`'s `ble` action trace supplies `action`, `mtu`, `now_ms`, hex
-`input`, expected outcome and hex `output`. `reset` labels a new test case;
+`input`, expected outcome and hex `output`. An optional `value_limit` selects
+a smaller transmit value length without changing the negotiated receive MTU;
+when absent, the sender uses the MTU-derived maximum. `reset` labels a new test case;
 `disconnect` resets both directions; `fragment` offers bytes without advancing;
 `accepted` models successful FIFO admission; `small_buffer` offers a two-byte
 output buffer; `expire` drives the receive timer. Payload stress cases use opaque

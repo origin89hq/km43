@@ -225,29 +225,59 @@ pub struct Ble {
     pub last_flag: u8,
     /// Selects the consecutive index within one envelope.
     pub index_mask: u8,
+    /// Initial ATT MTU before negotiation completes.
+    pub min_mtu: u16,
+    /// Largest negotiated ATT MTU supported by the transport.
+    pub max_mtu: u16,
+    /// Attribute values cannot exceed this even at the largest MTU.
+    pub max_value: u16,
+    /// Monotonic inactivity threshold for partial messages.
+    pub timeout_ms: u16,
+    /// Full-message admission refuses beyond this bound.
+    pub tx_capacity: u8,
 }
 
 impl Ble {
     /// Stable binding names shared by both generated languages.
-    pub fn uuids(&self) -> [(&str, &str); 3] {
+    pub fn uuids(&self) -> [(&str, &str, &str); 3] {
         [
-            ("BLE_SERVICE_UUID", &self.service_uuid),
-            ("BLE_RX_UUID", &self.rx_uuid),
-            ("BLE_TX_UUID", &self.tx_uuid),
+            (
+                "BLE_SERVICE_UUID",
+                &self.service_uuid,
+                "Discover this service by UUID on every connection; names and addresses do not establish KM43 identity.",
+            ),
+            (
+                "BLE_RX_UUID",
+                &self.rx_uuid,
+                "Discover this Write Without Response characteristic by UUID; handles are connection-local.",
+            ),
+            (
+                "BLE_TX_UUID",
+                &self.tx_uuid,
+                "Enable notifications on this characteristic before sending Discover so controller replies can arrive.",
+            ),
         ]
     }
 
     /// Header masks emitted beside the service identifiers.
-    pub fn flags(&self) -> [(&str, u8); 2] {
+    pub fn flags(&self) -> [(&str, u8, &str); 2] {
         [
-            ("BLE_LAST_FLAG", self.last_flag),
-            ("BLE_INDEX_MASK", self.index_mask),
+            (
+                "BLE_LAST_FLAG",
+                self.last_flag,
+                "Set this bit only on the final fragment; a receiver must not deliver an unfinished envelope.",
+            ),
+            (
+                "BLE_INDEX_MASK",
+                self.index_mask,
+                "Mask out the final flag before checking consecutive indices; a gap or duplicate discards the assembly.",
+            ),
         ]
     }
 
     fn validate(&self) -> Result<()> {
         let mut seen = BTreeSet::new();
-        for (name, uuid) in self.uuids() {
+        for (name, uuid, _) in self.uuids() {
             if uuid.len() != 36
                 || !uuid.bytes().enumerate().all(|(i, b)| {
                     if matches!(i, 8 | 13 | 18 | 23) {
@@ -268,8 +298,29 @@ impl Ble {
     }
 }
 
+/// Bounds shared by each transport rather than allocated again in client code.
+#[derive(Clone, Deserialize)]
+pub struct Limits {
+    /// Complete encoded envelopes must fit this byte budget.
+    pub max_payload: u16,
+}
+
+/// One limit rendered into both languages with the caller's constraint attached.
+pub struct TransportLimit {
+    /// Public identifier used by consumers.
+    pub name: &'static str,
+    /// Rust width appropriate for buffers, MTUs or monotonic time.
+    pub rust_type: &'static str,
+    /// Registry value widened without losing any source bits.
+    pub value: u64,
+    /// Why an adapter must respect the limit.
+    pub doc: &'static str,
+}
+
 #[derive(Clone, Deserialize)]
 pub struct Registry {
+    /// Envelope bounds used by Rust and TypeScript.
+    pub limits: Limits,
     /// The client-visible BLE transport allocation.
     pub ble: Ble,
     pub meta: Meta,
@@ -635,6 +686,48 @@ impl Range {
 }
 
 impl Registry {
+    /// Keep transport capacities and their documentation identical in both bindings.
+    pub fn transport_limits(&self) -> [TransportLimit; 6] {
+        [
+            TransportLimit {
+                name: "MAX_PAYLOAD",
+                rust_type: "usize",
+                value: u64::from(self.limits.max_payload),
+                doc: "An encoded envelope larger than this is refused; size receive buffers for the whole envelope, not just its body.",
+            },
+            TransportLimit {
+                name: "BLE_MIN_MTU",
+                rust_type: "u16",
+                value: u64::from(self.ble.min_mtu),
+                doc: "Use this ATT MTU until negotiation completes; sending larger values early can lose the first request.",
+            },
+            TransportLimit {
+                name: "BLE_MAX_MTU",
+                rust_type: "u16",
+                value: u64::from(self.ble.max_mtu),
+                doc: "Reject ATT MTUs above this transport's supported range before deriving fragment sizes.",
+            },
+            TransportLimit {
+                name: "BLE_MAX_VALUE",
+                rust_type: "usize",
+                value: u64::from(self.ble.max_value),
+                doc: "Cap fragment values at this GATT attribute bound even when the negotiated MTU permits more bytes.",
+            },
+            TransportLimit {
+                name: "BLE_TIMEOUT_MS",
+                rust_type: "u64",
+                value: u64::from(self.ble.timeout_ms),
+                doc: "Discard an incomplete assembly at this inactivity boundary; adapters also close stalled sends at this deadline.",
+            },
+            TransportLimit {
+                name: "BLE_TX_CAPACITY",
+                rust_type: "usize",
+                value: u64::from(self.ble.tx_capacity),
+                doc: "Refuse new messages when this per-direction slot count is occupied; never evict a queued message.",
+            },
+        ]
+    }
+
     /// Beside the crate it generates, not under `docs/`. It is the source the
     /// firmware is built from; the Markdown is a rendering of it.
     pub const PATH: &'static str = "crates/km43/protocol.toml";

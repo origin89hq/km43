@@ -2540,6 +2540,7 @@ fn ble_hex(text: &str) -> Vec<u8> {
 fn ble_status(error: km43::BleError) -> &'static str {
     match error {
         km43::BleError::Mtu => "mtu",
+        km43::BleError::ValueLimit => "value_limit",
         km43::BleError::Length => "length",
         km43::BleError::Sequence => "sequence",
         km43::BleError::Busy => "busy",
@@ -2586,7 +2587,19 @@ fn p_036_p_037_p_039_shared_ble_trace_checks_bytes_faults_and_queue_state() {
                 rx.expire(now);
                 "ok"
             }
-            "enqueue" => tx.enqueue(&input, mtu).map_or_else(ble_status, |()| "ok"),
+            "enqueue" => {
+                let limit = if step.contains("\"value_limit\": ") {
+                    mtu.select(
+                        ble_field(&step, "value_limit")
+                            .parse()
+                            .expect("value length"),
+                    )
+                    .expect("selected limit")
+                } else {
+                    mtu.value_limit()
+                };
+                tx.enqueue(&input, limit).map_or_else(ble_status, |()| "ok")
+            }
             "accepted" => tx.accepted().map_or_else(ble_status, |()| "ok"),
             "fragment" | "small_buffer" => {
                 let size = if action == "small_buffer" {
@@ -2614,7 +2627,7 @@ fn p_036_p_037_p_039_shared_ble_trace_checks_bytes_faults_and_queue_state() {
         assert_eq!(status, expected, "step {steps}: {action}");
         steps += 1;
     }
-    assert_eq!(cases, 18, "a trace case was added or removed");
+    assert_eq!(cases, 21, "a trace case was added or removed");
     assert!(
         steps > 1500,
         "the wrap trace must run through the whole ID space"

@@ -22,12 +22,18 @@ datasetName(MetricKind.DC_VOLTAGE, 0x01, 0x0003); // "battery-voltage"
 ```
 
 The root export contains generated protocol identifiers. `@origin89/km43/ble`
-adds `BleReceiver`, `BleSender` and `bleValueLength` for bounded BLE value
+adds `BleReceiver`, `BleSender`, `BleValueLimit` and `bleValueLength` for bounded BLE value
 fragmentation. It does not decode CBOR or authenticate messages. BLE connection
 or bonding grants no KM43 permission.
 
 For each connection, create one receiver and sender. Pass the negotiated ATT
-MTU (23 until exchange completes). `enqueue` owns a copy and refuses while busy;
+MTU (23 until exchange completes) to the receiver. For transmission, construct a
+`BleValueLimit` with `fromMtu(mtu)` or `fromMtu(mtu, selectedValueLength)`; the
+latter rejects a selection above that MTU's value budget. When the platform
+reports only a value length, use `fromValueLength(length)` after capping it at
+`BLE_MAX_VALUE`. Values include the two KM43 header bytes and must be at least
+20 bytes. `enqueue(message, limit)` freezes the limit for that message, owns a
+copy and refuses while busy;
 `fragment` fills a caller-owned buffer without advancing; call `accepted` only
 when the platform accepts those bytes into its ordered FIFO. Retry the same
 fragment after backpressure. Feed received values and monotonic milliseconds to
@@ -38,8 +44,7 @@ platform queue and old callbacks. The adapter must close a connection after
 
 Discover the generated `BLE_SERVICE_UUID`, `BLE_RX_UUID` and `BLE_TX_UUID`, then
 subscribe before sending Discover. Adapters whose APIs expose value length
-instead of ATT MTU must account for that distinction as specified in
-PROTOCOL.md. Rust and TypeScript tests consume the same `ble` action traces in
+instead of ATT MTU use the value-length constructor; do not invent an MTU. Rust and TypeScript tests consume the same `ble` action traces in
 `docs/protocol/vectors/v1.json`; native phone and radio qualification remains
 tracked by km43#81 and firmware#96. Host trace agreement is not BLE conformance.
 

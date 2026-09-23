@@ -11,14 +11,19 @@ struct Trace {
     steps: Vec<Value>,
     mtu: u16,
     now: u64,
+    value_limit: Option<u16>,
 }
 
 impl Trace {
     fn step(&mut self, action: &str, input: &[u8], expected: &str, output: &[u8]) {
-        self.steps.push(
-            json!({"action": action, "mtu": self.mtu, "now_ms": self.now,
-            "input": hex(input), "expected": expected, "output": hex(output)}),
-        );
+        let mut step = json!({"action": action, "mtu": self.mtu, "now_ms": self.now,
+            "input": hex(input), "expected": expected, "output": hex(output)});
+        if let Some(limit) = self.value_limit
+            && let Some(object) = step.as_object_mut()
+        {
+            object.insert("value_limit".to_owned(), json!(limit));
+        }
+        self.steps.push(step);
     }
 
     fn reset(&mut self, name: &str) {
@@ -73,7 +78,8 @@ impl Trace {
         let chunks = data.chunks(
             usize::from(self.mtu)
                 .saturating_sub(3)
-                .min(512)
+                .min(usize::from(reg.ble.max_value))
+                .min(self.value_limit.map_or(usize::MAX, usize::from))
                 .saturating_sub(2),
         );
         let count = chunks.len();
@@ -98,6 +104,7 @@ impl Trace {
     }
 }
 
+/// Exercises transport decisions independently of either client implementation.
 pub fn build(envelope: &[u8]) -> Result<Value> {
     let reg = Registry::load(&crate::check::repo_root()?)?;
     let last = reg.ble.last_flag;
@@ -105,6 +112,7 @@ pub fn build(envelope: &[u8]) -> Result<Value> {
         steps: Vec::new(),
         mtu: 23,
         now: 0,
+        value_limit: None,
     };
     for mtu in [23, 185, 247, 517] {
         t.mtu = mtu;
@@ -112,6 +120,13 @@ pub fn build(envelope: &[u8]) -> Result<Value> {
         t.transfer(&vec![0x5a; 1024], 0, &reg, true)?;
         t.transfer(envelope, 1, &reg, true)?;
     }
+    for (mtu, limit) in [(247, 20), (247, 64), (517, 100)] {
+        t.mtu = mtu;
+        t.value_limit = Some(limit);
+        t.reset("selected_value_limit_and_backpressure");
+        t.transfer(&vec![0x5a; 1024], 0, &reg, true)?;
+    }
+    t.value_limit = None;
     t.mtu = 23;
     t.reset("missing_fragment");
     t.receive(&[0, 0, 1], "pending", &[]);

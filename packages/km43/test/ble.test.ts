@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { BleReceiver, BleSender, bleValueLength } from "../src/ble.ts";
+import {
+  BleReceiver,
+  BleSender,
+  BleValueLimit,
+  bleValueLength,
+} from "../src/ble.ts";
 import { BLE_LAST_FLAG } from "../src/generated.ts";
 
 function record(value: unknown): Record<string, unknown> {
@@ -60,7 +65,16 @@ test("the published BLE traces agree on bytes, failures and state in both langua
         status = "ok";
         break;
       case "enqueue":
-        status = tx.enqueue(input, mtu);
+        {
+          const limit = BleValueLimit.fromMtu(
+            mtu,
+            step.value_limit === undefined
+              ? undefined
+              : number(step.value_limit),
+          );
+          assert.ok(limit);
+          status = tx.enqueue(input, limit);
+        }
         break;
       case "accepted":
         status = tx.accepted();
@@ -90,14 +104,14 @@ test("the published BLE traces agree on bytes, failures and state in both langua
     }
     assert.equal(status, step.expected, `step ${index}: ${action}`);
   }
-  assert.equal(cases, 18);
+  assert.equal(cases, 21);
   assert.ok(trace.length > 1500);
 });
 
 test("MTU and clock boundaries refuse nonfinite and fractional platform input", () => {
   for (const value of [NaN, Infinity, -1, 22, 23.5, 518]) {
     assert.equal(bleValueLength(value), undefined);
-    assert.equal(new BleSender().enqueue(new Uint8Array([1]), value), "mtu");
+    assert.equal(BleValueLimit.fromMtu(value), undefined);
   }
   assert.equal(bleValueLength(23), 20);
   assert.equal(bleValueLength(247), 244);
@@ -108,4 +122,41 @@ test("MTU and clock boundaries refuse nonfinite and fractional platform input", 
       { status: "length" },
     );
   }
+});
+
+test("selected value lengths reject invalid platform input and respect a known MTU", () => {
+  for (const value of [NaN, Infinity, -1, 0, 19, 20.5, 513]) {
+    assert.equal(BleValueLimit.fromValueLength(value), undefined);
+    assert.equal(BleValueLimit.fromMtu(247, value), undefined);
+  }
+  for (const value of [20, 64, 244]) {
+    assert.equal(BleValueLimit.fromMtu(247, value)?.valueLength, value);
+  }
+  assert.equal(BleValueLimit.fromMtu(247)?.valueLength, 244);
+  assert.equal(BleValueLimit.fromMtu(247, 245), undefined);
+  assert.equal(BleValueLimit.fromValueLength(512)?.valueLength, 512);
+});
+
+test("a platform value limit remains fixed while the stack is busy", () => {
+  const tx = new BleSender();
+  const small = BleValueLimit.fromValueLength(20);
+  const large = BleValueLimit.fromValueLength(64);
+  assert.ok(small);
+  assert.ok(large);
+  assert.equal(tx.enqueue(new Uint8Array(40).fill(7), small), "ok");
+  const out = new Uint8Array(512);
+  assert.deepEqual(tx.fragment(out), { status: "ok", length: 20 });
+  assert.equal(tx.enqueue(new Uint8Array(40).fill(8), large), "busy");
+  assert.deepEqual(tx.fragment(out), { status: "ok", length: 20 });
+  assert.deepEqual(out.slice(0, 2), new Uint8Array([0, 0]));
+  assert.equal(tx.accepted(), "ok");
+  assert.deepEqual(tx.fragment(out), { status: "ok", length: 20 });
+  assert.deepEqual(out.slice(0, 2), new Uint8Array([0, 1]));
+  assert.equal(tx.accepted(), "ok");
+  assert.deepEqual(tx.fragment(out), { status: "ok", length: 6 });
+  assert.deepEqual(out.slice(0, 2), new Uint8Array([0, BLE_LAST_FLAG | 2]));
+  assert.equal(tx.accepted(), "ok");
+  assert.equal(tx.enqueue(new Uint8Array(40).fill(8), large), "ok");
+  assert.deepEqual(tx.fragment(out), { status: "ok", length: 42 });
+  assert.deepEqual(out.slice(0, 2), new Uint8Array([1, BLE_LAST_FLAG]));
 });
