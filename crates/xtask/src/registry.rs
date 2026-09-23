@@ -12,30 +12,53 @@ use std::str::FromStr;
 /// How a message is authenticated.
 ///
 /// There is no tenth variant: a `protocol.toml` naming a rule that does not
-/// exist fails to parse, at the line that names it.
+/// exist fails to parse, at the line that names it. What each one means is
+/// [`Auth::summary`], which the TypeScript bindings print beside every opcode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Auth {
-    /// Nothing: no key exists at this point in the exchange.
     None,
-    /// A proof carried inside the body, so the body is decoded before it verifies.
     Proof,
-    /// Wrapper-authenticated request. Read-only, carries no counter.
     Wrq,
-    /// Wrapper-authenticated response.
     Rsp,
-    /// Unsolicited event.
     Evt,
-    /// Signed body carrying a per-client counter. Every write is one.
     Signed,
-    /// Keyed on the pairing key, which is derived from the printed secret.
-    /// Used before any session exists.
     PairKey,
-    /// Controller to comms processor. Unauthenticated by design — the link is
-    /// internal to the board.
     Link,
-    /// Wrapped when the sender holds a session, bare when it does not.
     RspOrBare,
+}
+
+impl Auth {
+    /// The label in a sentence, with the rule that defines it.
+    pub fn summary(self) -> &'static str {
+        match self {
+            Self::None => "Unauthenticated: no key exists yet (P-054).",
+            Self::Proof => {
+                "A proof carried inside the body, so the body is decoded before it verifies."
+            }
+            Self::Wrq => {
+                "Wrapped under `session_key` with the `km43/v1/wrq` label. Read-only, so it \
+                 carries no counter (P-052)."
+            }
+            Self::Rsp => "Wrapped under `session_key` with the `km43/v1/rsp` label (P-052).",
+            Self::Evt => "Wrapped under `session_key` with the `km43/v1/evt` label (P-052).",
+            Self::Signed => {
+                "A signed body carrying the client's counter. Every write is one (P-053)."
+            }
+            Self::PairKey => {
+                "MAC'd under `pair_key`, derived from the printed secret, because no session \
+                 exists yet (P-054)."
+            }
+            Self::Link => {
+                "Controller to comms processor, unauthenticated by design: the link is \
+                 internal to the board."
+            }
+            Self::RspOrBare => {
+                "Wrapped with the `km43/v1/rsp` label when the sender holds a session, bare \
+                 when it does not (P-142)."
+            }
+        }
+    }
 }
 
 impl fmt::Display for Auth {
@@ -84,6 +107,18 @@ impl Status {
     /// `MetricKind` a driver could publish under.
     pub fn is_gone(self) -> bool {
         matches!(self, Self::Withdrawn | Self::Retired)
+    }
+
+    /// What a consumer reading a generated constant needs told about its status,
+    /// or `None` for a live one. A reserved number is in the bindings because a
+    /// peer may already send it, and without the caveat it reads as specified.
+    pub fn caveat(self) -> Option<&'static str> {
+        match self {
+            Self::Live => None,
+            Self::Reserved => Some("Reserved: allocated, and not specified yet."),
+            Self::Withdrawn => Some("Withdrawn: nothing emits it."),
+            Self::Retired => Some("Retired: never reallocated."),
+        }
     }
 }
 

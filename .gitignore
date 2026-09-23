@@ -9,3 +9,5 @@ dist/
 /.agents/skills/origin89-*
 /.claude/skills/origin89-*
 .test-out/
+# The API reference `pnpm run docs` renders. Built by the gate, published nowhere yet.
+/packages/km43/reference/

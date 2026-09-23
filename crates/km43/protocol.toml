@@ -1717,47 +1717,56 @@ meaning = "Correct, and applied at the next `MIN_REV_INTERVAL_MS` boundary rathe
 value = 1
 name = "enrolled"
 status = "live"
+meaning = "The client is enrolled, and `client_id` is the one allocated to it (P-064)"
 
 [[outcomes.pair]]
 value = 2
 name = "window_closed"
 status = "live"
+meaning = "No pairing window was open. Checked before the proof, so it costs the controller nothing and does not count as an auth failure (P-066)"
 
 [[outcomes.pair]]
 value = 3
 name = "bad_proof"
 status = "live"
+meaning = "The proof did not verify. It counts against `MAX_AUTH_FAILURES`, and the challenge is spent all the same (P-061)"
 
 [[outcomes.pair]]
 value = 4
 name = "table_full"
 status = "live"
+meaning = "Eight distinct labels are enrolled and none matched this one. Nothing is evicted (P-067)"
 
 [[outcomes.pair]]
 value = 5
 name = "reclaimed"
 status = "live"
+meaning = "The label matched an occupied row byte for byte, and that row was reused: same `client_id`, counter back to 0 (P-078)"
 
 
 [[outcomes.time]]
 value = 1
 name = "accepted"
 status = "live"
+meaning = "The clock moved, and the `time set` record names who moved it (P-111)"
 
 [[outcomes.time]]
 value = 2
 name = "rejected"
 status = "live"
+meaning = "`at` is past the plausibility window's upper edge. The clock did not move (P-113)"
 
 [[outcomes.time]]
 value = 3
 name = "unauthorised"
 status = "live"
+meaning = "This client's capability mask does not let it set the clock (P-105)"
 
 [[outcomes.time]]
 value = 4
 name = "needs_button"
 status = "live"
+meaning = "`at` is below the monotonic floor. A person at the panel can override it and the client can send it again (P-114, P-116)"
 
 
 [[outcomes.firmware]]
@@ -1935,7 +1944,7 @@ status = "live"
 [[metrics]]
 group = "`0x02xx` — AC electrical"
 kind = 518
-name = "ac energy imported"
+name = "AC energy imported"
 unit = "Wh"
 scale = 0
 status = "reserved"
@@ -1943,7 +1952,7 @@ status = "reserved"
 [[metrics]]
 group = "`0x02xx` — AC electrical"
 kind = 519
-name = "ac energy exported"
+name = "AC energy exported"
 unit = "Wh"
 scale = 0
 status = "reserved"

@@ -100,9 +100,11 @@ is not yet written. A status that forbids a MUST is a status that is wrong.
 ## Message types — `u8`
 
 The high bit means *response to a request*. `Event` is the only unsolicited
-message. `0x60`–`0x7E` is the link-local range from [LINK.md](LINK.md), whose
-responses are `0xE0`–`0xFE` — the same high-bit rule, so nothing special has to
-be remembered. `0x7F` is deliberately left out of the range, because `0x7F` with
+message.
+
+`0x60`–`0x7E` is the link-local range from [LINK.md](LINK.md), whose responses
+are `0xE0`–`0xFE` — the same high-bit rule, so nothing special has to be
+remembered. `0x7F` is deliberately left out of the range, because `0x7F` with
 the high bit set is `0xFF`, which is Error: 31 requests against 31 responses is
 a rule that stays true, and a 32nd request whose response is somebody else's
 opcode is a trap for whoever allocates last. A link-local type arriving on a
@@ -157,6 +159,9 @@ politeness; it is the difference between a browser refresh working and not.
 ---
 
 ## Error codes — `u16`
+
+What `Error 0xFF` carries, for a request that never reached its handler. A
+handler's own refusal is an outcome in its response instead (P-141).
 
 | Code | Meaning | MAC'd? | Status |
 |---|---|---|---|
@@ -295,8 +300,8 @@ ampere value.
 | `0x0203` | AC power | W | −1 | live |
 | `0x0204` | AC frequency | Hz | −2 | live |
 | `0x0205` | AC energy | Wh | 0 | live |
-| `0x0206` | ac energy imported | Wh | 0 | reserved |
-| `0x0207` | ac energy exported | Wh | 0 | reserved |
+| `0x0206` | AC energy imported | Wh | 0 | reserved |
+| `0x0207` | AC energy exported | Wh | 0 | reserved |
 
 **AC frequency** is the discriminator that proves an engine caught. Current into
 the bank is also what the sun does; 120 V at 60 Hz is not.
@@ -351,6 +356,8 @@ argument for this file.
 
 ## Generator states — `u8`
 
+The value of metric `0x0501`: what the generator is doing.
+
 | Value | Name | Meaning |
 |---|---|---|
 | 1 | stopped | No AC and our contact open. Autostart may fire |
@@ -367,6 +374,8 @@ human's stop button does not work.
 
 ## Generator selector — `u8`
 
+The value of metric `0x0601`: where the auto / off / manual selector is.
+
 | Value | Name | Meaning |
 |---|---|---|
 | 1 | auto | Behaviours may command the generator |
@@ -380,6 +389,8 @@ service lockout — nothing cranks while somebody's hands are in there — and t
 one is an operator override, at the controller.
 
 ## Boot reasons — `u8`
+
+The value of metric `0x0603`: why the controller last started.
 
 | Value | Name | Meaning | Status |
 |---|---|---|---|
@@ -402,6 +413,8 @@ metric. The boot record `0x0601` carries this value in its key 1.
 ---
 
 ## Quality — `u8`
+
+How far a reading can be trusted, in one word.
 
 | Value | Name | Meaning |
 |---|---|---|
@@ -427,6 +440,8 @@ How long a charger has spent in each stage. Quantities, not a `point` on one kin
 | `0x0703` | time in float | min | 0 | reserved |
 
 ## Event kinds — `u16`
+
+What an `Event` or a `LogEntry` records, in its `kind` key.
 
 **This is a different space from the metric kinds above, and fourteen of the
 twenty numbers below are also a live metric kind.** `0x0201` is *generator state
@@ -545,6 +560,9 @@ whoever is asking *did the schedule fire twice on Tuesday* two places to look.
 
 ## Config sections — `u16`
 
+Which part of the configuration a `GetConfig` or `SetConfig` names in its
+`section` key.
+
 | Section | Name | Status |
 |---|---|---|
 | `0x0001` | identity and site | reserved |
@@ -612,6 +630,8 @@ and that is the only way a full client table is emptied.
 
 ## Command outcomes — `u8`
 
+How a `Command 0x88` answered.
+
 | Value | Name | Meaning | Status |
 |---|---|---|---|
 | 1 | accepted | Acted on | live |
@@ -633,6 +653,8 @@ than with an error the comms processor could have forged — P-141, applied.
 
 ## SetConfig outcomes — `u8`
 
+How a `SetConfig 0x87` answered.
+
 | Value | Name | Meaning | Status |
 |---|---|---|---|
 | 1 | accepted |  | live |
@@ -650,13 +672,15 @@ already echoed back in key 1.
 
 ## Pair outcomes — `u8`
 
-| Value | Name |
-|---|---|
-| 1 | enrolled |
-| 2 | window_closed |
-| 3 | bad_proof |
-| 4 | table_full |
-| 5 | reclaimed |
+How a `Pair 0x8B` answered.
+
+| Value | Name | Meaning |
+|---|---|---|
+| 1 | enrolled | The client is enrolled, and `client_id` is the one allocated to it (P-064) |
+| 2 | window_closed | No pairing window was open. Checked before the proof, so it costs the controller nothing and does not count as an auth failure (P-066) |
+| 3 | bad_proof | The proof did not verify. It counts against `MAX_AUTH_FAILURES`, and the challenge is spent all the same (P-061) |
+| 4 | table_full | Eight distinct labels are enrolled and none matched this one. Nothing is evicted (P-067) |
+| 5 | reclaimed | The label matched an occupied row byte for byte, and that row was reused: same `client_id`, counter back to 0 (P-078) |
 
 **`5` is what stops the client table being a consumable, and the rule that
 produces it is P-078 in [PROTOCOL.md](../PROTOCOL.md), not this file.** Which
@@ -676,12 +700,14 @@ same — see [DEFERRED.md](DEFERRED.md) entry 10.
 
 ## Time outcomes — `u8`
 
-| Value | Name |
-|---|---|
-| 1 | accepted |
-| 2 | rejected |
-| 3 | unauthorised |
-| 4 | needs_button |
+How a `Time 0x8A` answered.
+
+| Value | Name | Meaning |
+|---|---|---|
+| 1 | accepted | The clock moved, and the `time set` record names who moved it (P-111) |
+| 2 | rejected | `at` is past the plausibility window's upper edge. The clock did not move (P-113) |
+| 3 | unauthorised | This client's capability mask does not let it set the clock (P-105) |
+| 4 | needs_button | `at` is below the monotonic floor. A person at the panel can override it and the client can send it again (P-114, P-116) |
 
 `3` exists because the capability mask can refuse a `Time` write, and *rejected*
 would have told a client its clock was implausible when the real answer is that it
@@ -697,6 +723,8 @@ time is implausible* on the screen while the correction somebody drove four hour
 to make sits one gesture away.
 
 ## Time sources — `u8`
+
+Who set the clock, recorded as `source` in the `time set` event (P-111).
 
 | Value | Name | Meaning |
 |---|---|---|
@@ -715,7 +743,7 @@ field exists to say.
 
 ## Firmware outcomes — `u8`
 
-**Reserved** — see [DEFERRED.md](DEFERRED.md).
+How a `Firmware 0x89` answered. **Reserved** — see [DEFERRED.md](DEFERRED.md).
 
 | Value | Name | Status |
 |---|---|---|
@@ -747,6 +775,9 @@ implemented.
 ---
 
 ## Client kinds — `u8`
+
+What a client says it is when it enrols. It is inside the pair proof, and the
+capability mask is fixed from it (P-105).
 
 | Value | Name |
 |---|---|
@@ -780,6 +811,9 @@ picking `0x0503` and worse in its consequences.
 | 5–15 | unallocated | — | — | — | — |
 
 ## Link-local error codes
+
+Errors on the link between the controller and its comms processor, numbered
+from 256 so a client can tell *the link failed* from *your request failed*.
 
 Allocated in [LINK.md](LINK.md), which is where the rule for each one lives; L-180 is the rule for the third column.
 They are listed here because this file is where a number is handed out, and a

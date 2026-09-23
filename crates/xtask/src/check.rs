@@ -637,7 +637,7 @@ impl Checks {
             detail,
         };
         let b = crate::bindings::Bindings::load(&self.root).map_err(|e| fail(e.to_string()))?;
-        let mut stale = b.stale(&self.root);
+        let mut stale = b.stale(&self.root).map_err(|e| fail(e.to_string()))?;
         if crate::diagram::Diagram::load(&self.root)
             .map_err(|e| fail(e.to_string()))?
             .stale(&self.root)

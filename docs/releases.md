@@ -10,8 +10,9 @@ Follow the [Origin89 release standard](https://github.com/origin89hq/engineering
   for `@origin89/km43` and crates.io's for `km43` must both name this
   repository and this filename.
 - Validation: `pnpm check` lints, type-checks and builds `packages/km43/dist`,
-  which is what the tarball carries, and the package's `prepack` builds it
-  again and copies the two license texts in from the repository root on any
+  which is what the tarball carries, then renders the API reference with
+  TypeDoc and fails on any export without a doc comment. The package's
+  `prepack` builds `dist` again and copies the two license texts in from the repository root on any
   `pack` or `publish`, so a hand publish from a clean checkout ships neither an
   empty tarball nor one without its terms. The gate also packs it dry to show what would
   ship.

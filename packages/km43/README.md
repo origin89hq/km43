@@ -26,9 +26,12 @@ wire is bytes, CBOR, a MAC and a CRC, and the reference implementation of all
 of that is the `km43` Rust crate. These bindings are the vocabulary a client
 needs to read what that crate produces and to name what it asks for.
 
-The generated file is the whole package. It is regenerated whenever the
-registry changes and published under a new version, so pin the version you
-built against: a renumbering is a breaking change and is released as one.
+The generated file is the whole package. Every export and member carries a
+doc comment taken from the registry, so an editor shows what an outcome means
+and which rule produces it without a trip to the specification. It is
+regenerated whenever the registry changes and published under a new version,
+so pin the version you built against: a renumbering is a breaking change and is
+released as one.
 
 The specification, the registry and the published test vectors are in the
 [km43 repository](https://github.com/origin89hq/km43). Licensed under either
