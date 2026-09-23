@@ -750,12 +750,14 @@ enum Msg {
     Event = 0x04,
     ReadLog = 0x05,
     Command = 0x08,
+    Time = 0x0A,
     Pair = 0x0B,
     Discover = 0x80,
     // `Hello` is the 0x81 *response*; the request 0x01 has no vector here.
     Hello = 0x81,
     LogPage = 0x85,
     Ack = 0x88,
+    TimeAck = 0x8A,
     PairAck = 0x8B,
     Error = 0xFF,
 }
@@ -2159,7 +2161,59 @@ impl Builder {
         .chain(Self::controller_events())
         .chain(self.whole_envelope_entries())
         .chain([Self::readlog_entry(), Self::logpage_entry()])
+        .chain(Self::time_entries())
         .collect::<Vec<_>>())
+    }
+
+    /// `Time 0x0A`'s operation body and `TimeAck 0x8A` twice: an accepted set
+    /// reporting the clock it landed on, and a rejected first set with no key 2
+    /// at all. The second is the one that catches a decoder defaulting an
+    /// absent `at` to 0, which is 1970 on a client's screen (P-093).
+    fn time_entries() -> Vec<(&'static str, Value)> {
+        const OPERATION: &str = "this is the operation body; on the wire it is key 3 of the signed body, and the MAC in key 4 covers these bytes as they arrived (P-110)";
+        const ACK: &str = "this is the inner body; on the wire it is key 1 of the wrapper, whose key 2 is a MAC under session_key with the label 'km43/v1/rsp'";
+        [
+            (
+                "time_0x0A",
+                Msg::Time,
+                OPERATION,
+                cmap! { 1 => Cb::U(1_700_000_000_000), 2 => Cb::U(1) },
+                Some("{1:at, 2:source}"),
+                "at 1700000000000, source 1 client",
+            ),
+            (
+                "timeack_0x8A",
+                Msg::TimeAck,
+                ACK,
+                cmap! { 1 => Cb::U(1), 2 => Cb::U(1_700_000_000_000) },
+                Some("{1:outcome, 2:at}"),
+                "outcome 1 accepted, at 1700000000000: the clock time_0x0A asked for",
+            ),
+            (
+                "time_ack_unset_0x8A",
+                Msg::TimeAck,
+                ACK,
+                cmap! { 1 => Cb::U(2) },
+                None,
+                "outcome 2 rejected on a controller whose clock was never set, so key 2 is absent rather than 0",
+            ),
+        ]
+        .into_iter()
+        .map(|(name, kind, authentication, body, readable, meaning)| {
+            let bytes = cbor(&body);
+            (
+                name,
+                obj(vec![
+                    ("type", json!(kind as u8)),
+                    ("authentication", json!(authentication)),
+                    ("body_readable", json!(readable)),
+                    ("values_readable", json!(meaning)),
+                    ("body_cbor", json!(hex(&bytes))),
+                    ("body_len", json!(bytes.len())),
+                ]),
+            )
+        })
+        .collect()
     }
 
     /// The three bodies the crate writes only as a whole envelope: a `Pair`

@@ -124,10 +124,16 @@ impl Bodies {
 
 /// `Discover  0x80          unauthenticated` becomes `discover_0x80`, which is
 /// how the vector file names it.
+///
+/// A signed write's body is headed `operation body of Time  0x0A`, and the
+/// prefix is dropped so it reads as `time_0x0A`. Without that the heading was
+/// not a heading at all, its two keys were read as nobody's, and a published
+/// `Time` vector was reported as a message the document never defines.
 fn heading(line: &str) -> Option<String> {
     if line.starts_with(char::is_whitespace) {
         return None;
     }
+    let line = line.strip_prefix("operation body of ").unwrap_or(line);
     let mut words = line.split_whitespace();
     let name = words.next()?;
     let opcode = words.next()?;
@@ -182,4 +188,41 @@ fn render(fields: &Fields) -> String {
         .map(|(number, name)| format!("{number}:{name}"))
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_message_heading_names_the_vector_it_is_compared_to() {
+        assert_eq!(
+            heading("Discover  0x80          unauthenticated").as_deref(),
+            Some("discover_0x80")
+        );
+        assert_eq!(
+            heading("TimeAck  0x8A           wrapper").as_deref(),
+            Some("timeack_0x8A")
+        );
+    }
+
+    #[test]
+    fn a_signed_operation_body_heading_names_its_message() {
+        assert_eq!(
+            heading("operation body of Time  0x0A").as_deref(),
+            Some("time_0x0A")
+        );
+        assert_eq!(
+            heading("operation body of SetConfig  0x07").as_deref(),
+            Some("setconfig_0x07")
+        );
+    }
+
+    #[test]
+    fn a_field_line_or_prose_is_not_a_heading() {
+        assert_eq!(heading("  1: at           u64      ms since epoch"), None);
+        assert_eq!(heading("operation body of Time"), None);
+        assert_eq!(heading("Value"), None);
+        assert_eq!(heading(""), None);
+    }
 }

@@ -53,6 +53,7 @@ mod requirements;
 mod routing;
 mod signed;
 mod subscribe;
+mod time;
 mod wrapper;
 
 pub use admission::*;
@@ -85,4 +86,5 @@ pub use requirements::*;
 pub use routing::*;
 pub use signed::*;
 pub use subscribe::*;
+pub use time::*;
 pub use wrapper::*;

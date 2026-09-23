@@ -75,7 +75,7 @@ fn every_published_body_is_one_this_reader_walks_to_the_end() {
             seen += 1;
         }
     }
-    assert_eq!(seen, 36, "the vector file grew or shrank a body");
+    assert_eq!(seen, 39, "the vector file grew or shrank a body");
 }
 
 /// The envelope the generator publishes must decode here to the same four
@@ -297,8 +297,9 @@ fn the_pairing_and_hello_tags_are_ones_this_crate_recomputes_too() {
 /// `Readings 0x8E`, the `Concerns 0x8F`, the six event bodies — the two
 /// concern records `0x0501` and `0x0502`, then `0x0102`, `0x0901` and `0x0902`,
 /// then the boot record `0x0601`, followed by nine controller-record examples —
-/// and the five read by name rather than by position: `Pair 0x0B`,
-/// `Pair 0x8B`, the bare `Error 0xFF`, `ReadLog 0x05` and `LogPage 0x85`.
+/// and the eight read by name rather than by position: `Pair 0x0B`,
+/// `Pair 0x8B`, the bare `Error 0xFF`, `ReadLog 0x05`, `LogPage 0x85`, the
+/// `Time 0x0A` operation and the two `TimeAck 0x8A`.
 ///
 /// Asserted rather than assumed, so a file that lost one does not hand the
 /// wrong bytes to whichever test still finds something at index 0. The count
@@ -307,7 +308,7 @@ fn the_pairing_and_hello_tags_are_ones_this_crate_recomputes_too() {
 /// after that message was retired.
 fn published_bodies() -> Vec<Vec<u8>> {
     let found = blobs("body_cbor");
-    assert_eq!(found.len(), 25, "the vector file grew or shrank a body");
+    assert_eq!(found.len(), 28, "the vector file grew or shrank a body");
     found
 }
 
@@ -2381,6 +2382,38 @@ fn p_215_published_controller_records_pin_each_body_schema() {
             "{name}"
         );
         let mut dst = [0; CONTROLLER_RECORD_MAX_BYTES];
+        let len = want.encode(&mut dst).expect("fits");
+        assert_eq!(dst.get(..len), Some(published.as_slice()), "{name}");
+    }
+}
+
+/// The clock bodies from the committed witness, read and rewritten here. The
+/// unset ack is the one that matters most: a decoder that defaulted its absent
+/// `at` would read it back as a controller claiming 1970 (P-093).
+#[test]
+fn p_093_published_time_bodies_decode_and_reencode_byte_for_byte() {
+    use km43::{
+        MAX_TIME_ACK_BYTES, MAX_TIME_OPERATION_BYTES, Time, TimeAck, TimeOperation, TimeSource,
+    };
+
+    let published = blob_under("time_0x0A", "body_cbor");
+    let want = TimeOperation {
+        at: 1_700_000_000_000,
+        source: TimeSource::Client,
+    };
+    assert_eq!(TimeOperation::decode(&published), Ok(want));
+    let mut dst = [0; MAX_TIME_OPERATION_BYTES];
+    let len = want.encode(&mut dst).expect("fits");
+    assert_eq!(dst.get(..len), Some(published.as_slice()));
+
+    for (name, outcome, at) in [
+        ("timeack_0x8A", Time::Accepted, Some(1_700_000_000_000)),
+        ("time_ack_unset_0x8A", Time::Rejected, None),
+    ] {
+        let published = blob_under(name, "body_cbor");
+        let want = TimeAck::new(outcome, at).expect("a valid ack");
+        assert_eq!(TimeAck::decode(&published), Ok(want), "{name}");
+        let mut dst = [0; MAX_TIME_ACK_BYTES];
         let len = want.encode(&mut dst).expect("fits");
         assert_eq!(dst.get(..len), Some(published.as_slice()), "{name}");
     }
