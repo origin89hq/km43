@@ -1024,7 +1024,7 @@
 # builds the `Hello` that carries `fw_controller`, so a test named after either
 # here would stand over nothing. Its `[[clauses]]` entry is what keeps the
 # tests that exist from reading as the whole rule.
-uncovered = 126
+uncovered = 125
 
 # P-045 is the shape this file is for. Nothing can drive an implementation into
 # transmitting a key it does not have, so the thing that stands behind it reads

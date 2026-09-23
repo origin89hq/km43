@@ -2392,14 +2392,11 @@ fn p_215_published_controller_records_pin_each_body_schema() {
 /// `at` would read it back as a controller claiming 1970 (P-093).
 #[test]
 fn p_093_published_time_bodies_decode_and_reencode_byte_for_byte() {
-    use km43::{
-        MAX_TIME_ACK_BYTES, MAX_TIME_OPERATION_BYTES, Time, TimeAck, TimeOperation, TimeSource,
-    };
+    use km43::{MAX_TIME_ACK_BYTES, MAX_TIME_OPERATION_BYTES, Time, TimeAck, TimeOperation};
 
     let published = blob_under("time_0x0A", "body_cbor");
     let want = TimeOperation {
         at: 1_700_000_000_000,
-        source: TimeSource::Client,
     };
     assert_eq!(TimeOperation::decode(&published), Ok(want));
     let mut dst = [0; MAX_TIME_OPERATION_BYTES];

@@ -732,9 +732,11 @@ Who set the clock, recorded as `source` in the `time set` event (P-111).
 | 1 | client | A signed `Time` write from an enrolled client |
 | 2 | ntp-via-comms | A `TimeOffer` the controller accepted from the comms processor |
 
-**One space for what gets recorded.** The `Time` operation carries a value from
-this table and P-111's `time set` event records one, and there is no second
-space either of them may draw from. An accepted `TimeOffer` from
+**One space for what gets recorded.** P-111's `time set` event records a value
+from this table, chosen by which message moved the clock, and there is no second
+space it may draw from. A signed `Time` write is `1`; nothing in its body says
+so, because key 2 of the `Time` operation, which once carried a value from this
+table, is **retired** and never reused (P-012). An accepted `TimeOffer` from
 [LINK.md](LINK.md) is recorded as `2` (L-162). That offer carries a `source` field of its
 own — a link-local enum with one value in it — and **its number is never copied
 through**: `1` there means *NTP*, `1` here means *a client set the clock*, which

@@ -1041,8 +1041,8 @@ it.
 **L-162** — The link-local `source` value MUST NOT be copied into the `0x0604`
 record; the record MUST name the clock as having been set by an offer through the
 comms processor, distinctly from a client `Time` operation. `source` here is a
-link-local space with one value in it and is not the client-facing `source` of
-the `Time` operation. What the record has to answer is which door the clock came
+link-local space with one value in it and is not the time-source space the
+record uses. What the record has to answer is which door the clock came
 through, because that is what tells a drifted RTC from a lying uplink — copying a
 number across from a space that means something else makes two spaces look like
 one to whoever reads the log.

@@ -2981,7 +2981,6 @@ was a field that could only ever be ignored or wrongly trusted.
 ```text
 operation body of Time  0x0A
   1: at           u64      ms since epoch
-  2: source       u8       see REGISTRY
 
 TimeAck  0x8A           wrapper
   1: outcome      u8       see REGISTRY
@@ -3006,9 +3005,16 @@ The value recorded comes from the **Time sources** table in
 [REGISTRY.md](protocol/REGISTRY.md), which is the one space for it. A clock moved
 by a `TimeOffer` the controller accepted ([LINK.md](protocol/LINK.md) L-162) is
 recorded as `2` `ntp-via-comms`; `1` `client` is only ever a signed client write.
-`TimeOffer` carries a `source` of its own about which NTP path it used, and that
-value is never copied through — copying it inverts exactly the distinction this
-requirement exists to preserve.
+The value is fixed by which message moved the clock and is never read out of
+either one. `TimeOffer` carries a `source` of its own about which NTP path it
+used, and that value is never copied through — copying it inverts exactly the
+distinction this requirement exists to preserve.
+
+Key 2 of the `Time 0x0A` operation body is **retired**. It carried a `source`
+from the same space, and a signed write is always `client`, so the field could
+only repeat that or contradict it: a controller that recorded it would log a
+client write as NTP from the comms processor. A receiver skips key 2 under P-013
+and records the write as `client` whatever it said.
 
 **P-112** — Events already written with no timestamp MUST NOT be retroactively
 stamped. Their ordering is exact through `seq`, and a client MAY place them once

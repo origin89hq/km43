@@ -432,10 +432,10 @@
     "time_0x0A": {
       "type": 10,
       "authentication": "this is the operation body; on the wire it is key 3 of the signed body, and the MAC in key 4 covers these bytes as they arrived (P-110)",
-      "body_readable": "{1:at, 2:source}",
-      "values_readable": "at 1700000000000, source 1 client",
-      "body_cbor": "a2011b0000018bcfe568000201",
-      "body_len": 13
+      "body_readable": "{1:at}",
+      "values_readable": "at 1700000000000; key 2 is retired and the time set record names source 1 client because a signed write moved the clock (P-111)",
+      "body_cbor": "a1011b0000018bcfe56800",
+      "body_len": 11
     },
     "timeack_0x8A": {
       "type": 138,
