@@ -1060,16 +1060,18 @@ requires an authenticated session. Configuration alone would otherwise leak
 occupancy, generator activity, energy use and network settings to anyone within
 BLE range.
 
-**P-060** — The controller MUST mint a **fresh challenge per connection**, using
-the connection handle from [LINK.md](protocol/LINK.md) L-060, and MUST hold at most
-`MAX_CHALLENGES`. A single device-wide challenge livelocks two clients against
+**P-060** — The controller MUST attempt to mint a **fresh challenge per connection**,
+using the connection handle from [LINK.md](protocol/LINK.md) L-060, and MUST hold
+at most `MAX_CHALLENGES`. A single device-wide challenge livelocks two clients against
 each other exactly the way a device-wide counter would.
 
 A `Discover` MUST be answered with that connection's **current** challenge
 when one is available. If the connection holds none — the one it had was
-consumed, or it expired at 120 seconds — the controller MUST mint another for that handle and discard the old,
-so at most one challenge exists per connection at any moment and a client always
-proves against something live. Handing back a challenge that is already dead
+consumed, it expired at 120 seconds, or initial minting failed under L-070 —
+the controller MUST discard any expired challenge and attempt to mint another
+for that handle. If minting fails, the connection holds no challenge and the
+controller MUST send the refusal below. At most one challenge exists per
+connection at any moment; only a live challenge may be returned. Handing back a challenge that is already dead
 sends a client off to compute a proof that cannot verify, and error 14 is the
 only way it finds out.
 

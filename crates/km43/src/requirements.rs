@@ -363,7 +363,7 @@ pub const REQUIREMENTS: &[Requirement] = &[
         id: "P-060",
         document: "docs/PROTOCOL.md",
         section: "Discover — `0x00` / `0x80`",
-        statement: "The controller MUST mint a **fresh challenge per connection**, using the connection handle from [LINK.md](protocol/LINK.md) L-060, and MUST hold at most `MAX_CHALLENGES`.",
+        statement: "The controller MUST attempt to mint a **fresh challenge per connection**, using the connection handle from [LINK.md](protocol/LINK.md) L-060, and MUST hold at most `MAX_CHALLENGES`.",
     },
     Requirement {
         id: "P-061",
