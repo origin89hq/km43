@@ -208,8 +208,7 @@ impl<'a> ConfigAnswer<'a> {
 
 /// The `SetConfig 0x07` operation: a whole section body, written against the
 /// version the client last read.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct SetConfigOperation<'a> {
     /// Key 1.
     pub section: ConfigSection,
@@ -276,6 +275,31 @@ impl<'a> SetConfigOperation<'a> {
         } else {
             Err(SetConfig::StaleVersion)
         }
+    }
+}
+
+/// The body's length, never the body: a network write carries the passphrase,
+/// and a derived `Debug` prints it as decimals no text search finds (P-106).
+impl fmt::Debug for SetConfigOperation<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SetConfigOperation")
+            .field("section", &self.section)
+            .field("expected_version", &self.expected_version)
+            .field("body", &format_args!("{} bytes", self.body.len()))
+            .finish()
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for SetConfigOperation<'_> {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(
+            f,
+            "SetConfigOperation {{ section: {}, expected_version: {=u32}, body: {=usize} bytes }}",
+            self.section,
+            self.expected_version,
+            self.body.len()
+        );
     }
 }
 
@@ -436,6 +460,7 @@ impl core::error::Error for ConfigMessageError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{Country, Hostname, JoinWrite, NetworkWrite, Passphrase, Ssid};
     use crate::render::Rendering;
 
     const SECTIONS: [ConfigSection; 9] = [
@@ -813,6 +838,37 @@ mod tests {
                 outcome: SetConfig::Invalid,
             })
         );
+    }
+
+    /// A network write whose passphrase is `PSK`, encoded as a client signs it.
+    fn network_body(dst: &mut [u8]) -> &[u8] {
+        let write = NetworkWrite {
+            join: Some(JoinWrite {
+                ssid: Ssid::new("cabin").expect("an ssid"),
+                psk: Some(Passphrase::new(PSK).expect("a passphrase")),
+            }),
+            country: Country::new("CA").expect("a country"),
+            hostname: Hostname::new("origin89").expect("a hostname"),
+        };
+        let len = write.encode(dst).expect("the write fits");
+        dst.get(..len).expect("the length came from the encoder")
+    }
+
+    const PSK: &str = "correct horse battery";
+
+    /// The body of a network write is the passphrase in CBOR, and a derived
+    /// `Debug` prints it as a list of decimals no text search finds. One
+    /// `debug!(?write)` on the controller puts the site's Wi-Fi credential in a
+    /// log that P-106 kept it out of on the read side.
+    #[test]
+    fn p_106_a_set_config_operation_never_prints_its_body() {
+        let mut body = [0; MAX_NETWORK_WRITE_BYTES];
+        let write = SetConfigOperation {
+            section: ConfigSection::Network,
+            expected_version: 3,
+            body: network_body(&mut body),
+        };
+        assert_eq!(Rendering::<512>::leak(&write, PSK), None);
     }
 
     #[test]

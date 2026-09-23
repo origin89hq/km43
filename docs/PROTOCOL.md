@@ -3176,7 +3176,10 @@ as `"********"` is worse than none: a client reads the section, edits the
 hostname, writes the body back, and sets the site's passphrase to eight
 asterisks from four hours away. The client refuses as well as the controller
 omitting, so that a controller which leaks is a failure somebody sees rather
-than a value somebody stores.
+than a value somebody stores. The same log is why an implementation never prints
+a secret field, or a body that may carry one, in its own diagnostics: a
+`SetConfig` that is logged on its way in leaks what the `Config` withheld on its
+way out.
 
 **P-107** — A `SetConfig` of the network section that carries an `ssid` and no
 `psk` MUST keep the passphrase the controller already holds only when that
