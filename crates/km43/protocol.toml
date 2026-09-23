@@ -18,6 +18,14 @@ protocol = "1.0"
 # meaning is not knowable, and the generated bindings make that a parse error.
 skip_unknown = ["metric_kind", "event_kind"]
 
+# Private 128-bit UUIDs; canonical text, not Bluetooth-base short UUIDs.
+[ble]
+service_uuid = "ab43e89a-7c21-4a5d-9b62-19e430000001"
+rx_uuid = "ab43e89a-7c21-4a5d-9b62-19e430000002"
+tx_uuid = "ab43e89a-7c21-4a5d-9b62-19e430000003"
+last_flag = 0x80
+index_mask = 0x7f
+
 [[messages]]
 request = 0x00
 response = 0x80

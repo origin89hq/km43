@@ -57,9 +57,12 @@ TypeScript in a browser — must interoperate having read only this document and
 the files it links. Anywhere you have to guess, this document has a bug; say so.
 
 **P-001** — An implementation MUST reproduce every vector in
-`protocol/vectors/v1.json` exactly before it is connected to another
-implementation. A key-derivation disagreement is invisible on the wire and costs
-a bench day to find by inspection.
+`protocol/vectors/v1.json` applicable to its transports exactly before it is
+connected to another implementation. Core vectors apply to every transport;
+the `ble` traces additionally apply to BLE implementations. Reproducing those
+traces is necessary but does not establish BLE interoperability or extend the
+conformance claim. A key-derivation disagreement is invisible on the wire and
+costs a bench day to find by inspection.
 
 ---
 
@@ -630,44 +633,122 @@ requirement.
 
 ### BLE GATT
 
-**Specified, unimplemented, unverified.** Not conformance surface — see
-[DEFERRED.md](protocol/DEFERRED.md) entry 7.
+**Host-tested transport contract; radio interoperability unverified.** BLE is
+not conformance surface; see [DEFERRED.md](protocol/DEFERRED.md) entry 7.
 
-One service, two characteristics: `rx` (client → controller, Write Without
-Response) and `tx` (controller → client, Notify).
+One primary service, two characteristics. UUIDs are allocated in
+`crates/km43/protocol.toml` and published in
+[REGISTRY.md](protocol/REGISTRY.md#ble-gatt-identifiers) and both bindings:
+`BLE_SERVICE_UUID`, `BLE_RX_UUID` (client → controller, Write Without Response),
+`BLE_TX_UUID` (controller → client, Notify, with a Client Characteristic
+Configuration Descriptor). Use canonical UUID text with platform APIs; raw
+Bluetooth UUID fields use least-significant octet first, not ASCII UUID text.
+
+Advertising or its scan response MUST include the service UUID. Neither the
+local name nor the Bluetooth address identifies the controller for KM43 trust.
+On every connection the client discovers the service and characteristic handles
+by UUID, checks the required properties, enables notifications and waits for
+subscription success before sending Discover. Refuse the connection if the
+service, characteristics or properties are missing or ambiguous. Do not require
+Bluetooth bonding, site Wi-Fi or internet to discover or use this transport.
+Advertising, connecting and bonding grant no KM43 permission: the STM32 alone
+checks the physical pairing window and Pair proof (P-066, P-068).
+
+The assembled bytes are exactly one CBOR-encoded KM43 envelope, including its
+body/wrapper and proof or MAC where required. No COBS, CRC, delimiter, length
+prefix or BLE-specific opcode is added. `MAX_PAYLOAD` includes the entire
+encoded envelope. Reassembly does not validate CBOR or authenticate a message;
+those checks remain on the ordinary controller/client message path. Link-local
+messages remain forbidden on BLE (L-002). The comms processor uses the shared
+connection table and session stamping rules, not a BLE authentication path.
+
+Each Write Without Response or notification carries one fragment value:
 
 ```text
 [ msg_id: u8 ][ flags: u8 ][ fragment data ]
 ```
 
-**P-036** — `flags` bit 7 (`0x80`) is `last`; bits 6–0 are the fragment index,
-`0`–`127`. Bit order is stated because it was previously drawn as `frag: u7,
-last: u1` with no byte layout, which two implementers pack differently.
+**P-036** — `flags` bit 7 (`BLE_LAST_FLAG`, `0x80`) is `last`; bits 6–0
+(`BLE_INDEX_MASK`) are the fragment index, starting at zero and increasing by
+one through at most 127. Fragment data MUST be nonempty. Index 127 without
+`last` is invalid. Senders fill each nonfinal fragment to the selected value
+limit; receivers accept shorter nonempty fragments.
 
-**P-037** — Fragment data MUST be at most `ATT_MTU − 5` bytes: three for the ATT
-notification header and two for the fragment header above. The earlier draft said
-`MTU − 3`, which does not leave room for its own header.
+**P-037** — Fragment data MUST be at most `min(ATT_MTU − 3, 512) − 2` bytes:
+three ATT bytes, then two KM43 bytes, with the GATT attribute limit also applied.
+Use ATT MTU 23 until an exchange completes; supported MTUs are 23 through 517.
+An adapter whose API reports maximum write/notify *value length* uses that limit
+directly, capped at 512, and subtracts only the two KM43 bytes. It may choose a
+smaller value limit (at least 20 bytes). Freeze the sender's selected limit for
+each message; if it can no longer be sent, close the connection and purge queues.
+A full 1024-byte envelope needs 57 fragments at MTU 23, or five at MTU 247.
+The ATT bounds come from the
+[Bluetooth ATT specification](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-54/out/en/host/attribute-protocol--att-.html).
 
-**P-039** — `msg_id` identifies the protocol message a fragment belongs to. A
-sender MUST use one value for every fragment of a message and MUST increment it
-modulo 256 for the next. A receiver MUST discard the assembly in progress on any
-fragment whose `msg_id` differs from the one that opened it, and MUST begin a new
-assembly only at index `0`. With one assembly per connection this byte is a
-mismatch detector rather than a demultiplexer: it is what makes the tail of a
-message whose `last` fragment was lost visible instead of silently concatenated
-onto the front of the next one. What wrap does behind a notify queue that has
-backed up is unverified — see [DEFERRED.md](protocol/DEFERRED.md) entry 7.
+**P-039** — `msg_id` identifies the protocol message a fragment belongs to.
+Each direction starts at zero on a new connection. A sender MUST use one value
+for every fragment and increment it modulo 256 only after the final fragment
+has entered the ordered transmit path. Busy/refused admission does not advance
+it. IDs are mismatch detectors, not acknowledgements, replay protection or
+permission to combine concurrent messages.
 
-| | |
-|---|---|
-| Concurrent assemblies | one per connection |
-| Assembly timeout | 5 s since the last fragment → discard |
-| Duplicate or out-of-order index | discard the assembly, wait for the next index `0` |
-| `msg_id` differs from the assembly in progress | discard the assembly, wait for the next index `0` |
-| Max reassembled | `MAX_PAYLOAD`; exceeding it discards |
+A receiver maintains one assembly per connection and receiving direction.
+Process each value in this order:
 
-At the minimum 23-byte ATT MTU a full 1024-byte payload needs 57 fragments,
-inside the 128 the index can express.
+1. Expire any assembly at **at least 5000 ms** since its last accepted fragment,
+   using monotonic time; a backwards clock also discards it. Run expiry even
+   when no more fragments arrive.
+2. Reject a value shorter than three bytes or larger than the negotiated value
+   bound, clearing the assembly.
+3. If the ID changed, discard the old assembly. An index-zero fragment with the
+   new ID starts immediately, including a single-fragment final message. A
+   nonzero fragment cannot start an assembly and is discarded.
+4. For the same active ID, require the next consecutive index. Duplicate index
+   zero also discards the assembly; do not reuse that offending fragment to
+   start another. The next index zero may start a message. Missing/out-of-order
+   fragments therefore cannot produce a partial message.
+5. Reject an append beyond `MAX_PAYLOAD`, or a nonfinal append that reaches
+   `MAX_PAYLOAD` or index 127, clearing the assembly. Otherwise append and
+   refresh the timer. Only `last` delivers bytes, exactly once for that assembly.
+
+Once idle, any ID at index zero is allowed. A repeated complete message can be
+delivered again; KM43's request, counter and deduplication rules still apply.
+
+The transmit queue has **one complete message slot per connection and direction**
+(`BLE_TX_CAPACITY`). It owns at most `MAX_PAYLOAD` bytes and refuses a second
+message without evicting or modifying the first. Stack queues also need named,
+fixed capacities in the adapter. Use one ordered ATT bearer; no interleaving
+fragments or EATT scheduling across bearers. Advance a fragment only after the
+stack accepts it into its FIFO. While busy, retain the exact bytes and retry
+when capacity is reported; never enqueue a duplicate after successful admission.
+FIFO order must extend through the radio stack, including across ID wrap. A
+wrap from 255 to zero cannot overtake an older fragment. If the stack cannot
+provide that guarantee, this transport cannot use it.
+
+A stalled send expires after 5000 ms without successful stack admission (measured
+from enqueue or the last admission), closing the connection and purging both
+queues. This timer is the adapter's responsibility. A full application queue is
+reported to its producer for bounded retry; if a controller response cannot be
+retained or backpressured, close that client connection instead of silently
+losing a response. Stack admission is not remote receipt: Write Without Response
+and Notify have no KM43 acknowledgement. Request deadlines and signed-write
+reconciliation remain unchanged.
+
+Disconnect, notification disable, controller loss, or link restart discards both
+partial assemblies and queued sends. Cancel callbacks from the old connection;
+none may feed a new connection or a reused handle. A reconnect rediscovers and
+subscribes again, starts IDs at zero and follows the normal challenge/session
+lifecycle. Opposite directions are independent, so uploading does not block
+reassembly of notifications.
+
+`vectors/v1.json`'s `ble` action trace supplies `action`, `mtu`, `now_ms`, hex
+`input`, expected outcome and hex `output`. `reset` labels a new test case;
+`disconnect` resets both directions; `fragment` offers bytes without advancing;
+`accepted` models successful FIFO admission; `small_buffer` offers a two-byte
+output buffer; `expire` drives the receive timer. Payload stress cases use opaque
+bytes to isolate transport bounds; envelope cases carry the published authenticated
+response. Rust and TypeScript tests execute the trace against their public transport APIs.
+These traces do not simulate a Bluetooth stack or establish native-app pairing.
 
 ### MQTT
 
@@ -3522,10 +3603,12 @@ or **fan out an event** — it holds no key, so it cannot produce a valid copy.
 An implementation is conforming when all of these pass.
 
 An implementation claiming conformance is claiming it for **UART, USB CDC and
-WebSocket**. The BLE GATT and MQTT sections carry no vectors and are not
-conformance surface — see [DEFERRED.md](protocol/DEFERRED.md) entry 7.
+WebSocket**. BLE has host transport vectors but no phone/board qualification;
+MQTT has no transport vectors. Neither is conformance surface — see [DEFERRED.md](protocol/DEFERRED.md) entry 7.
 
-1. Every vector in `protocol/vectors/v1.json` reproduces exactly.
+1. Every core vector in `protocol/vectors/v1.json` reproduces exactly. BLE
+   qualification additionally requires the `ble` traces and the phone/board
+   evidence in DEFERRED entry 7.
 2. COBS round-trips every length from 0 to `MAX_PAYLOAD`, including 254 and 255,
    and matches the Cheshire & Baker examples — including the one a round trip
    cannot catch on its own, 254 bytes followed by a zero, where an encoder and a

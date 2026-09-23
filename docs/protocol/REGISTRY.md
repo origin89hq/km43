@@ -97,6 +97,19 @@ is not yet written. A status that forbids a MUST is a status that is wrong.
 
 ---
 
+## BLE GATT identifiers
+
+Private UUIDs in canonical text form. Discover handles by UUID on each connection;
+see PROTOCOL.md's BLE GATT section for properties and byte order.
+
+| Name | Value |
+|---|---|
+| `BLE_SERVICE_UUID` | `ab43e89a-7c21-4a5d-9b62-19e430000001` |
+| `BLE_RX_UUID` | `ab43e89a-7c21-4a5d-9b62-19e430000002` |
+| `BLE_TX_UUID` | `ab43e89a-7c21-4a5d-9b62-19e430000003` |
+| `BLE_LAST_FLAG` | `0x80` |
+| `BLE_INDEX_MASK` | `0x7f` |
+
 ## Message types — `u8`
 
 The high bit means *response to a request*. `Event` is the only unsolicited

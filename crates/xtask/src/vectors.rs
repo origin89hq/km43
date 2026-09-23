@@ -217,7 +217,7 @@ macro_rules! cmap {
     }};
 }
 
-fn hex(b: &[u8]) -> String {
+pub(crate) fn hex(b: &[u8]) -> String {
     use std::fmt::Write as _;
     b.iter().fold(String::new(), |mut s, x| {
         let _ = write!(s, "{x:02x}");
@@ -2960,10 +2960,17 @@ pub fn build() -> Result<String> {
     println!("client_key   = {}", hex(&b.client_key));
     println!("session_key  = {}", hex(&b.session_key));
     println!("pair_key     = {}", hex(&b.pair_key));
-    Ok(format!(
-        "{}\n",
-        serde_json::to_string_pretty(&b.document()?)?
-    ))
+    let mut document = b.document()?;
+    let envelope = document
+        .get("frame")
+        .and_then(|v| v.get("envelope_cbor"))
+        .and_then(Value::as_str);
+    let envelope = hex_to_bytes(envelope.context("framing envelope for BLE")?)?;
+    document
+        .as_object_mut()
+        .context("vector document")?
+        .insert("ble".to_owned(), crate::ble_vectors::build(&envelope)?);
+    Ok(format!("{}\n", serde_json::to_string_pretty(&document)?))
 }
 
 #[cfg(test)]

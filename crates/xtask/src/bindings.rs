@@ -90,6 +90,19 @@ impl Bindings {
         }
         let _ = writeln!(o, "{}{}\n", Self::DIGEST_MARKER, self.registry.digest);
 
+        for (name, uuid) in self.registry.ble.uuids() {
+            let _ = writeln!(
+                o,
+                "/// BLE GATT identifier (PROTOCOL.md, BLE GATT).\npub const {name}: &str = {uuid:?};\n"
+            );
+        }
+        for (name, value) in self.registry.ble.flags() {
+            let _ = writeln!(
+                o,
+                "/// BLE fragment flag layout (P-036).\npub const {name}: u8 = {value};\n"
+            );
+        }
+
         closed_enum(
             &mut o,
             "MessageType",
@@ -691,6 +704,19 @@ impl Bindings {
             let _ = writeln!(o, "// {line}");
         }
         let _ = writeln!(o, "{}{}\n", Self::DIGEST_MARKER, self.registry.digest);
+
+        for (name, uuid) in self.registry.ble.uuids() {
+            let _ = writeln!(
+                o,
+                "/** BLE GATT identifier (PROTOCOL.md, BLE GATT). */\nexport const {name} = {uuid:?};\n"
+            );
+        }
+        for (name, value) in self.registry.ble.flags() {
+            let _ = writeln!(
+                o,
+                "/** BLE fragment flag layout (P-036). */\nexport const {name} = {value};\n"
+            );
+        }
 
         ts_enum(
             &mut o,

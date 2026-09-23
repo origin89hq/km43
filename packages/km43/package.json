@@ -17,6 +17,11 @@
       "types": "./dist/generated.d.ts",
       "import": "./dist/generated.js",
       "default": "./dist/generated.js"
+    },
+    "./ble": {
+      "types": "./dist/ble.d.ts",
+      "import": "./dist/ble.js",
+      "default": "./dist/ble.js"
     }
   },
   "files": [

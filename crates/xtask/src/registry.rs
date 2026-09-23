@@ -212,8 +212,66 @@ impl Prose {
     }
 }
 
+/// BLE identifiers are allocated here and rendered into both client bindings.
+#[derive(Clone, Deserialize)]
+pub struct Ble {
+    /// The primary service advertised for KM43 discovery.
+    pub service_uuid: String,
+    /// Client writes complete fragment values here.
+    pub rx_uuid: String,
+    /// Controller fragment notifications originate here.
+    pub tx_uuid: String,
+    /// Marks the fragment that completes an envelope.
+    pub last_flag: u8,
+    /// Selects the consecutive index within one envelope.
+    pub index_mask: u8,
+}
+
+impl Ble {
+    /// Stable binding names shared by both generated languages.
+    pub fn uuids(&self) -> [(&str, &str); 3] {
+        [
+            ("BLE_SERVICE_UUID", &self.service_uuid),
+            ("BLE_RX_UUID", &self.rx_uuid),
+            ("BLE_TX_UUID", &self.tx_uuid),
+        ]
+    }
+
+    /// Header masks emitted beside the service identifiers.
+    pub fn flags(&self) -> [(&str, u8); 2] {
+        [
+            ("BLE_LAST_FLAG", self.last_flag),
+            ("BLE_INDEX_MASK", self.index_mask),
+        ]
+    }
+
+    fn validate(&self) -> Result<()> {
+        let mut seen = BTreeSet::new();
+        for (name, uuid) in self.uuids() {
+            if uuid.len() != 36
+                || !uuid.bytes().enumerate().all(|(i, b)| {
+                    if matches!(i, 8 | 13 | 18 | 23) {
+                        b == b'-'
+                    } else {
+                        b.is_ascii_digit() || (b'a'..=b'f').contains(&b)
+                    }
+                })
+                || !seen.insert(uuid)
+            {
+                bail!("{name} must be a unique canonical lowercase 128-bit UUID");
+            }
+        }
+        if self.last_flag != 0x80 || self.index_mask != 0x7f {
+            bail!("BLE flags must retain P-036's bit layout");
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Deserialize)]
 pub struct Registry {
+    /// The client-visible BLE transport allocation.
+    pub ble: Ble,
     pub meta: Meta,
     pub messages: Vec<Message>,
     #[serde(default)]
@@ -956,6 +1014,7 @@ impl Registry {
     /// Auth labels and statuses need no check here — an unknown one fails to
     /// deserialize, naming the line.
     fn validate(&self) -> Result<()> {
+        self.ble.validate()?;
         let mut seen = BTreeSet::new();
         for m in &self.messages {
             for op in [m.request, m.response].into_iter().flatten() {
@@ -1493,5 +1552,42 @@ mod allocation {
         let first = registry.messages.first().cloned().expect("a message");
         reused.messages.push(first);
         assert!(crate::check::no_number_is_allocated_twice(&reused).is_err());
+    }
+}
+
+#[cfg(test)]
+mod ble_tests {
+    use super::Registry;
+
+    #[test]
+    fn ble_uuid_allocation_rejects_duplicate_or_noncanonical_identifiers() {
+        let root = crate::check::repo_root().expect("repository");
+        let registry = Registry::load(&root).expect("valid registry");
+        registry.ble.validate().expect("distinct UUIDs");
+        let mut duplicate = registry.ble.clone();
+        duplicate.rx_uuid.clone_from(&duplicate.service_uuid);
+        assert!(duplicate.validate().is_err());
+        for invalid in [
+            String::new(),
+            "1234".to_owned(),
+            registry.ble.service_uuid.to_uppercase(),
+            registry.ble.service_uuid.replace('-', "_"),
+        ] {
+            let mut malformed = registry.ble.clone();
+            malformed.service_uuid.clone_from(&invalid);
+            assert!(malformed.validate().is_err(), "{invalid}");
+        }
+    }
+
+    #[test]
+    fn ble_header_bits_cannot_overlap_or_move() {
+        let root = crate::check::repo_root().expect("repository");
+        let registry = Registry::load(&root).expect("valid registry");
+        for (flag, mask) in [(0, 127), (128, 255), (64, 63)] {
+            let mut ble = registry.ble.clone();
+            ble.last_flag = flag;
+            ble.index_mask = mask;
+            assert!(ble.validate().is_err());
+        }
     }
 }

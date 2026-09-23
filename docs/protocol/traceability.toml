@@ -1028,7 +1028,10 @@
 # firmware lifecycle. The codec tests cover L-193. UART provenance after LinkUp,
 # controller notifications and the radio deadline remain firmware#11's work;
 # the codecs do not implement those three rules.
-uncovered = 129
+# 129 -> 126: BLE transport traces now exercise P-036, P-037 and P-039. Radio
+# and native adapter evidence remains in DEFERRED entry 7; the conformance
+# claim is unchanged.
+uncovered = 126
 
 # P-045 is the shape this file is for. Nothing can drive an implementation into
 # transmitting a key it does not have, so the thing that stands behind it reads

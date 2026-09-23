@@ -2511,3 +2511,112 @@ fn the_published_command_and_ack_bodies_decode_and_reencode_byte_for_byte() {
     let len = want.encode(&mut dst).expect("fits");
     assert_eq!(dst.get(..len), Some(published.as_slice()));
 }
+
+// The BLE trace is a flat array of scalar-only steps. Reading each object from
+// the committed artifact keeps this test independent of the vector generator.
+fn ble_field<'a>(step: &'a str, key: &str) -> &'a str {
+    let needle = format!("\"{key}\": ");
+    let tail = step.split_once(&needle).expect("trace field").1;
+    if let Some(text) = tail.strip_prefix('"') {
+        text.split_once('"').expect("closing quote").0
+    } else {
+        tail.split([',', '\n', '}']).next().expect("scalar").trim()
+    }
+}
+
+fn ble_hex(text: &str) -> Vec<u8> {
+    assert_eq!(text.len() % 2, 0);
+    text.as_bytes()
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|pair| {
+            u8::from_str_radix(core::str::from_utf8(pair).expect("ASCII hex"), 16)
+                .expect("hex byte")
+        })
+        .collect()
+}
+
+fn ble_status(error: km43::BleError) -> &'static str {
+    match error {
+        km43::BleError::Mtu => "mtu",
+        km43::BleError::Length => "length",
+        km43::BleError::Sequence => "sequence",
+        km43::BleError::Busy => "busy",
+        km43::BleError::Buffer => "buffer",
+        km43::BleError::Idle => "idle",
+    }
+}
+
+#[test]
+fn p_036_p_037_p_039_shared_ble_trace_checks_bytes_faults_and_queue_state() {
+    let trace = VECTORS.split_once("\"ble\": [").expect("BLE vectors").1;
+    let mut rx = km43::BleReceiver::new();
+    let mut tx = km43::BleSender::new();
+    let mut cases = 0;
+    let mut steps = 0;
+    for object in trace.split("\"action\": ").skip(1) {
+        let step = format!(
+            "\"action\": {}",
+            object.split_once('}').expect("step end").0
+        );
+        let action = ble_field(&step, "action");
+        let expected = ble_field(&step, "expected");
+        let input = ble_hex(ble_field(&step, "input"));
+        let output = ble_hex(ble_field(&step, "output"));
+        let mtu =
+            km43::BleMtu::new(ble_field(&step, "mtu").parse().expect("MTU")).expect("valid MTU");
+        let now = ble_field(&step, "now_ms")
+            .parse()
+            .expect("monotonic milliseconds");
+        let mut out = [0u8; km43::BLE_MAX_VALUE];
+        let status = match action {
+            "reset" => {
+                rx.reset();
+                tx.reset();
+                cases += 1;
+                continue;
+            }
+            "disconnect" => {
+                rx.reset();
+                tx.reset();
+                "ok"
+            }
+            "expire" => {
+                rx.expire(now);
+                "ok"
+            }
+            "enqueue" => tx.enqueue(&input, mtu).map_or_else(ble_status, |()| "ok"),
+            "accepted" => tx.accepted().map_or_else(ble_status, |()| "ok"),
+            "fragment" | "small_buffer" => {
+                let size = if action == "small_buffer" {
+                    2
+                } else {
+                    out.len()
+                };
+                tx.fragment(&mut out[..size]).map_or_else(ble_status, |n| {
+                    assert_eq!(&out[..n], output, "step {steps}: output");
+                    "ok"
+                })
+            }
+            "receive" => rx
+                .receive(&input, mtu, now)
+                .map_or_else(ble_status, |value| {
+                    if let Some(bytes) = value {
+                        assert_eq!(bytes, output, "step {steps}: reassembly");
+                        "message"
+                    } else {
+                        "pending"
+                    }
+                }),
+            _ => panic!("unhandled BLE vector action {action}"),
+        };
+        assert_eq!(status, expected, "step {steps}: {action}");
+        steps += 1;
+    }
+    assert_eq!(cases, 18, "a trace case was added or removed");
+    assert!(
+        steps > 1500,
+        "the wrap trace must run through the whole ID space"
+    );
+}

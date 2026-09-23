@@ -22,6 +22,7 @@ macro_rules! const_assert {
 }
 
 mod admission;
+mod ble;
 mod boot;
 mod cbor;
 mod changes;
@@ -59,6 +60,7 @@ mod time;
 mod wrapper;
 
 pub use admission::*;
+pub use ble::*;
 pub use boot::*;
 pub use cbor::*;
 pub use changes::*;

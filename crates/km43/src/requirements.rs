@@ -9,7 +9,7 @@ pub const REQUIREMENTS: &[Requirement] = &[
         id: "P-001",
         document: "docs/PROTOCOL.md",
         section: "How to read this",
-        statement: "An implementation MUST reproduce every vector in `protocol/vectors/v1.json` exactly before it is connected to another implementation.",
+        statement: "An implementation MUST reproduce every vector in `protocol/vectors/v1.json` applicable to its transports exactly before it is connected to another implementation.",
     },
     Requirement {
         id: "P-005",
@@ -207,13 +207,13 @@ pub const REQUIREMENTS: &[Requirement] = &[
         id: "P-036",
         document: "docs/PROTOCOL.md",
         section: "BLE GATT",
-        statement: "`flags` bit 7 (`0x80`) is `last`; bits 6–0 are the fragment index, `0`–`127`.",
+        statement: "`flags` bit 7 (`BLE_LAST_FLAG`, `0x80`) is `last`; bits 6–0 (`BLE_INDEX_MASK`) are the fragment index, starting at zero and increasing by one through at most 127.",
     },
     Requirement {
         id: "P-037",
         document: "docs/PROTOCOL.md",
         section: "BLE GATT",
-        statement: "Fragment data MUST be at most `ATT_MTU − 5` bytes: three for the ATT notification header and two for the fragment header above.",
+        statement: "Fragment data MUST be at most `min(ATT_MTU − 3, 512) − 2` bytes: three ATT bytes, then two KM43 bytes, with the GATT attribute limit also applied.",
     },
     Requirement {
         id: "P-039",

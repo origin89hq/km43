@@ -12,6 +12,7 @@
 #![warn(clippy::pedantic)]
 
 mod bindings;
+mod ble_vectors;
 mod bodies;
 mod check;
 mod codegen;
