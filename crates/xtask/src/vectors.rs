@@ -2229,9 +2229,9 @@ impl Builder {
                 "time_0x0A",
                 Msg::Time,
                 OPERATION,
-                cmap! { 1 => Cb::U(1_700_000_000_000), 2 => Cb::U(1) },
-                Some("{1:at, 2:source}"),
-                "at 1700000000000, source 1 client",
+                cmap! { 1 => Cb::U(1_700_000_000_000) },
+                Some("{1:at}"),
+                "at 1700000000000; key 2 is retired and the time set record names source 1 client because a signed write moved the clock (P-111)",
             ),
             (
                 "timeack_0x8A",

@@ -12,39 +12,42 @@
 //! answer without the time it was set to is a controller that moved the clock
 //! and will not say where, and [`TimeAck::new`] refuses to build one.
 //!
+//! The operation carries no source. A signed write is always `client` in the
+//! `time set` record (P-111), so key 2, which once said so, is retired and
+//! skipped like any key this build does not know: a client that still sends
+//! `ntp-via-comms` there cannot get its own write logged as NTP.
+//!
 //! cites: P-013, P-015, P-093, P-110
 
 use core::fmt;
 
 use crate::cbor::{CborError, CborReader, CborWriter};
 use crate::envelope::Refusal;
-use crate::generated::{ErrorCode, Time, TimeSource};
+use crate::generated::{ErrorCode, Time};
 
-/// `at` at full `u64` width and a one-byte `source`: the map head, two
-/// one-byte keys, nine bytes and one. A destination this long always fits.
-pub const MAX_TIME_OPERATION_BYTES: usize = 13;
+/// `at` at full `u64` width: the map head, a one-byte key and nine bytes. A
+/// destination this long always fits.
+pub const MAX_TIME_OPERATION_BYTES: usize = 11;
 
-/// A one-byte `outcome` and `at` at full `u64` width, the same arithmetic as
-/// [`MAX_TIME_OPERATION_BYTES`] with the keys the other way round.
+/// A one-byte `outcome` and `at` at full `u64` width: the map head, two
+/// one-byte keys, one byte and nine.
 pub const MAX_TIME_ACK_BYTES: usize = 13;
 
-/// The two keys of the `Time 0x0A` operation body.
+/// The keys of the `Time 0x0A` operation body. Key 2 is retired (P-012) and
+/// is not one of them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum TimeKey {
     /// Key 1, milliseconds since the epoch.
     At,
-    /// Key 2, from the registry's time-source space.
-    Source,
 }
 
 impl TimeKey {
-    const COUNT: usize = 2;
+    const COUNT: usize = 1;
 
     const fn of(number: i64) -> Option<Self> {
         match number {
             1 => Some(Self::At),
-            2 => Some(Self::Source),
             _ => None,
         }
     }
@@ -52,14 +55,12 @@ impl TimeKey {
     const fn number(self) -> i64 {
         match self {
             Self::At => 1,
-            Self::Source => 2,
         }
     }
 
     const fn name(self) -> &'static str {
         match self {
             Self::At => "at",
-            Self::Source => "source",
         }
     }
 }
@@ -142,17 +143,15 @@ impl fmt::Display for TimeBodyKey {
     }
 }
 
-/// The operation a client signs to set the clock. Both keys are required: a
-/// set with no time is not a set, and one with no source leaves P-111's
-/// `time set` record nothing to name.
+/// The operation a client signs to set the clock. `at` is required: a set with
+/// no time is not a set. Who set it is not the client's to say; the `time set`
+/// record names `client` because this message moved the clock (P-111).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct TimeOperation {
     /// Key 1, milliseconds since the epoch. Whether it is plausible is the
     /// controller's decision (P-113, P-114), not the decoder's.
     pub at: u64,
-    /// Key 2.
-    pub source: TimeSource,
 }
 
 impl TimeOperation {
@@ -162,8 +161,6 @@ impl TimeOperation {
         cbor.map(TimeKey::COUNT)?;
         cbor.key(TimeKey::At.number())?;
         cbor.u64(self.at)?;
-        cbor.key(TimeKey::Source.number())?;
-        cbor.u64(self.source as u64)?;
         Ok(cbor.finish()?)
     }
 
@@ -171,23 +168,16 @@ impl TimeOperation {
     pub fn decode(operation: &[u8]) -> Result<Self, TimeError> {
         let mut body = CborReader::new(operation);
         let pairs = body.map()?;
-        let (mut at, mut source) = (None, None);
+        let mut at = None;
         for _ in 0..pairs {
             match TimeKey::of(body.key()?) {
                 Some(key @ TimeKey::At) => once(&mut at, key, body.u64()?)?,
-                Some(key @ TimeKey::Source) => {
-                    let number = body.u8()?;
-                    let value = TimeSource::try_from(number)
-                        .map_err(|()| TimeError::UnknownSource(number))?;
-                    once(&mut source, key, value)?;
-                }
                 None => body.skip()?,
             }
         }
         body.finish()?;
         Ok(Self {
             at: at.ok_or(TimeError::Missing(TimeKey::At.into()))?,
-            source: source.ok_or(TimeError::Missing(TimeKey::Source.into()))?,
         })
     }
 }
@@ -279,8 +269,6 @@ pub enum TimeError {
     Missing(TimeBodyKey),
     /// The same key twice (P-015), refused before either copy is used.
     Duplicate(TimeBodyKey),
-    /// The time-source space does not allocate this value.
-    UnknownSource(u8),
     /// The `Time` outcome space does not allocate this value.
     UnknownOutcome(u8),
     /// Outcome 1 with no `at`: the clock moved and the answer does not say where.
@@ -303,7 +291,6 @@ impl TimeError {
         match self {
             Self::Missing(_)
             | Self::Duplicate(_)
-            | Self::UnknownSource(_)
             | Self::UnknownOutcome(_)
             | Self::AcceptedWithoutClock
             | Self::Cbor(_) => Refusal::Client(ErrorCode::MalformedFrame),
@@ -316,7 +303,6 @@ impl fmt::Display for TimeError {
         match self {
             Self::Missing(key) => write!(f, "clock body carries no {key}"),
             Self::Duplicate(key) => write!(f, "clock body carries {key} twice"),
-            Self::UnknownSource(value) => write!(f, "unallocated time source {value}"),
             Self::UnknownOutcome(value) => write!(f, "unallocated TimeAck outcome {value}"),
             Self::AcceptedWithoutClock => {
                 f.write_str("TimeAck accepted a set and carries no clock to say where it went")
@@ -333,23 +319,18 @@ mod tests {
     use super::*;
     use crate::render::Rendering;
 
-    const OPERATIONS: [TimeOperation; 4] = [
-        TimeOperation {
-            at: 0,
-            source: TimeSource::Client,
-        },
-        TimeOperation {
-            at: 23,
-            source: TimeSource::NtpViaComms,
-        },
+    /// One `at` at each CBOR width a `u64` can take, and the edges of the
+    /// one-byte form.
+    const OPERATIONS: [TimeOperation; 7] = [
+        TimeOperation { at: 0 },
+        TimeOperation { at: 23 },
+        TimeOperation { at: 24 },
+        TimeOperation { at: 0x1_0000 },
+        TimeOperation { at: 0x1_0000_0000 },
         TimeOperation {
             at: 1_700_000_000_000,
-            source: TimeSource::Client,
         },
-        TimeOperation {
-            at: u64::MAX,
-            source: TimeSource::NtpViaComms,
-        },
+        TimeOperation { at: u64::MAX },
     ];
 
     const OUTCOMES: [Time; 4] = [
@@ -478,16 +459,8 @@ mod tests {
             (&[0xa0][..], TimeError::Missing(TimeKey::At.into())),
             (&[0xa1, 2, 1][..], TimeError::Missing(TimeKey::At.into())),
             (
-                &[0xa1, 1, 0][..],
-                TimeError::Missing(TimeKey::Source.into()),
-            ),
-            (
-                &[0xa3, 1, 0, 1, 0, 2, 1][..],
+                &[0xa2, 1, 0, 1, 0][..],
                 TimeError::Duplicate(TimeKey::At.into()),
-            ),
-            (
-                &[0xa3, 1, 0, 2, 1, 2, 1][..],
-                TimeError::Duplicate(TimeKey::Source.into()),
             ),
         ] {
             assert_eq!(TimeOperation::decode(bytes), Err(want), "{bytes:02x?}");
@@ -512,24 +485,50 @@ mod tests {
     }
 
     /// A number the registry never allocated is a sender this build cannot
-    /// understand, not a source or an outcome to guess at. Zero is the value a
-    /// sender that forgot to set the field writes.
+    /// understand, not an outcome to guess at. Zero is the value a sender that
+    /// forgot to set the field writes.
     #[test]
-    fn unallocated_sources_and_outcomes_are_refused() {
-        for number in [0u8, 3, 23] {
-            assert_eq!(
-                TimeOperation::decode(&[0xa2, 1, 0, 2, number]),
-                Err(TimeError::UnknownSource(number))
-            );
-        }
+    fn unallocated_outcomes_are_refused() {
         for number in [0u8, 5, 23] {
             assert_eq!(
                 TimeAck::decode(&[0xa1, 1, number]),
                 Err(TimeError::UnknownOutcome(number))
             );
         }
-        assert!(TimeOperation::decode(&[0xa2, 1, 0, 2, 0x19, 1, 1]).is_err());
         assert!(TimeAck::decode(&[0xa1, 1, 0x19, 1, 1]).is_err());
+    }
+
+    /// Key 2 once carried a `source`, and a client that sent `2` there could
+    /// have had its own signed write logged as NTP from the comms processor,
+    /// the inversion P-111 exists to prevent. It is retired: whatever a sender
+    /// still puts there, allocated, unallocated or the wrong type, is skipped,
+    /// and the operation that comes out has nothing in it to name who set the
+    /// clock. This is the codec's half only; the `time set` record P-111 asks
+    /// for has no handler producing it yet, so nothing here claims P-111.
+    #[test]
+    fn a_retired_source_key_is_skipped_and_never_written() {
+        for bytes in [
+            &[0xa2, 1, 5, 2, 2][..],
+            &[0xa2, 2, 2, 1, 5],
+            &[0xa2, 1, 5, 2, 1],
+            &[0xa2, 1, 5, 2, 0],
+            &[0xa2, 1, 5, 2, 0xf5],
+            &[0xa2, 1, 5, 2, 0x19, 1, 1],
+        ] {
+            assert_eq!(
+                TimeOperation::decode(bytes),
+                Ok(TimeOperation { at: 5 }),
+                "{bytes:02x?}"
+            );
+        }
+        assert_eq!(
+            TimeOperation::decode(&[0xa1, 2, 2]),
+            Err(TimeError::Missing(TimeKey::At.into())),
+            "the retired key does not stand in for `at`"
+        );
+
+        let (dst, len) = encoded_operation(TimeOperation { at: 5 });
+        assert_eq!(&dst[..len], &[0xa1, 1, 5], "key 2 is never written");
     }
 
     /// The wrong CBOR type under a known key is refused rather than coerced: a
@@ -537,10 +536,10 @@ mod tests {
     #[test]
     fn a_known_key_of_the_wrong_type_is_refused() {
         for bytes in [
-            &[0xa2, 1, 0x20, 2, 1][..],
-            &[0xa2, 1, 0xf6, 2, 1],
-            &[0xa2, 1, 0, 2, 0xf5],
-            &[0x82, 1, 1],
+            &[0xa1, 1, 0x20][..],
+            &[0xa1, 1, 0xf6],
+            &[0xa1, 1, 0xf5],
+            &[0x81, 1],
         ] {
             assert!(TimeOperation::decode(bytes).is_err(), "{bytes:02x?}");
         }
@@ -560,11 +559,8 @@ mod tests {
             assert_eq!(TimeOperation::decode(&dst[..len + 4]), Ok(op));
         }
         assert_eq!(
-            TimeOperation::decode(&[0xa3, 3, 0x61, b'x', 1, 5, 2, 1]),
-            Ok(TimeOperation {
-                at: 5,
-                source: TimeSource::Client
-            })
+            TimeOperation::decode(&[0xa2, 3, 0x61, b'x', 1, 5]),
+            Ok(TimeOperation { at: 5 })
         );
         for ack in acks() {
             let (mut dst, len) = encoded_ack(ack);
@@ -579,9 +575,8 @@ mod tests {
         let errors = [
             TimeError::Missing(TimeKey::At.into()),
             TimeError::Missing(TimeAckKey::At.into()),
-            TimeError::Duplicate(TimeKey::Source.into()),
+            TimeError::Duplicate(TimeKey::At.into()),
             TimeError::Duplicate(TimeAckKey::Outcome.into()),
-            TimeError::UnknownSource(0),
             TimeError::UnknownOutcome(0),
             TimeError::AcceptedWithoutClock,
             TimeError::Cbor(CborError::WrongType),
