@@ -17,7 +17,7 @@
 //! skipped like any key this build does not know: a client that still sends
 //! `ntp-via-comms` there cannot get its own write logged as NTP.
 //!
-//! cites: P-012, P-013, P-015, P-093, P-110, P-111
+//! cites: P-013, P-015, P-093, P-110
 
 use core::fmt;
 
@@ -498,13 +498,15 @@ mod tests {
         assert!(TimeAck::decode(&[0xa1, 1, 0x19, 1, 1]).is_err());
     }
 
-    /// Key 2 once carried a `source`, and a client that sent `2` there had its
-    /// own signed write logged as NTP from the comms processor, the inversion
-    /// P-111 exists to prevent. It is retired: whatever a sender still puts
-    /// there, allocated, unallocated or the wrong type, is skipped, and the
-    /// operation that comes out has nothing in it to name who set the clock.
+    /// Key 2 once carried a `source`, and a client that sent `2` there could
+    /// have had its own signed write logged as NTP from the comms processor,
+    /// the inversion P-111 exists to prevent. It is retired: whatever a sender
+    /// still puts there, allocated, unallocated or the wrong type, is skipped,
+    /// and the operation that comes out has nothing in it to name who set the
+    /// clock. This is the codec's half only; the `time set` record P-111 asks
+    /// for has no handler producing it yet, so nothing here claims P-111.
     #[test]
-    fn p_111_a_retired_source_key_cannot_name_who_set_the_clock() {
+    fn a_retired_source_key_is_skipped_and_never_written() {
         for bytes in [
             &[0xa2, 1, 5, 2, 2][..],
             &[0xa2, 2, 2, 1, 5],
