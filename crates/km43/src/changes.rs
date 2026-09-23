@@ -60,9 +60,9 @@ impl VChange {
         let (mut sig, mut q, mut prev) = (None, None, None);
         for _ in 0..pairs {
             match body.key()? {
-                1 => sig = Some(Id::new(body.u16()?)?),
-                2 => q = Some(SignalQuality::from_byte(body.u8()?)?),
-                3 => prev = Some(SignalQuality::from_byte(body.u8()?)?),
+                1 => once(&mut sig, 1, Id::new(body.u16()?)?)?,
+                2 => once(&mut q, 2, SignalQuality::from_byte(body.u8()?)?)?,
+                3 => once(&mut prev, 3, SignalQuality::from_byte(body.u8()?)?)?,
                 _ => body.skip()?,
             }
         }
@@ -114,9 +114,9 @@ impl PChange {
         };
         for _ in 0..pairs {
             match body.key()? {
-                1 => dev = Some(Id::new(body.u16()?)?),
-                2 => presence = Some(read(&mut body)?),
-                3 => prev = Some(read(&mut body)?),
+                1 => once(&mut dev, 1, Id::new(body.u16()?)?)?,
+                2 => once(&mut presence, 2, read(&mut body)?)?,
+                3 => once(&mut prev, 3, read(&mut body)?)?,
                 _ => body.skip()?,
             }
         }
@@ -364,11 +364,11 @@ fn sweep(payload: &[u8]) -> Result<(u32, CborReader<'_>, usize), ChangeError> {
     let (mut rev, mut entries) = (None, None);
     for _ in 0..pairs {
         match body.key()? {
-            1 => rev = Some(body.u32()?),
+            1 => once(&mut rev, 1, body.u32()?)?,
             // Taken as bytes, which proves the array is well formed to its
             // last byte; the iterator then reads a slice this walk has vouched
             // for.
-            2 => entries = Some(body.raw()?),
+            2 => once(&mut entries, 2, body.raw()?)?,
             _ => body.skip()?,
         }
     }
@@ -469,16 +469,18 @@ impl TopologyChanged {
         let (mut rev, mut reason, mut added, mut removed) = (None, None, None, None);
         for _ in 0..pairs {
             match body.key()? {
-                1 => rev = Some(body.u32()?),
+                1 => once(&mut rev, 1, body.u32()?)?,
                 2 => {
                     let number = body.u8()?;
-                    reason = Some(
+                    once(
+                        &mut reason,
+                        2,
                         TopologyChangeReason::try_from(number)
                             .map_err(|()| ChangeError::UnknownReason(number))?,
-                    );
+                    )?;
                 }
-                3 => added = Some(body.u16()?),
-                4 => removed = Some(body.u16()?),
+                3 => once(&mut added, 3, body.u16()?)?,
+                4 => once(&mut removed, 4, body.u16()?)?,
                 _ => body.skip()?,
             }
         }
@@ -492,10 +494,20 @@ impl TopologyChanged {
     }
 }
 
+fn once<T>(slot: &mut Option<T>, key: u8, value: T) -> Result<(), ChangeError> {
+    if slot.is_some() {
+        return Err(ChangeError::Duplicate(key));
+    }
+    *slot = Some(value);
+    Ok(())
+}
+
 /// Why a change record was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ChangeError {
+    /// A recognized key appeared twice (P-015).
+    Duplicate(u8),
     /// 0 handed to an id space that reserves it as the paging sentinel.
     ZeroId,
     /// An entry whose new value is the one it moved from. Not a change, and a
@@ -552,7 +564,8 @@ impl ChangeError {
         match self {
             Self::EntryTooLong(_) => Refusal::Client(ErrorCode::PayloadTooLarge),
             Self::Quality(why) => why.refusal(),
-            Self::ZeroId
+            Self::Duplicate(_)
+            | Self::ZeroId
             | Self::WentNowhere
             | Self::NothingChanged
             | Self::MissingEntry(_)
@@ -567,6 +580,7 @@ impl ChangeError {
 impl fmt::Display for ChangeError {
     fn fmt(&self, w: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Duplicate(k) => write!(w, "a changes map carrying key {k} twice"),
             Self::ZeroId => w.write_str("0 is the end-of-paging sentinel and never an id"),
             Self::WentNowhere => {
                 w.write_str("a change to the value it moved from, which is not a change")
@@ -600,7 +614,8 @@ mod tests {
     /// to be answered `rejected`.
     #[test]
     fn every_refusal_says_something_of_its_own() {
-        const EVERY: [ChangeError; 10] = [
+        const EVERY: [ChangeError; 11] = [
+            ChangeError::Duplicate(1),
             ChangeError::ZeroId,
             ChangeError::WentNowhere,
             ChangeError::NothingChanged,
@@ -1057,5 +1072,212 @@ mod tests {
             PresenceChanged::decode(out.get(..len).expect("the body")).expect("whole");
         assert_eq!(rev, 41);
         assert_eq!(entries.count(), 1);
+    }
+
+    // Repeating an optional or empty field must not erase its first occurrence.
+    #[test]
+    fn p_015_vchange_refuses_each_repeated_key() {
+        for key in 1u8..=3 {
+            for separated in [false, true] {
+                let mut out = [0u8; 256];
+                let mut used = 1;
+                out[0] = if separated { 0xa3 } else { 0xa2 };
+                for occurrence in 0..2 {
+                    if separated && occurrence == 1 {
+                        out[used..used + 3].copy_from_slice(&[0x18, 99, 0]);
+                        used += 3;
+                    }
+                    out[used] = key;
+                    used += 1;
+                    let mut cbor = CborWriter::new(&mut out[used..]);
+                    match key {
+                        2 | 3 => cbor.u64(u64::from(ok().byte())),
+                        _ => cbor.u64(1),
+                    }
+                    .expect("value");
+                    used += cbor.finish().expect("value length");
+                }
+                let bytes = &out[..used];
+                let why = VChange::decode(bytes)
+                    .map(|_| ())
+                    .expect_err("duplicate refused");
+                assert_eq!(
+                    why,
+                    ChangeError::Duplicate(key),
+                    "key {key}, separated {separated}"
+                );
+                assert_eq!(why.refusal(), Refusal::Client(ErrorCode::MalformedFrame));
+            }
+        }
+    }
+
+    // Repeating an optional or empty field must not erase its first occurrence.
+    #[test]
+    fn p_015_pchange_refuses_each_repeated_key() {
+        for key in 1u8..=3 {
+            for separated in [false, true] {
+                let mut out = [0u8; 256];
+                let mut used = 1;
+                out[0] = if separated { 0xa3 } else { 0xa2 };
+                for occurrence in 0..2 {
+                    if separated && occurrence == 1 {
+                        out[used..used + 3].copy_from_slice(&[0x18, 99, 0]);
+                        used += 3;
+                    }
+                    out[used] = key;
+                    used += 1;
+                    let mut cbor = CborWriter::new(&mut out[used..]);
+                    match key {
+                        2 | 3 => cbor.u64(Presence::Online as u64),
+                        _ => cbor.u64(1),
+                    }
+                    .expect("value");
+                    used += cbor.finish().expect("value length");
+                }
+                let bytes = &out[..used];
+                let why = PChange::decode(bytes)
+                    .map(|_| ())
+                    .expect_err("duplicate refused");
+                assert_eq!(
+                    why,
+                    ChangeError::Duplicate(key),
+                    "key {key}, separated {separated}"
+                );
+                assert_eq!(why.refusal(), Refusal::Client(ErrorCode::MalformedFrame));
+            }
+        }
+    }
+
+    // Repeating an optional or empty field must not erase its first occurrence.
+    #[test]
+    fn p_015_validity_changed_refuses_each_repeated_key() {
+        for key in 1u8..=2 {
+            for separated in [false, true] {
+                let mut out = [0u8; 256];
+                let mut used = 1;
+                out[0] = if separated { 0xa3 } else { 0xa2 };
+                for occurrence in 0..2 {
+                    if separated && occurrence == 1 {
+                        out[used..used + 3].copy_from_slice(&[0x18, 99, 0]);
+                        used += 3;
+                    }
+                    out[used] = key;
+                    used += 1;
+                    let mut cbor = CborWriter::new(&mut out[used..]);
+                    match key {
+                        2 => cbor.array(0),
+                        _ => cbor.u64(1),
+                    }
+                    .expect("value");
+                    used += cbor.finish().expect("value length");
+                }
+                let bytes = &out[..used];
+                let why = ValidityChanged::decode(bytes)
+                    .map(|_| ())
+                    .expect_err("duplicate refused");
+                assert_eq!(
+                    why,
+                    ChangeError::Duplicate(key),
+                    "key {key}, separated {separated}"
+                );
+                assert_eq!(why.refusal(), Refusal::Client(ErrorCode::MalformedFrame));
+            }
+        }
+    }
+
+    // Repeating an optional or empty field must not erase its first occurrence.
+    #[test]
+    fn p_015_presence_changed_refuses_each_repeated_key() {
+        for key in 1u8..=2 {
+            for separated in [false, true] {
+                let mut out = [0u8; 256];
+                let mut used = 1;
+                out[0] = if separated { 0xa3 } else { 0xa2 };
+                for occurrence in 0..2 {
+                    if separated && occurrence == 1 {
+                        out[used..used + 3].copy_from_slice(&[0x18, 99, 0]);
+                        used += 3;
+                    }
+                    out[used] = key;
+                    used += 1;
+                    let mut cbor = CborWriter::new(&mut out[used..]);
+                    match key {
+                        2 => cbor.array(0),
+                        _ => cbor.u64(1),
+                    }
+                    .expect("value");
+                    used += cbor.finish().expect("value length");
+                }
+                let bytes = &out[..used];
+                let why = PresenceChanged::decode(bytes)
+                    .map(|_| ())
+                    .expect_err("duplicate refused");
+                assert_eq!(
+                    why,
+                    ChangeError::Duplicate(key),
+                    "key {key}, separated {separated}"
+                );
+                assert_eq!(why.refusal(), Refusal::Client(ErrorCode::MalformedFrame));
+            }
+        }
+    }
+
+    // Repeating an optional or empty field must not erase its first occurrence.
+    #[test]
+    fn p_015_topology_changed_refuses_each_repeated_key() {
+        for key in 1u8..=4 {
+            for separated in [false, true] {
+                let mut out = [0u8; 256];
+                let mut used = 1;
+                out[0] = if separated { 0xa3 } else { 0xa2 };
+                for occurrence in 0..2 {
+                    if separated && occurrence == 1 {
+                        out[used..used + 3].copy_from_slice(&[0x18, 99, 0]);
+                        used += 3;
+                    }
+                    out[used] = key;
+                    used += 1;
+                    let mut cbor = CborWriter::new(&mut out[used..]);
+                    match key {
+                        2 => cbor.u64(TopologyChangeReason::Boot as u64),
+                        _ => cbor.u64(1),
+                    }
+                    .expect("value");
+                    used += cbor.finish().expect("value length");
+                }
+                let bytes = &out[..used];
+                let why = TopologyChanged::decode(bytes)
+                    .map(|_| ())
+                    .expect_err("duplicate refused");
+                assert_eq!(
+                    why,
+                    ChangeError::Duplicate(key),
+                    "key {key}, separated {separated}"
+                );
+                assert_eq!(why.refusal(), Refusal::Client(ErrorCode::MalformedFrame));
+            }
+        }
+    }
+    #[test]
+    fn p_015_conflicting_topology_reasons_are_refused() {
+        let mut out = [0u8; 64];
+        let original = TopologyChanged {
+            rev: 42,
+            reason: TopologyChangeReason::Boot,
+            added: 17,
+            removed: 0,
+        };
+        let len = original.encode(&mut out).expect("body");
+        assert_eq!(TopologyChanged::decode(&out[..len]), Ok(original));
+        out[0] = 0xa5;
+        out[len] = 2;
+        let mut tail = CborWriter::new(&mut out[len + 1..]);
+        tail.u64(TopologyChangeReason::SubDeviceAdopted as u64)
+            .expect("conflicting reason");
+        let end = len + 1 + tail.finish().expect("tail");
+        assert_eq!(
+            TopologyChanged::decode(&out[..end]),
+            Err(ChangeError::Duplicate(2))
+        );
     }
 }
