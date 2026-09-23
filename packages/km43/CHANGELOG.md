@@ -1,5 +1,15 @@
 # @origin89/km43
 
+## 0.5.0
+
+### Minor Changes
+
+- b12ba02: Add `BehaviourKey`, whose `Shadow` member is the key every behaviour config section carries its `shadow` flag under. `ConfigSection.IdentityAndSite` and `ConfigSection.Network` are no longer marked reserved: their section bodies are now defined.
+
+### Patch Changes
+
+- b12ba02: `MessageType.GetConfig` and `MessageType.SetConfig` are no longer marked reserved: their bodies, and the bodies of the identity and network sections, are now defined.
+
 ## 0.4.0
 
 ### Minor Changes
