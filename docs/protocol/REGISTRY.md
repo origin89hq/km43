@@ -450,13 +450,14 @@ argument for leaving the numbers overlapping is at the head of the metric table.
 | `0x0601` | boot | A | live |
 | `0x0602` | config changed | A | reserved |
 | `0x0603` | client enrolled | A | reserved |
-| `0x0604` | time set | A | reserved |
+| `0x0604` | time set | A | live |
 | `0x0701` | records dropped | A | reserved |
-| `0x0702` | record failed CRC | A | reserved |
-| `0x0801` | comms link lost | A | reserved |
-| `0x0802` | comms power cycled | A | reserved |
-| `0x0803` | comms unrecoverable | A | reserved |
-| `0x0804` | sessions shed for backpressure | A | reserved |
+| `0x0702` | record failed CRC | A | live |
+| `0x0801` | comms link lost | A | live |
+| `0x0802` | comms power cycled | A | live |
+| `0x0803` | comms unrecoverable | A | live |
+| `0x0804` | sessions shed for backpressure | A | live |
+| `0x0805` | comms boot noise | A | live |
 | `0x0901` | topology changed | A | live |
 | `0x0902` | device presence changed | A | live |
 

@@ -75,7 +75,7 @@ fn every_published_body_is_one_this_reader_walks_to_the_end() {
             seen += 1;
         }
     }
-    assert_eq!(seen, 27, "the vector file grew or shrank a body");
+    assert_eq!(seen, 36, "the vector file grew or shrank a body");
 }
 
 /// The envelope the generator publishes must decode here to the same four
@@ -296,7 +296,8 @@ fn the_pairing_and_hello_tags_are_ones_this_crate_recomputes_too() {
 /// `Discover 0x80`, the `Hello 0x81`, the `Inventory 0x8D`, the
 /// `Readings 0x8E`, the `Concerns 0x8F`, the six event bodies — the two
 /// concern records `0x0501` and `0x0502`, then `0x0102`, `0x0901` and `0x0902`,
-/// then the boot record `0x0601` — and the five read by name rather than by position: `Pair 0x0B`,
+/// then the boot record `0x0601`, followed by nine controller-record examples —
+/// and the five read by name rather than by position: `Pair 0x0B`,
 /// `Pair 0x8B`, the bare `Error 0xFF`, `ReadLog 0x05` and `LogPage 0x85`.
 ///
 /// Asserted rather than assumed, so a file that lost one does not hand the
@@ -306,7 +307,7 @@ fn the_pairing_and_hello_tags_are_ones_this_crate_recomputes_too() {
 /// after that message was retired.
 fn published_bodies() -> Vec<Vec<u8>> {
     let found = blobs("body_cbor");
-    assert_eq!(found.len(), 16, "the vector file grew or shrank a body");
+    assert_eq!(found.len(), 25, "the vector file grew or shrank a body");
     found
 }
 
@@ -2315,4 +2316,72 @@ fn the_published_logpage_is_the_one_this_crate_writes_and_reads() {
         read, page,
         "a field the asserts above do not name has moved"
     );
+}
+
+/// Read every controller record from the committed witness, then compare both
+/// its interpretation and its encoding. The generator does not depend on km43.
+#[test]
+fn p_215_published_controller_records_pin_each_body_schema() {
+    use core::num::NonZeroU32;
+    use km43::{CONTROLLER_RECORD_MAX_BYTES, ControllerRecord, TimeSource};
+    let cases = [
+        (
+            "timeset_0x0604",
+            ControllerRecord::TimeSet {
+                old: Some(1_700_000_005_000),
+                new: 1_700_000_000_000,
+                source: TimeSource::Client,
+            },
+        ),
+        (
+            "time_set_unknown_0x0604",
+            ControllerRecord::TimeSet {
+                old: None,
+                new: 1_700_000_000_000,
+                source: TimeSource::NtpViaComms,
+            },
+        ),
+        (
+            "recordfailedcrc_0x0702",
+            ControllerRecord::RecordFailedCrc {
+                count: NonZeroU32::new(2).expect("positive"),
+            },
+        ),
+        ("commslinklost_0x0801", ControllerRecord::CommsLinkLost),
+        (
+            "commspowercycled_0x0802",
+            ControllerRecord::CommsPowerCycled {
+                count: NonZeroU32::new(3).expect("positive"),
+            },
+        ),
+        (
+            "commsunrecoverable_0x0803",
+            ControllerRecord::CommsUnrecoverable { rail_on: false },
+        ),
+        (
+            "comms_unrecoverable_on_0x0803",
+            ControllerRecord::CommsUnrecoverable { rail_on: true },
+        ),
+        (
+            "sessionsshedforbackpressure_0x0804",
+            ControllerRecord::SessionsShed {
+                count: NonZeroU32::MIN,
+            },
+        ),
+        (
+            "commsbootnoise_0x0805",
+            ControllerRecord::CommsBootNoise { count: 1140 },
+        ),
+    ];
+    for (name, want) in cases {
+        let published = blob_under(name, "body_cbor");
+        assert_eq!(
+            ControllerRecord::decode(want.kind(), &published),
+            Ok(want),
+            "{name}"
+        );
+        let mut dst = [0; CONTROLLER_RECORD_MAX_BYTES];
+        let len = want.encode(&mut dst).expect("fits");
+        assert_eq!(dst.get(..len), Some(published.as_slice()), "{name}");
+    }
 }

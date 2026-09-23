@@ -1,11 +1,9 @@
 //! `Event 0x04` — the only message that arrives without having been asked for,
 //! and the mark that stops one arriving twice.
 //!
-//! The body is deliberately opaque here. Every event kind's schema is deferred
-//! (DEFERRED.md entry 10), so this module carries key 4 as the bytes it arrived
-//! as and refuses to guess: it checks that they are a well-formed CBOR map and
-//! reads not one key inside. A decoder that invented a schema would be two
-//! implementations disagreeing about a record that is already in the log.
+//! The body is deliberately opaque here. This module carries key 4 as the
+//! bytes it arrived as, checking only that they form a CBOR map. Callers decode
+//! supported kinds with their body codecs; unknown kinds still advance the mark.
 //!
 //! What is *not* deferred is the anti-replay. P-056's mark is one `u64` per
 //! session and it is the whole defence: the comms processor can hold a
@@ -33,7 +31,7 @@ pub enum EventKey {
     /// Key 3, an **open** set — a kind this build cannot name is surfaced, not
     /// refused (P-019).
     Kind,
-    /// Key 4, whose schema is deferred for every kind.
+    /// Key 4, interpreted by the codec for the selected kind.
     Body,
 }
 
@@ -78,10 +76,9 @@ impl fmt::Display for EventKey {
 /// One record on its way to a screen.
 ///
 /// `body` is borrowed and uninterpreted. It is validated as a CBOR map and
-/// nothing more, because every kind's schema is deferred — so a client that
-/// cannot name the kind still gets a `seq` it can advance its mark with, which
-/// is what P-019 asks for and what keeps one unknown record from stopping the
-/// stream.
+/// nothing more. A client that cannot name the kind still gets a `seq` to
+/// advance its mark with, keeping one unknown record from stopping the stream
+/// (P-019).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Event<'a> {
     /// Key 1.
@@ -95,7 +92,7 @@ pub struct Event<'a> {
 
 impl<'a> Event<'a> {
     /// A record to send. `body` is the kind's own map, encoded by whoever knows
-    /// its schema — which is nobody yet, so this checks its shape and carries it.
+    /// its schema; this checks its shape and carries it.
     pub fn new(
         seq: LogSeq,
         at: Option<u64>,
@@ -112,7 +109,7 @@ impl<'a> Event<'a> {
     }
 
     /// Key 4 as it arrived. A caller that knows the kind's schema decodes it;
-    /// this module does not, and will not until one is written down.
+    /// this module only checks the envelope.
     #[must_use]
     pub const fn body(&self) -> &'a [u8] {
         self.body

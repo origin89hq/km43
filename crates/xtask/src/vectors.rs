@@ -1851,6 +1851,95 @@ impl Builder {
         )]
     }
 
+    /// Independent encodings of the controller's durable records (P-215).
+    fn controller_events() -> Vec<(&'static str, Value)> {
+        [
+            (
+                "timeset_0x0604",
+                0x0604u16,
+                cmap! {
+                    1 => Cb::U(1_700_000_005_000), 2 => Cb::U(1_700_000_000_000), 3 => Cb::U(1)
+                },
+                "old 1700000005000, new 1700000000000, source client: a backward step",
+            ),
+            (
+                "time_set_unknown_0x0604",
+                0x0604,
+                cmap! {
+                    2 => Cb::U(1_700_000_000_000), 3 => Cb::U(2)
+                },
+                "old absent, new 1700000000000, source ntp-via-comms",
+            ),
+            (
+                "recordfailedcrc_0x0702",
+                0x0702,
+                cmap! { 1 => Cb::U(2) },
+                "two stored records failed CRC in this scan",
+            ),
+            (
+                "commslinklost_0x0801",
+                0x0801,
+                Cb::M(BTreeMap::new()),
+                "the first recovery rung; no diagnosis in the body",
+            ),
+            (
+                "commspowercycled_0x0802",
+                0x0802,
+                cmap! { 1 => Cb::U(3) },
+                "third rail cycle in the preceding hour",
+            ),
+            (
+                "commsunrecoverable_0x0803",
+                0x0803,
+                cmap! { 1 => Cb::Bool(false) },
+                "the rail left off during the recovery pause",
+            ),
+            (
+                "comms_unrecoverable_on_0x0803",
+                0x0803,
+                cmap! { 1 => Cb::Bool(true) },
+                "the board exception: rail left on and uncycled",
+            ),
+            (
+                "sessionsshedforbackpressure_0x0804",
+                0x0804,
+                cmap! { 1 => Cb::U(1) },
+                "first session shed for backpressure in the preceding hour",
+            ),
+            (
+                "commsbootnoise_0x0805",
+                0x0805,
+                cmap! { 1 => Cb::U(1140) },
+                "1140 bytes classified as non-frames during one comms boot attempt",
+            ),
+        ]
+        .into_iter()
+        .map(|(name, kind, body, meaning)| {
+            let readable = match name {
+                "timeset_0x0604" => Some("{1:old, 2:new, 3:source}"),
+                "recordfailedcrc_0x0702"
+                | "commspowercycled_0x0802"
+                | "sessionsshedforbackpressure_0x0804"
+                | "commsbootnoise_0x0805" => Some("{1:count}"),
+                "commsunrecoverable_0x0803" => Some("{1:rail_on}"),
+                _ => None,
+            };
+            let bytes = cbor(&body);
+            (
+                name,
+                obj(vec![
+                    ("kind", json!(kind)),
+                    ("class", json!("A")),
+                    ("body_cbor", json!(hex(&bytes))),
+                    ("body_len", json!(bytes.len())),
+                    ("values_readable", json!(meaning)),
+                    ("body_readable", json!(readable)),
+                ]),
+            )
+        })
+        .collect()
+    }
+
     /// Link-local frames, whole and framed.
     ///
     /// **The reason this belongs in the published file at all**: the ESP32
@@ -2067,6 +2156,7 @@ impl Builder {
         .chain(Self::concern_events())
         .chain(Self::change_events())
         .chain(Self::boot_events())
+        .chain(Self::controller_events())
         .chain(self.whole_envelope_entries())
         .chain([Self::readlog_entry(), Self::logpage_entry()])
         .collect::<Vec<_>>())

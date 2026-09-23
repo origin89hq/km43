@@ -2154,7 +2154,7 @@ status = "reserved"
 kind = 1540
 name = "time set"
 class = "A"
-status = "reserved"
+status = "live"
 
 [[events]]
 kind = 1793
@@ -2166,31 +2166,37 @@ status = "reserved"
 kind = 1794
 name = "record failed CRC"
 class = "A"
-status = "reserved"
+status = "live"
 
 [[events]]
 kind = 2049
 name = "comms link lost"
 class = "A"
-status = "reserved"
+status = "live"
 
 [[events]]
 kind = 2050
 name = "comms power cycled"
 class = "A"
-status = "reserved"
+status = "live"
 
 [[events]]
 kind = 2051
 name = "comms unrecoverable"
 class = "A"
-status = "reserved"
+status = "live"
 
 [[events]]
 kind = 2052
 name = "sessions shed for backpressure"
 class = "A"
-status = "reserved"
+status = "live"
+
+[[events]]
+kind = 2053
+name = "comms boot noise"
+class = "A"
+status = "live"
 
 [[events]]
 kind = 2305

@@ -732,6 +732,12 @@ pub const REQUIREMENTS: &[Requirement] = &[
         statement: "A boot body MUST carry keys 5 and 6 together or not at all and only with reason 2, and keys 7 and 8 together with reason 5 and no other; a receiver MUST refuse one that breaks either.",
     },
     Requirement {
+        id: "P-215",
+        document: "docs/PROTOCOL.md",
+        section: "Event — `0x04`",
+        statement: "These bodies MUST carry every listed key except `Time set.old`, which MUST be omitted when the previous clock was unknown (P-093).",
+    },
+    Requirement {
         id: "P-182",
         document: "docs/PROTOCOL.md",
         section: "Event — `0x04`",
