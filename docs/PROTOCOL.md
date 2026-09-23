@@ -2754,7 +2754,7 @@ CommsBootNoise  0x0805
 which MUST be omitted when the previous clock was unknown (P-093). A receiver
 MUST refuse a missing required key, a duplicate known key, an unallocated time
 source, or a zero count in `0x0702`, `0x0802` or `0x0804`. Unknown keys are
-skipped under P-014. Counts saturate at `u32::MAX`; that value means at least
+skipped under P-013. Counts saturate at `u32::MAX`; that value means at least
 that many, never a wrapped total.
 
 `Time set.source` uses the same space as P-111: a signed client write is
