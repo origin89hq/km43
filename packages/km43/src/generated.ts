@@ -210,42 +210,82 @@ export enum MessageType {
  * handler's own refusal is an outcome in its response instead (P-141).
  */
 export enum ErrorCode {
-  /** Malformed frame. A receiver reads it out of a bare body. */
+  /**
+   * Malformed frame. A receiver may also accept it from a bare body. Whether it
+   * arrives wrapped is decided by whether the sender holds a session, not by
+   * the code (P-142).
+   */
   MalformedFrame = 0x1,
-  /** Unknown message type. A receiver reads it out of a bare body. */
+  /**
+   * Unknown message type. A receiver may also accept it from a bare body.
+   * Whether it arrives wrapped is decided by whether the sender holds a
+   * session, not by the code (P-142).
+   */
   UnknownMessageType = 0x2,
-  /** Protocol major mismatch. A receiver reads it out of a bare body. */
+  /**
+   * Protocol major mismatch. A receiver may also accept it from a bare body.
+   * Whether it arrives wrapped is decided by whether the sender holds a
+   * session, not by the code (P-142).
+   */
   ProtocolMajorMismatch = 0x3,
-  /** Hello required first. A receiver reads it out of a bare body. */
+  /**
+   * Hello required first. A receiver may also accept it from a bare body.
+   * Whether it arrives wrapped is decided by whether the sender holds a
+   * session, not by the code (P-142).
+   */
   HelloRequiredFirst = 0x4,
-  /** Payload too large. A receiver reads it out of a bare body. */
+  /**
+   * Payload too large. A receiver may also accept it from a bare body. Whether
+   * it arrives wrapped is decided by whether the sender holds a session, not by
+   * the code (P-142).
+   */
   PayloadTooLarge = 0x5,
   /**
-   * Unknown section. A receiver reads it only out of a MAC'd body, and discards
-   * a bare one carrying it (P-051).
+   * Unknown section. A receiver accepts it only inside a MAC'd body, and
+   * discards a bare one carrying it (P-051). Whether it arrives wrapped is
+   * decided by whether the sender holds a session, not by the code (P-142).
    */
   UnknownSection = 0x6,
   /**
-   * Busy — retry. A receiver reads it only out of a MAC'd body, and discards a
-   * bare one carrying it (P-051).
+   * Busy — retry. A receiver accepts it only inside a MAC'd body, and discards
+   * a bare one carrying it (P-051). Whether it arrives wrapped is decided by
+   * whether the sender holds a session, not by the code (P-142).
    */
   BusyRetry = 0x7,
-  /** Session table full. A receiver reads it out of a bare body. */
+  /**
+   * Session table full. A receiver may also accept it from a bare body. Whether
+   * it arrives wrapped is decided by whether the sender holds a session, not by
+   * the code (P-142).
+   */
   SessionTableFull = 0x8,
-  /** Session expired. A receiver reads it out of a bare body. */
+  /**
+   * Session expired. A receiver may also accept it from a bare body. Whether it
+   * arrives wrapped is decided by whether the sender holds a session, not by
+   * the code (P-142).
+   */
   SessionExpired = 0x9,
-  /** Bad MAC. A receiver reads it out of a bare body. */
+  /**
+   * Bad MAC. A receiver may also accept it from a bare body. Whether it arrives
+   * wrapped is decided by whether the sender holds a session, not by the code
+   * (P-142).
+   */
   BadMAC = 0xa,
   /**
-   * Counter not fresh. A receiver reads it only out of a MAC'd body, and
-   * discards a bare one carrying it (P-051).
+   * Counter not fresh. A receiver accepts it only inside a MAC'd body, and
+   * discards a bare one carrying it (P-051). Whether it arrives wrapped is
+   * decided by whether the sender holds a session, not by the code (P-142).
    */
   CounterNotFresh = 0xb,
-  /** Unknown client. A receiver reads it out of a bare body. */
+  /**
+   * Unknown client. A receiver may also accept it from a bare body. Whether it
+   * arrives wrapped is decided by whether the sender holds a session, not by
+   * the code (P-142).
+   */
   UnknownClient = 0xc,
   /**
-   * Stale challenge — reconnect and retry. A receiver reads it out of a bare
-   * body.
+   * Stale challenge — reconnect and retry. A receiver may also accept it from a
+   * bare body. Whether it arrives wrapped is decided by whether the sender
+   * holds a session, not by the code (P-142).
    */
   StaleChallengeReconnectAndRetry = 0xe,
 }

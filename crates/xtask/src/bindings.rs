@@ -747,7 +747,7 @@ impl Bindings {
         Ok(o)
     }
 
-    /// `Error 0xFF`'s codes, each saying whether a receiver reads it bare.
+    /// `Error 0xFF`'s codes, each saying whether a receiver may accept it bare.
     fn ts_error_code(&self) -> Result<String> {
         let mut o = String::new();
         ts_enum(
@@ -761,16 +761,7 @@ impl Bindings {
                 .map(|e| Member {
                     name: variant(&e.meaning),
                     number: e.code,
-                    doc: format!(
-                        "{} {}",
-                        sentence(&e.meaning),
-                        if e.macd {
-                            "A receiver reads it only out of a MAC'd body, and discards a bare \
-                             one carrying it (P-051)."
-                        } else {
-                            "A receiver reads it out of a bare body."
-                        }
-                    ),
+                    doc: error_doc(&e.meaning, e.macd),
                 }),
         );
         Ok(o)
@@ -1105,6 +1096,26 @@ fn message_members(m: &Message) -> [Option<Member>; 2] {
         }
     });
     [request, response]
+}
+
+/// An error code's meaning and what the MAC'd column says about it.
+///
+/// The column is the receiver's check, never the sender's: P-142 wraps an
+/// `Error` whenever the sender holds a session, whatever the code. Reading it
+/// as *this code travels bare* would tell a client to reject a valid wrapped
+/// error, or a controller to send an unauthenticated one inside a session.
+fn error_doc(meaning: &str, macd: bool) -> String {
+    let rule = if macd {
+        "A receiver accepts it only inside a MAC'd body, and discards a bare one \
+         carrying it (P-051)."
+    } else {
+        "A receiver may also accept it from a bare body."
+    };
+    format!(
+        "{} {rule} Whether it arrives wrapped is decided by whether the sender holds \
+         a session, not by the code (P-142).",
+        sentence(meaning)
+    )
 }
 
 /// What a metric kind is read in. `—` is the registry's word for a value that
@@ -1543,6 +1554,28 @@ mod tests {
             metric_doc("last boot reason", "—", 0),
             "Last boot reason. No unit."
         );
+    }
+
+    /// The MAC'd column says what a receiver accepts bare. It was once rendered
+    /// as *a receiver reads it out of a bare body*, which a client could take
+    /// as licence to reject the wrapped form P-142 requires inside a session.
+    #[test]
+    fn an_error_code_never_says_it_travels_bare() {
+        let bare = error_doc("Session expired", false);
+        assert!(
+            bare.starts_with("Session expired. A receiver may also accept it"),
+            "{bare}"
+        );
+        assert!(bare.contains("(P-142)"), "{bare}");
+
+        let macd = error_doc("Counter not fresh", true);
+        assert!(
+            macd.contains("discards a bare one carrying it (P-051)"),
+            "{macd}"
+        );
+        assert!(macd.contains("(P-142)"), "{macd}");
+
+        assert!(error_doc("", false).starts_with(". A receiver"));
     }
 
     /// A reserved number is in the bindings because a peer may send it, and
