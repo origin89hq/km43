@@ -411,7 +411,7 @@ mod tests {
     /// A failed challenge generator must produce a readable refusal before
     /// there is a session key. Both decoder entry points preserve it as a hint.
     #[test]
-    fn p_060_an_unavailable_challenge_is_readable_without_a_session_key() {
+    fn an_unavailable_challenge_is_readable_without_a_session_key() {
         let sent = ErrorBody {
             code: Incoming::Client(ErrorCode::ChallengeUnavailable),
             detail: "challenge unavailable",

@@ -1083,7 +1083,7 @@ pub const REQUIREMENTS: &[Requirement] = &[
         id: "L-070",
         document: "docs/protocol/LINK.md",
         section: "ClientConnected",
-        statement: "On answering `ClientConnected` with `accepted` the controller MUST mint a fresh challenge for that connection and hold it against the handle.",
+        statement: "On answering `ClientConnected` with `accepted` the controller MUST attempt to mint a fresh challenge for that connection and hold it against the handle if successful.",
     },
     Requirement {
         id: "L-071",

@@ -256,7 +256,7 @@ not:
    with it. That is why the step is capped below rather than merely bounded and
    logged, and why a clock change never replays a schedule.
 2. **A connection is not a session.** `ClientConnected` creates a row in a table
-   and mints a challenge. Turning that into a session still requires `Hello` with
+   and attempts to mint a challenge (L-070). Turning that into a session still requires `Hello` with
    a proof over `client_key` — which the comms processor does not hold, is never
    sent, and cannot derive. A comms processor that invents eight connections has
    filled the connection table and nothing else. It could already deny
@@ -533,18 +533,25 @@ ClientConnectedAck  0xE2
 ```
 
 **L-070** — On answering `ClientConnected` with `accepted` the controller MUST
-mint a fresh challenge for that connection and hold it against the handle.
+attempt to mint a fresh challenge for that connection and hold it against the
+handle if successful. If it cannot mint one, it MUST still accept the connection
+when the connection admission checks pass, retaining the allocated row with no
+challenge. It MUST NOT substitute a placeholder or another connection's
+challenge, or refuse the connection as though its table were full.
 
 A `Discover` on that handle is answered with the connection's *current*
-challenge: if the one minted at connect has expired at 120 seconds or has already
-been consumed, the controller mints another and discards the old, so at most one
-challenge exists per connection at any moment. The session key derived after
-`Hello` is bound to whichever one the client proved against. That expiry and
-re-mint are P-060's; what this message adds is the first one, and it is what makes
-"a challenge fresh per connection" implementable rather than merely written down.
-Before it, nothing told the controller a connection had happened at all, and
-P-060 falls back to one device-wide challenge and the two-client livelock it
-exists to prevent.
+challenge. If none was minted at connect, or the one held has expired at 120
+seconds or has already been consumed, the controller attempts to mint another
+under P-060. If it still cannot supply a valid challenge, it answers error 18
+`challenge unavailable`. The row remains allocated so a later `Discover` can
+retry on the same transport. At most one challenge exists per connection at any
+moment, and the session key derived after `Hello` is bound to whichever one the
+client proved against.
+
+Accepting the connection records where the client can be answered; it does not
+promise that challenge generation succeeded. Requiring a challenge before
+`accepted` would prevent a client from reaching `Discover` to receive P-060's
+refusal when the first attempt fails.
 
 Re-minting is what lets a client that has sent `Goodbye` open a second session on
 the same transport, and what lets a client that has just paired go on to `Hello`

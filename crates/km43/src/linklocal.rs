@@ -1294,7 +1294,7 @@ impl DownloadVerdict {
 
 /// `ClientConnectedAck 0xE2` — whether the controller took the handle.
 ///
-/// **This is what mints the connection's challenge** (L-070). Before it,
+/// **This starts the attempt to mint the connection's challenge** (L-070). Before it,
 /// nothing told the controller a connection had happened at all, and P-060
 /// falls back to one device-wide challenge and the two-client livelock it
 /// exists to prevent.

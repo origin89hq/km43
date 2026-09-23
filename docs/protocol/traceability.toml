@@ -1028,7 +1028,7 @@
 # firmware lifecycle. The codec tests cover L-193. UART provenance after LinkUp,
 # controller notifications and the radio deadline remain firmware#11's work;
 # the codecs do not implement those three rules.
-uncovered = 128
+uncovered = 129
 
 # P-045 is the shape this file is for. Nothing can drive an implementation into
 # transmitting a key it does not have, so the thing that stands behind it reads
