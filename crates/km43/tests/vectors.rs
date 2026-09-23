@@ -879,7 +879,7 @@ fn every_published_link_frame_is_the_one_this_crate_frames_and_checksums() {
     let envelopes = strings_of(link, "envelope_cbor");
     let frames = strings_of(link, "encoded_with_delimiter");
     let crcs = strings_of(link, "crc16_ccitt_false");
-    assert_eq!(envelopes.len(), 13, "the link block changed shape");
+    assert_eq!(envelopes.len(), 14, "the link block changed shape");
     assert_eq!(frames.len(), envelopes.len());
     assert_eq!(crcs.len(), envelopes.len());
 
@@ -1769,7 +1769,7 @@ fn every_published_link_frame_is_one_this_crate_decodes() {
     let frames = link_envelopes();
     assert_eq!(
         frames.len(),
-        13,
+        14,
         "the published link section changed shape; this test walks it by count \
          so a vector that stops being published cannot go unnoticed"
     );
@@ -1838,6 +1838,10 @@ fn every_published_link_frame_is_one_this_crate_decodes() {
                 assert_eq!(verdict.outcome, TimeOffer::RefusedRateLimited);
                 seen += 1;
             }
+            LinkMessageType::NetConfig => {
+                a_published_unwritten_clear_reads_and_writes(envelope, bytes);
+                seen += 1;
+            }
             LinkMessageType::NetConfigAck => {
                 let verdict = NetVerdict::decode(envelope).expect("the published ack reads");
                 assert_eq!(verdict.outcome, NetConfig::Stored);
@@ -1874,6 +1878,19 @@ fn every_published_link_frame_is_one_this_crate_decodes() {
         }
     }
     assert_eq!(seen, frames.len(), "a published frame was walked past");
+}
+
+fn a_published_unwritten_clear_reads_and_writes(envelope: km43::LinkEnvelope<'_>, bytes: &[u8]) {
+    let header = km43::LinkHeader {
+        kind: km43::LinkMessageType::NetConfig,
+        session: envelope.session(),
+        req_id: envelope.req_id(),
+    };
+    let change = km43::NetChange::decode(envelope).expect("published unwritten clear");
+    assert_eq!(change, km43::NetChange::ClearUnwritten);
+    let mut written = [0; 64];
+    let len = change.write(header, &mut written).expect("clear encodes");
+    assert_eq!(&written[..len], bytes);
 }
 
 /// Re-encode the actual committed bytes, so moving a field changes the witness.
@@ -1960,7 +1977,7 @@ fn a_published_release_frame_reads(kind: km43::LinkMessageType, envelope: km43::
 fn receiving(opcode: u8) -> km43::Side {
     use km43::Side::{Comms, Controller};
 
-    const AT: [(u8, km43::Side); 12] = [
+    const AT: [(u8, km43::Side); 13] = [
         (0x60, Controller), // LinkUp, either way; the STM32 receives this one
         (0x62, Controller), // ClientConnected, comms → controller
         (0x66, Controller), // TimeOffer, comms → controller
@@ -1971,6 +1988,7 @@ fn receiving(opcode: u8) -> km43::Side {
         (0xe7, Controller), // CommsReleaseAck, back to the controller
         (0x68, Comms),      // EnterDownload, controller → comms
         (0xe8, Controller), // EnterDownloadAck, back to the controller
+        (km43::LinkMessageType::NetConfig as u8, Comms),
         (km43::LinkMessageType::PairingWindow as u8, Comms),
         (km43::LinkMessageType::PairingWindowAck as u8, Controller),
     ];

@@ -1203,7 +1203,7 @@ pub const REQUIREMENTS: &[Requirement] = &[
         id: "L-132",
         document: "docs/protocol/LINK.md",
         section: "Wi-Fi credentials",
-        statement: "`NetConfigAck` MUST report in `version` the version of the `NetConfig` the comms processor now holds, a stored `clear` included, and MUST report 0 only when it was never given a network.",
+        statement: "`NetConfigAck` and `LinkUp.net_version` MUST report the version persisted in NVS, including a stored clear.",
     },
     Requirement {
         id: "L-133",
@@ -1215,13 +1215,13 @@ pub const REQUIREMENTS: &[Requirement] = &[
         id: "L-134",
         document: "docs/protocol/LINK.md",
         section: "Wi-Fi credentials",
-        statement: "`NetConfig` MUST carry `country` as exactly two bytes of ISO 3166-1 alpha-2.",
+        statement: "A nonzero-version `NetConfig` MUST carry `country` as exactly two bytes of ISO 3166-1 alpha-2.",
     },
     Requirement {
         id: "L-135",
         document: "docs/protocol/LINK.md",
         section: "Wi-Fi credentials",
-        statement: "The controller MUST send `NetConfig` with `op = clear` on a factory reset, so a passphrase does not survive on a board that is about to be pulled and shipped somewhere.",
+        statement: "On a factory reset of a written network section, the controller MUST send `NetConfig` with `op = clear` at the incremented, nonzero section version, retaining the section's country and hostname, so a passphrase does not survive on a board that is about to be pulled and shipped somewhere.",
     },
     Requirement {
         id: "L-136",

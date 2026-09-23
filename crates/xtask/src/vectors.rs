@@ -839,6 +839,7 @@ enum Link {
     ClientConnectedAck,
     TimeOffer,
     TimeOfferAck,
+    NetConfig,
     NetConfigAck,
     CommsRelease,
     CommsReleaseAck,
@@ -858,6 +859,7 @@ impl Link {
             Self::ClientConnectedAck => ("ClientConnected", true),
             Self::TimeOffer => ("TimeOffer", false),
             Self::TimeOfferAck => ("TimeOffer", true),
+            Self::NetConfig => ("NetConfig", false),
             Self::NetConfigAck => ("NetConfig", true),
             Self::CommsRelease => ("CommsRelease", false),
             Self::CommsReleaseAck => ("CommsRelease", true),
@@ -2050,7 +2052,7 @@ impl Builder {
             req_id,
             body,
             readable,
-        } in Self::link_cases()?
+        } in Self::link_cases(&registry)?
         {
             let opcode = kind.opcode(&registry)?;
             let envelope = cbor(&Cb::A(vec![
@@ -2097,7 +2099,13 @@ impl Builder {
     }
 
     /// The link bodies, one per published frame.
-    fn link_cases() -> Result<Vec<LinkCase>> {
+    fn link_cases(registry: &crate::registry::Registry) -> Result<Vec<LinkCase>> {
+        let clear = registry
+            .link_enums
+            .get("net_config_op")
+            .and_then(|entries| entries.iter().find(|entry| entry.name == "clear"))
+            .ok_or_else(|| anyhow::anyhow!("missing clear allocation"))?
+            .value;
         let mut cases = vec![
             LinkCase {
                 name: "link_up_0x60",
@@ -2188,6 +2196,14 @@ impl Builder {
                 readable: "{1:outcome=refused_outside_window}".into(),
             },
         ];
+        cases.push(LinkCase {
+            name: "net_config_clear_unwritten",
+            kind: Link::NetConfig,
+            session: 0,
+            req_id: 9,
+            body: cmap! {1 => Cb::U(u64::from(clear)), 2 => Cb::U(0)},
+            readable: "{1:op=clear, 2:version=0}; unwritten master, no radio metadata".into(),
+        });
         cases.extend(Self::pairing_window_cases());
         cases.extend(Self::release_cases()?);
         Ok(cases)

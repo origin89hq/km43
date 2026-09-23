@@ -707,6 +707,17 @@
       "encoded_with_delimiter": "048418e80705a10102e4c400",
       "encoded_len": 12
     },
+    "net_config_clear_unwritten": {
+      "type": 101,
+      "authentication": "none; this link is a cable inside one enclosure and carries no MAC (L-010)",
+      "session_id": 0,
+      "req_id": 9,
+      "body_readable": "{1:op=clear, 2:version=0}; unwritten master, no radio metadata",
+      "envelope_cbor": "8418650009a201020200",
+      "crc16_ccitt_false": "0x4f8c",
+      "encoded_with_delimiter": "048418650609a2010202038c4f00",
+      "encoded_len": 14
+    },
     "pairing_window_open_0x69": {
       "type": 105,
       "authentication": "none; this link is a cable inside one enclosure and carries no MAC (L-010)",

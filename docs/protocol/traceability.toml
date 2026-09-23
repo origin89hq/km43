@@ -1041,6 +1041,9 @@
 # covered by the version check a `SetConfig` operation carries. P-108 is new
 # and arrived covered. P-102, the A/B slot and its pointer flip, stays up: it
 # is the controller's FRAM, and nothing in this tree stores a section.
+# L-133 and L-135 remain uncovered as whole rules: unwritten_network.rs covers
+# their wire shapes, while the clauses below retain the missing firmware push,
+# persistence, radio and reset evidence.
 uncovered = 124
 
 # P-045 is the shape this file is for. Nothing can drive an implementation into
@@ -1352,3 +1355,13 @@ tree has no code for yet, and a test for the encoders leaves both looking \
 checked. The receiver \
 clause fails on the link: a controller that refuses a text in another shape \
 takes every client off the air over a label."""
+
+[[clauses]]
+id = "L-133"
+each = ["unwritten_clear_has_only_op_and_zero_version", "pushes_on_every_version_mismatch", "erases_durably_and_stops_wifi"]
+reason = "The codec proves the unwritten master is representable without radio metadata. Firmware#88 owns sending it after a foreign LinkUp; firmware#89 owns NVS erasure, shutdown and failed-erase recovery."
+
+[[clauses]]
+id = "L-135"
+each = ["written_operations_cannot_use_zero_version", "factory_reset_increments_and_pushes_clear"]
+reason = "The codec preserves the nonzero written-clear contract. Performing the reset and sending the incremented version remain firmware#88's integration evidence."
