@@ -14,9 +14,17 @@
 //! than on the call stack: there is no stack guard on this part, so a body four
 //! hundred containers deep has to be a refusal rather than a reset.
 //!
-//! Duplicate keys (P-015) are not decided here. This layer hands the keys over
-//! in the order they arrived; only a body decoder knows which numbers it
-//! recognises and which it has already seen.
+//! Duplicate keys (P-015) are decided here only where no body decoder looks.
+//! A key a decoder reads is handed over as it arrived, and the decoder refuses
+//! one it recognises twice. A key it does not recognise it skips, and so does
+//! every key inside a value it skips — `Event 0x04` key 4, `Command` `args`,
+//! whatever a newer sender put under a key this version never heard of — and
+//! those are checked here, where the walk is: a map that carries one of them
+//! twice is [`CborError::RepeatedKey`]. The check does not lean on key order,
+//! because a receiver reads an unsorted map (P-016 binds encoders), but it is
+//! free for a sorted one: a key above every earlier key of its map is unique
+//! without looking, and only a key at or below one is compared with the pairs
+//! before it.
 //!
 //! cites: P-010, P-011, P-013, P-015, P-016, P-018
 
@@ -59,6 +67,9 @@ pub enum CborError {
     ReservedHead,
     /// A map key that is not an integer (P-011).
     KeyNotInteger,
+    /// A map, inside a value the decoder skipped or under a key it skipped,
+    /// that carries the same key twice (P-015).
+    RepeatedKey,
     /// A key written where a value belongs, or a value where a map's key does.
     MisplacedKey,
     /// Map keys that do not strictly ascend (P-016), which is also how the
@@ -91,6 +102,7 @@ impl fmt::Display for CborError {
             Self::SimpleValueNotAllowed => "CBOR simple value other than true or false",
             Self::ReservedHead => "reserved CBOR additional information",
             Self::KeyNotInteger => "map key is not an integer",
+            Self::RepeatedKey => "map carries the same key twice",
             Self::MisplacedKey => "map key where a value belongs, or the reverse",
             Self::KeysNotAscending => "map keys do not strictly ascend",
             Self::DepthExceeded => "nested past the depth limit",
@@ -231,9 +243,32 @@ enum Nesting {
 struct Open {
     kind: Nesting,
     remaining: usize,
-    /// The last key written into this map, so the next can be required to exceed
-    /// it. Absent until a key is written — never a zero standing in for one.
-    last_key: Option<u64>,
+    /// The greatest key seen in this map: written, where the next must exceed
+    /// it, or read, where a key above it needs no search for a repeat. Absent
+    /// until a key is seen — never a zero standing in for one.
+    last_key: Option<KeyRank>,
+    /// Where the map's first key starts in the reader's input: the pairs a
+    /// repeated key is looked for among. Zero, and unread, on the writer.
+    start: usize,
+}
+
+/// Where an integer key sorts in RFC 8949 §4.2.1's order: every unsigned key
+/// before every negative one, each by its argument. A key this version does
+/// not know may be negative and still has to be compared.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct KeyRank {
+    negative: bool,
+    argument: u64,
+}
+
+/// A key read at or below the greatest before it, not yet looked for among
+/// the pairs before it: the check that follows a skip of its value.
+#[derive(Debug, Clone, Copy)]
+struct Unsettled {
+    key: KeyRank,
+    /// The earlier pairs of its map, as offsets into the input.
+    from: usize,
+    to: usize,
 }
 
 /// The containers a message is currently inside. Reader and writer ask it the
@@ -254,6 +289,7 @@ impl Nest {
         kind: Nesting::Array,
         remaining: 0,
         last_key: None,
+        start: 0,
     };
 
     const fn new() -> Self {
@@ -305,7 +341,7 @@ impl Nest {
         self.depth < self.open.len()
     }
 
-    fn push(&mut self, kind: Nesting, items: usize) -> Result<(), CborError> {
+    fn push(&mut self, kind: Nesting, items: usize, start: usize) -> Result<(), CborError> {
         let slot = self
             .open
             .get_mut(self.depth)
@@ -314,6 +350,7 @@ impl Nest {
             kind,
             remaining: items,
             last_key: None,
+            start,
         };
         self.depth = self.depth.saturating_add(1);
         if self.depth > self.deepest {
@@ -327,6 +364,10 @@ impl Nest {
     fn take_key(&mut self, key: u64) -> Result<(), CborError> {
         let index = self.depth.checked_sub(1).ok_or(CborError::MisplacedKey)?;
         let top = self.open.get_mut(index).ok_or(CborError::DepthExceeded)?;
+        let key = KeyRank {
+            negative: false,
+            argument: key,
+        };
         if let Some(last) = top.last_key
             && key <= last
         {
@@ -334,6 +375,24 @@ impl Nest {
         }
         top.last_key = Some(key);
         Ok(())
+    }
+
+    /// Note a key read at `at` in the innermost map, and hand back the pairs
+    /// to search when it does not exceed every key before it.
+    fn read_key(&mut self, key: KeyRank, at: usize) -> Result<Option<Unsettled>, CborError> {
+        let index = self.depth.checked_sub(1).ok_or(CborError::MisplacedKey)?;
+        let top = self.open.get_mut(index).ok_or(CborError::DepthExceeded)?;
+        match top.last_key {
+            Some(greatest) if key <= greatest => Ok(Some(Unsettled {
+                key,
+                from: top.start,
+                to: at,
+            })),
+            Some(_) | None => {
+                top.last_key = Some(key);
+                Ok(None)
+            }
+        }
     }
 }
 
@@ -360,6 +419,17 @@ pub struct CborReader<'a> {
     bytes: &'a [u8],
     next: usize,
     nest: Nest,
+    /// Whether keys are looked at for repeats. Off only for the walk that does
+    /// the looking, over pairs this reader already read.
+    checks: bool,
+    /// Inside [`Self::skip`]: every key is one no decoder will see.
+    walking: bool,
+    /// The last key read, when it did not exceed the keys before it, until its
+    /// value is read or skipped.
+    unsettled: Option<Unsettled>,
+    /// Such a key whose value was skipped: searched for at the next read, after
+    /// the decoder has had its own chance to name a key it knows twice.
+    skipped: Option<Unsettled>,
 }
 
 impl<'a> CborReader<'a> {
@@ -371,6 +441,10 @@ impl<'a> CborReader<'a> {
             bytes,
             next: 0,
             nest: Nest::new(),
+            checks: true,
+            walking: false,
+            unsettled: None,
+            skipped: None,
         }
     }
 
@@ -496,7 +570,20 @@ impl<'a> CborReader<'a> {
     /// needs to survive a newer sender's extra keys. Containers are walked on the
     /// nesting stack, so a deep one is [`CborError::DepthExceeded`] rather than a
     /// walk off the end of the call stack.
+    ///
+    /// A skipped value is one no decoder reads, so its key, when it is a map's,
+    /// and every key inside it are checked for repeats here (P-015).
     pub fn skip(&mut self) -> Result<(), CborError> {
+        self.settle_skipped()?;
+        self.skipped = self.unsettled.take();
+        let was = self.walking;
+        self.walking = true;
+        let walked = self.walk();
+        self.walking = was;
+        walked
+    }
+
+    fn walk(&mut self) -> Result<(), CborError> {
         self.nest.settle();
         let floor = self.nest.depth;
         self.head()?;
@@ -507,6 +594,48 @@ impl<'a> CborReader<'a> {
             }
             self.head()?;
         }
+    }
+
+    /// Search for the key whose value was last skipped, if it needs it.
+    fn settle_skipped(&mut self) -> Result<(), CborError> {
+        match self.skipped.take() {
+            Some(key) => self.search(key),
+            None => Ok(()),
+        }
+    }
+
+    /// Refuse `key` if the pairs before it in its map carry it. They were read
+    /// once already, so this walk over them looks at nothing but their keys,
+    /// and every step of it consumes at least a byte.
+    fn search(&self, key: Unsettled) -> Result<(), CborError> {
+        let earlier = self
+            .bytes
+            .get(key.from..key.to)
+            .ok_or(CborError::EndOfInput)?;
+        let mut pairs = Self {
+            checks: false,
+            ..Self::new(earlier)
+        };
+        while pairs.next < earlier.len() {
+            let found = match pairs.head()? {
+                Head::Unsigned(argument) => KeyRank {
+                    negative: false,
+                    argument,
+                },
+                Head::Negative(argument) => KeyRank {
+                    negative: true,
+                    argument,
+                },
+                Head::Bytes(_) | Head::Text(_) | Head::Array(_) | Head::Map(_) | Head::Bool(_) => {
+                    return Err(CborError::KeyNotInteger);
+                }
+            };
+            if found == key.key {
+                return Err(CborError::RepeatedKey);
+            }
+            pairs.skip()?;
+        }
+        Ok(())
     }
 
     /// The next item's own bytes, verbatim, with the reader left past it.
@@ -526,6 +655,7 @@ impl<'a> CborReader<'a> {
     /// over. Both are how two implementations come to read one authenticated
     /// frame differently.
     pub fn finish(mut self) -> Result<(), CborError> {
+        self.settle_skipped()?;
         self.nest.settle();
         if self.nest.depth != 0 {
             return Err(CborError::Unfinished);
@@ -560,25 +690,47 @@ impl<'a> CborReader<'a> {
     /// Read one item's head, refuse a non-integer where a map key belongs, and
     /// account for the item in the container that owes it.
     fn head(&mut self) -> Result<Head<'a>, CborError> {
+        if !self.walking {
+            self.settle_skipped()?;
+        }
         self.nest.settle();
         let at_key = self.nest.at_key();
+        let at = self.next;
         let first = *self.bytes.get(self.next).ok_or(CborError::EndOfInput)?;
         self.next = self.next.saturating_add(1);
         let head = self.decode(first)?;
         if at_key {
-            match head {
-                Head::Unsigned(_) | Head::Negative(_) => {}
+            let key = match head {
+                Head::Unsigned(argument) => KeyRank {
+                    negative: false,
+                    argument,
+                },
+                Head::Negative(argument) => KeyRank {
+                    negative: true,
+                    argument,
+                },
                 Head::Bytes(_) | Head::Text(_) | Head::Array(_) | Head::Map(_) | Head::Bool(_) => {
                     return Err(CborError::KeyNotInteger);
                 }
+            };
+            if self.checks {
+                let unsettled = self.nest.read_key(key, at)?;
+                match (unsettled, self.walking) {
+                    (Some(key), true) => self.search(key)?,
+                    (unsettled, false) => self.unsettled = unsettled,
+                    (None, true) => {}
+                }
             }
+        } else if !self.walking {
+            // A value read by its decoder settles the key before it.
+            self.unsettled = None;
         }
         self.nest.count_item()?;
         match head {
-            Head::Array(count) => self.nest.push(Nesting::Array, count)?,
+            Head::Array(count) => self.nest.push(Nesting::Array, count, self.next)?,
             Head::Map(pairs) => {
                 let items = pairs.checked_mul(2).ok_or(CborError::EndOfInput)?;
-                self.nest.push(Nesting::Map, items)?;
+                self.nest.push(Nesting::Map, items, self.next)?;
             }
             Head::Unsigned(_)
             | Head::Negative(_)
@@ -698,7 +850,7 @@ impl<'a> CborWriter<'a> {
         }
         self.head(Major::Array, Self::argument(len)?, 0)?;
         self.nest.count_item()?;
-        self.nest.push(Nesting::Array, len)
+        self.nest.push(Nesting::Array, len, 0)
     }
 
     /// Open a map of exactly `pairs` key-value pairs. Every key goes through
@@ -713,7 +865,7 @@ impl<'a> CborWriter<'a> {
         let items = pairs.checked_mul(2).ok_or(CborError::DestinationTooSmall)?;
         self.head(Major::Map, Self::argument(pairs)?, 0)?;
         self.nest.count_item()?;
-        self.nest.push(Nesting::Map, items)
+        self.nest.push(Nesting::Map, items, 0)
     }
 
     /// A map key, which must exceed the previous key of the same map (P-016).
@@ -1970,12 +2122,92 @@ mod tests {
         assert_eq!(reader.finish(), Ok(()));
     }
 
+    /// Read one map the way a body decoder reads keys it does not know: each
+    /// key, then its value skipped, then the end.
+    fn skipping_every_value(bytes: &[u8]) -> Result<(), CborError> {
+        let mut reader = CborReader::new(bytes);
+        let pairs = reader.map()?;
+        for _ in 0..pairs {
+            reader.key()?;
+            reader.skip()?;
+        }
+        reader.finish()
+    }
+
+    /// P-015 at the top level of a body, for keys the decoder skips: the
+    /// second copy is refused wherever it sits, first, last or between, and
+    /// for a negative key too, which only a newer sender would use.
+    #[test]
+    fn p_015_a_skipped_key_arriving_twice_is_refused() {
+        for bytes in [
+            &[0xa2, 4, 0, 4, 1][..],
+            &[0xa3, 4, 0, 5, 0, 4, 1],
+            &[0xa3, 5, 0, 4, 0, 4, 1],
+            &[0xa2, 0x20, 0, 0x20, 0xa0],
+            &[0xa3, 0x20, 0, 1, 0, 0x20, 1],
+        ] {
+            assert_eq!(
+                skipping_every_value(bytes),
+                Err(CborError::RepeatedKey),
+                "{bytes:02x?}"
+            );
+        }
+    }
+
+    /// P-015 inside a value nothing reads: a map at any depth under a skipped
+    /// value, reached by `skip` and by `raw`.
+    #[test]
+    fn p_015_a_map_inside_a_skipped_value_carrying_a_key_twice_is_refused() {
+        for value in [
+            &[0xa2, 1, 0, 1, 1][..],
+            &[0xa3, 2, 0, 1, 0, 2, 1],
+            &[0x81, 0xa2, 0x20, 0, 0x20, 1],
+            &[0xa1, 1, 0xa1, 7, 0xa2, 3, 0, 3, 0],
+        ] {
+            let mut reader = CborReader::new(value);
+            assert_eq!(reader.skip(), Err(CborError::RepeatedKey), "{value:02x?}");
+            let mut reader = CborReader::new(value);
+            assert_eq!(reader.raw(), Err(CborError::RepeatedKey), "{value:02x?}");
+        }
+    }
+
+    /// The check does not lean on order: a receiver reads an unsorted map from
+    /// a sloppy sender (P-016 binds encoders, P-017 the MAC), at the top level
+    /// and inside a skipped value, as long as no key repeats.
+    #[test]
+    fn an_unsorted_map_with_no_repeat_is_still_read() {
+        for bytes in [
+            &[0xa3, 5, 0, 4, 0, 3, 0][..],
+            &[0xa3, 0x20, 0, 2, 0, 1, 0],
+            &[0xa2, 9, 0xa3, 3, 0, 1, 0, 2, 0, 8, 0],
+            // The same key in two different maps is two keys.
+            &[0xa2, 1, 0xa1, 1, 0, 2, 0xa1, 1, 0],
+        ] {
+            assert_eq!(skipping_every_value(bytes), Ok(()), "{bytes:02x?}");
+        }
+    }
+
+    /// A key a decoder reads twice is its own to refuse, and it does, with the
+    /// key named (every body's `Duplicate`). The reader stays out of the way,
+    /// so that the error a client sees names the key rather than the map.
+    #[test]
+    fn a_repeat_the_decoder_reads_itself_is_left_to_the_decoder() {
+        let bytes = [0xa2, 1, 0, 1, 1];
+        let mut reader = CborReader::new(&bytes);
+        assert_eq!(reader.map(), Ok(2));
+        assert_eq!(reader.key(), Ok(1));
+        assert_eq!(reader.u64(), Ok(0));
+        assert_eq!(reader.key(), Ok(1));
+        assert_eq!(reader.u64(), Ok(1));
+        assert_eq!(reader.finish(), Ok(()));
+    }
+
     /// Every refusal renders as its own sentence. Two variants sharing a line is
     /// a log entry that names the wrong cause at 2 a.m., and an empty one is a
     /// log entry that names nothing at all.
     #[test]
     fn every_refusal_says_something_of_its_own() {
-        const EVERY: [CborError; 18] = [
+        const EVERY: [CborError; 19] = [
             CborError::EndOfInput,
             CborError::TrailingBytes,
             CborError::TrailingItem,
@@ -1986,6 +2218,7 @@ mod tests {
             CborError::SimpleValueNotAllowed,
             CborError::ReservedHead,
             CborError::KeyNotInteger,
+            CborError::RepeatedKey,
             CborError::MisplacedKey,
             CborError::KeysNotAscending,
             CborError::DepthExceeded,

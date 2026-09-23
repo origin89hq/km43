@@ -354,6 +354,11 @@ the decoder, and two libraries that pick differently read different bytes out of
 one authenticated message. This is a check on the frame as received rather than a
 re-encoding, so it does not lean on P-016 and does not disturb P-017.
 
+It binds every map in the message, including a key skipped under P-013 and a map
+inside a value whose schema is deferred, such as `Event 0x04` key 4 or `Command`
+`args`. Those are exactly the keys no body decoder looks at, and the decoder that
+one day reads them would inherit whichever copy the receiver kept.
+
 **P-016** — Encoders MUST emit RFC 8949 §4.2 deterministic encoding: shortest
 form integers, sorted map keys, definite lengths, no indefinite strings.
 
