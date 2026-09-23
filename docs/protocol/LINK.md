@@ -1359,7 +1359,7 @@ them evicts:
 | Table | Capacity | When full |
 |---|---|---|
 | Connection rows | 8 | `ClientConnected` answers `refused_table_full`; the comms processor closes the transport with a reason (L-061) |
-| Challenges held, one per connection row | 8 (`MAX_CHALLENGES`) | Error 7 `busy`; nothing is evicted |
+| Challenges held, one per connection row | 8 (`MAX_CHALLENGES`) | Error 18 `challenge unavailable` (P-060); nothing is evicted |
 | Sessions bound onto those rows | 8 (`MAX_SESSIONS`) | Error 8. Unreachable while every transport terminates here, because a row exists before the `Hello` that would bind it |
 | Accepted time offers | 1 per 15 minutes | `refused_rate_limited`, counted (L-151) |
 | Sessions shed for backpressure | 3 per hour | The first one is recorded; the third means the link carries no traffic whatever the heartbeats say, and the ladder runs from its first rung (L-022, L-023) |

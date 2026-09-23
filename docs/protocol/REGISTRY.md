@@ -182,6 +182,7 @@ handler's own refusal is an outcome in its response instead (P-141).
 | 15 | Snapshot exceeds channel cap | yes | withdrawn |
 | 16 | Not permitted on this transport | no | withdrawn |
 | 17 | Clock not set | yes | withdrawn |
+| 18 | Challenge unavailable | no | live |
 | 256–511 | *link-local, see [LINK.md](LINK.md)* | no | live |
 
 **13, 15, 16 and 17 are withdrawn, not live**, because nothing produces them.
