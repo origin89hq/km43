@@ -5,6 +5,11 @@
 //! generator going stale against the spec, which is how a field reached a
 //! preimage in one and nowhere else.
 
+#![cfg_attr(
+    not(test),
+    deny(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)
+)]
+
 use anyhow::{Context, Result};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -21,12 +26,12 @@ impl Preimages {
         let mut out = BTreeMap::new();
         let mut rest = text.as_str();
 
-        while let Some(at) = rest.find("HMAC(") {
-            rest = &rest[at + 5..];
-            let Some(end) = rest.find(")[0..16]") else {
+        while let Some((_, tail)) = rest.split_once("HMAC(") {
+            rest = tail;
+            let Some((body, _)) = rest.split_once(")[0..16]") else {
                 continue;
             };
-            let Some((label, fields)) = quoted_label(&rest[..end]) else {
+            let Some((label, fields)) = quoted_label(body) else {
                 continue;
             };
             out.insert(label, normalise(fields));
@@ -130,7 +135,7 @@ impl DescribedBytes {
                 wrong.push(format!(
                     "{name}: the bytes are not the fields the description names\n    \
                      described {readable}\n    expected prefix {want}\n    actual          {}",
-                    &preimage[..want.len().min(preimage.len())]
+                    preimage.chars().take(want.len()).collect::<String>()
                 ));
             }
         }
@@ -178,9 +183,9 @@ fn vectors_json(root: &Path) -> Result<Value> {
 
 /// Splits `… "label" | rest` into the label and the rest.
 fn quoted_label(body: &str) -> Option<(String, &str)> {
-    let q1 = body.find('"')?;
-    let q2 = body[q1 + 1..].find('"')?;
-    Some((body[q1 + 1..q1 + 1 + q2].to_owned(), &body[q1 + q2 + 2..]))
+    let (_, rest) = body.split_once('"')?;
+    let (label, fields) = rest.split_once('"')?;
+    Some((label.to_owned(), fields))
 }
 
 /// The same for the single-quoted form the vectors use.
@@ -209,9 +214,70 @@ fn normalise(s: &str) -> Vec<String> {
 
 fn to_hex(b: &[u8]) -> String {
     use std::fmt::Write as _;
-    b.iter()
-        .fold(String::with_capacity(b.len() * 2), |mut s, x| {
-            let _ = write!(s, "{x:02x}");
-            s
-        })
+    b.iter().fold(String::new(), |mut s, x| {
+        let _ = write!(s, "{x:02x}");
+        s
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DescribedBytes, quoted_label};
+    use serde_json::json;
+
+    #[test]
+    fn quoted_labels_preserve_utf8_and_fields() {
+        assert_eq!(
+            quoted_label("clé, \"étiquette\" | field"),
+            Some(("étiquette".into(), " | field"))
+        );
+        assert_eq!(quoted_label("\"\""), Some((String::new(), "")));
+        for body in ["", "no quotes", "one \"quote"] {
+            assert_eq!(quoted_label(body), None);
+        }
+    }
+
+    #[test]
+    fn malformed_utf8_hex_is_reported_without_slicing_a_character() {
+        let described = DescribedBytes {
+            inputs: json!({}),
+            entries: vec![(
+                "bad".into(),
+                json!({"preimage_readable": "'a'", "preimage": "€"}),
+            )],
+        };
+        assert_eq!(
+            described.disagreements(),
+            [
+                "bad: the bytes are not the fields the description names\n    described 'a'\n    expected prefix 61\n    actual          €"
+            ]
+        );
+    }
+
+    #[test]
+    fn described_bytes_compare_matching_empty_and_short_preimages() {
+        let described = DescribedBytes {
+            inputs: json!({}),
+            entries: vec![
+                (
+                    "matching".into(),
+                    json!({"preimage_readable": "'a'", "preimage": "61"}),
+                ),
+                (
+                    "empty".into(),
+                    json!({"preimage_readable": "''", "preimage": ""}),
+                ),
+                (
+                    "short".into(),
+                    json!({"preimage_readable": "'a'", "preimage": "6"}),
+                ),
+            ],
+        };
+        assert_eq!(
+            described.disagreements(),
+            [
+                "short: the bytes are not the fields the description names\n    described 'a'\n    expected prefix 61\n    actual          6"
+            ]
+        );
+    }
 }
