@@ -275,27 +275,13 @@ impl<'a> CommandAck<'a> {
 }
 
 /// Refuse `args` that are not one map, the shape a kind's schema will be
-/// written against, or that carry one of its keys twice (P-015): a later
-/// schema decoder and a client could each pick a different copy.
-///
-/// Keys are compared pairwise rather than by order, because a receiver reads
-/// an unsorted map from a sloppy sender (P-016 binds encoders). Quadratic in
-/// the pairs, which `MAX_OPERATION` bounds, and it needs no table.
+/// written against. The CBOR walk checks repeated keys at every depth.
 fn a_map(args: &[u8]) -> Result<(), CommandError> {
+    CborReader::new(args)
+        .map()
+        .map_err(|_| CommandError::ArgsNotAMap)?;
     let mut walk = CborReader::new(args);
-    let pairs = walk.map().map_err(|_| CommandError::ArgsNotAMap)?;
-    for seen in 0..pairs {
-        let key = walk.key()?;
-        walk.skip()?;
-        let mut earlier = CborReader::new(args);
-        earlier.map()?;
-        for _ in 0..seen {
-            if earlier.key()? == key {
-                return Err(CommandError::ArgsKeyRepeated(key));
-            }
-            earlier.skip()?;
-        }
-    }
+    walk.skip()?;
     walk.finish()?;
     Ok(())
 }
@@ -326,8 +312,6 @@ pub enum CommandError {
     UnknownOutcome(u8),
     /// `args` is not a map.
     ArgsNotAMap,
-    /// `args` carries this key twice (P-015).
-    ArgsKeyRepeated(i64),
     /// The CBOR underneath was refused.
     Cbor(CborError),
 }
@@ -350,7 +334,6 @@ impl CommandError {
             | Self::UnknownKind(_)
             | Self::UnknownOutcome(_)
             | Self::ArgsNotAMap
-            | Self::ArgsKeyRepeated(_)
             | Self::Cbor(_) => Refusal::Client(ErrorCode::MalformedFrame),
         }
     }
@@ -364,9 +347,6 @@ impl fmt::Display for CommandError {
             Self::UnknownKind(value) => write!(f, "unallocated command kind {value:#06x}"),
             Self::UnknownOutcome(value) => write!(f, "unallocated Ack outcome {value}"),
             Self::ArgsNotAMap => f.write_str("Command 0x08 args (key 3) is not a map"),
-            Self::ArgsKeyRepeated(key) => {
-                write!(f, "Command 0x08 args (key 3) carries key {key} twice")
-            }
             Self::Cbor(why) => write!(f, "{why}"),
         }
     }
@@ -629,18 +609,20 @@ mod tests {
     /// are still read, because P-016 binds the encoder and not the receiver.
     #[test]
     fn p_015_args_carrying_a_key_twice_are_refused_both_ways() {
-        for (args, key) in [
-            (&[0xa2, 1, 0, 1, 1][..], 1),
-            (&[0xa3, 1, 0, 2, 0, 1, 1][..], 1),
-            (&[0xa3, 0x20, 0, 2, 0x81, 0, 0x20, 1][..], -1),
-            (&[0xa2, 5, 0xa1, 1, 0, 5, 0][..], 5),
+        for args in [
+            &[0xa2, 1, 0, 1, 1][..],
+            &[0xa3, 1, 0, 2, 0, 1, 1][..],
+            &[0xa3, 0x20, 0, 2, 0x81, 0, 0x20, 1][..],
+            &[0xa2, 5, 0xa1, 1, 0, 5, 0][..],
+            &[0xa1, 1, 0xa2, 2, 0, 2, 1][..],
+            &[0xa1, 1, 0x81, 0xa2, 2, 0, 0x18, 2, 1][..],
         ] {
             let mut bytes = [0; 32];
             bytes[..8].copy_from_slice(&[0xa3, 1, 7, 2, 0x19, 1, 1, 3]);
             bytes[8..8 + args.len()].copy_from_slice(args);
             assert_eq!(
                 CommandOperation::decode(&bytes[..8 + args.len()]),
-                Err(CommandError::ArgsKeyRepeated(key)),
+                Err(CommandError::Cbor(CborError::DuplicateKey)),
                 "{args:02x?}"
             );
             let op = CommandOperation {
@@ -650,7 +632,7 @@ mod tests {
             };
             assert_eq!(
                 op.encode(&mut [0; 32]),
-                Err(CommandError::ArgsKeyRepeated(key))
+                Err(CommandError::Cbor(CborError::DuplicateKey))
             );
         }
         let unsorted = [0xa3, 1, 7, 2, 0x19, 1, 1, 3, 0xa2, 2, 0, 1, 1];
@@ -741,7 +723,7 @@ mod tests {
             CommandError::UnknownKind(0),
             CommandError::UnknownOutcome(0),
             CommandError::ArgsNotAMap,
-            CommandError::ArgsKeyRepeated(-1),
+            CommandError::Cbor(CborError::DuplicateKey),
             CommandError::Cbor(CborError::WrongType),
         ];
         Rendering::<100>::each_says_something_of_its_own(&errors);

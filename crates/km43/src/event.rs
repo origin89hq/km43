@@ -561,6 +561,34 @@ mod tests {
         );
     }
 
+    /// P-015 covers both the opaque body and values skipped under P-013.
+    #[test]
+    fn p_015_repeated_keys_inside_unread_event_values_are_malformed() {
+        for unknown in [false, true] {
+            let mut dst = [0u8; SCRATCH];
+            let mut writer = CborWriter::new(&mut dst);
+            writer.map(if unknown { 4 } else { 3 }).expect("the fields");
+            writer.key(EventKey::Seq.number()).expect("seq key");
+            writer.u64(9).expect("seq");
+            writer.key(EventKey::Kind.number()).expect("kind key");
+            writer
+                .u64(u64::from(EventKind::RECORDS_DROPPED.0))
+                .expect("kind");
+            writer.key(EventKey::Body.number()).expect("body key");
+            if unknown {
+                writer.raw(&BODY).expect("known body");
+                writer.key(9).expect("unknown extension key");
+            }
+            writer.raw(&[0xa2, 1, 0, 2, 1]).expect("unique keys");
+            let len = writer.finish().expect("complete event");
+            assert!(Event::decode(&dst[..len]).is_ok());
+            dst[len - 2] = 1;
+            let error = Event::decode(&dst[..len]).expect_err("a repeated nested key");
+            assert_eq!(error, EventError::Cbor(CborError::DuplicateKey));
+            assert_eq!(error.refusal(), Refusal::Client(ErrorCode::MalformedFrame));
+        }
+    }
+
     /// A required key that never arrived is error 1, and the refusal names which
     /// one. Key 2 is optional and is not among them.
     #[test]

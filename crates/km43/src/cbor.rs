@@ -14,9 +14,9 @@
 //! than on the call stack: there is no stack guard on this part, so a body four
 //! hundred containers deep has to be a refusal rather than a reset.
 //!
-//! Duplicate keys (P-015) are not decided here. This layer hands the keys over
-//! in the order they arrived; only a body decoder knows which numbers it
-//! recognises and which it has already seen.
+//! Skipped and raw maps are checked for duplicate keys (P-015), including
+//! nested maps whose schema is unknown. Body decoders track the keys they read
+//! explicitly. Neither check requires received keys to be sorted.
 //!
 //! cites: P-010, P-011, P-013, P-015, P-016, P-018
 
@@ -64,6 +64,8 @@ pub enum CborError {
     /// Map keys that do not strictly ascend (P-016), which is also how the
     /// writer catches the same key written twice.
     KeysNotAscending,
+    /// A skipped map carries the same integer key twice (P-015).
+    DuplicateKey,
     /// More nested containers than [`MAX_DEPTH`].
     DepthExceeded,
     /// A text string longer than [`MAX_STRING`].
@@ -93,6 +95,7 @@ impl fmt::Display for CborError {
             Self::KeyNotInteger => "map key is not an integer",
             Self::MisplacedKey => "map key where a value belongs, or the reverse",
             Self::KeysNotAscending => "map keys do not strictly ascend",
+            Self::DuplicateKey => "map carries the same integer key twice",
             Self::DepthExceeded => "nested past the depth limit",
             Self::StringTooLong => "text string longer than the limit",
             Self::InvalidUtf8 => "text string is not UTF-8",
@@ -207,7 +210,7 @@ impl Width {
 /// One item's head: what it is, and — for the two that borrow — the bytes
 /// themselves, so that after reading a head the position is at an item boundary
 /// rather than halfway through a string somebody still has to remember to skip.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 enum Head<'a> {
     Unsigned(u64),
     /// The argument `n` of a negative integer, which encodes `-1 - n`.
@@ -499,14 +502,46 @@ impl<'a> CborReader<'a> {
     pub fn skip(&mut self) -> Result<(), CborError> {
         self.nest.settle();
         let floor = self.nest.depth;
-        self.head()?;
+        // One offset per allowed depth; `head` refuses a container beyond it.
+        // Rescanning avoids a key-count limit or an allocated set. Work is
+        // quadratic in the input length, with no recursive validation calls.
+        let mut maps = [0usize; NESTING];
         loop {
+            let start = self.next;
+            let depth = self.nest.depth;
+            let at_key = depth > floor && self.nest.at_key();
+            let head = self.head()?;
+            if at_key {
+                let index = depth.checked_sub(1).ok_or(CborError::DepthExceeded)?;
+                let from = *maps.get(index).ok_or(CborError::DepthExceeded)?;
+                self.unique_key(from, start, head)?;
+            }
+            if let Head::Map(_) = head {
+                let slot = maps.get_mut(depth).ok_or(CborError::DepthExceeded)?;
+                *slot = start;
+            }
             self.nest.settle();
             if self.nest.depth <= floor {
                 return Ok(());
             }
-            self.head()?;
         }
+    }
+
+    /// Compare decoded integers, so long-form encodings cannot hide a repeat.
+    /// Only keys of this map count; nested maps have their own key spaces.
+    fn unique_key(&self, from: usize, until: usize, key: Head<'a>) -> Result<(), CborError> {
+        let mut prior = Self::new(self.bytes);
+        prior.next = from;
+        prior.head()?;
+        while prior.next < until {
+            prior.nest.settle();
+            let at_key = prior.nest.depth == 1 && prior.nest.at_key();
+            let head = prior.head()?;
+            if at_key && head == key {
+                return Err(CborError::DuplicateKey);
+            }
+        }
+        Ok(())
     }
 
     /// The next item's own bytes, verbatim, with the reader left past it.
@@ -1975,7 +2010,7 @@ mod tests {
     /// log entry that names nothing at all.
     #[test]
     fn every_refusal_says_something_of_its_own() {
-        const EVERY: [CborError; 18] = [
+        const EVERY: [CborError; 19] = [
             CborError::EndOfInput,
             CborError::TrailingBytes,
             CborError::TrailingItem,
@@ -1988,6 +2023,7 @@ mod tests {
             CborError::KeyNotInteger,
             CborError::MisplacedKey,
             CborError::KeysNotAscending,
+            CborError::DuplicateKey,
             CborError::DepthExceeded,
             CborError::StringTooLong,
             CborError::InvalidUtf8,
@@ -2048,6 +2084,84 @@ mod tests {
         let whole = rendered.get(index).expect("the index came from the list");
         let len = *lengths.get(index).expect("the index came from the list");
         whole.get(..len).expect("the length came from the render")
+    }
+
+    /// P-015 applies inside unread values, including keys with different widths.
+    #[test]
+    fn p_015_skipped_maps_refuse_repeated_integer_keys() {
+        for bytes in [
+            &[0xa2, 1, 0, 1, 1][..],
+            &[0xa3, 1, 0, 2, 0, 1, 0][..],
+            &[0xa2, 0x20, 0, 0x38, 0, 1][..],
+            &[0xa2, 1, 0, 0x18, 1, 1][..],
+            &[0x81, 0xa1, 0, 0xa2, 1, 0, 1, 1][..],
+        ] {
+            assert_eq!(
+                CborReader::new(bytes).skip(),
+                Err(CborError::DuplicateKey),
+                "{bytes:?}"
+            );
+            assert_eq!(
+                CborReader::new(bytes).raw(),
+                Err(CborError::DuplicateKey),
+                "{bytes:?}"
+            );
+            let mut dst = [0; 32];
+            assert_eq!(
+                CborWriter::new(&mut dst).raw(bytes),
+                Err(CborError::DuplicateKey),
+                "{bytes:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn skipped_maps_keep_unsorted_keys_and_independent_key_spaces() {
+        for bytes in [
+            &[0xa0][..],
+            &[0xa2, 2, 0, 1, 0][..],
+            &[0xa2, 0, 0, 0x20, 0][..],
+            &[0xa2, 1, 0xa1, 1, 0, 2, 0xa1, 1, 0][..],
+            &[0xa2, 1, 0x82, 1, 1, 2, 0x42, 1, 1][..],
+        ] {
+            let mut reader = CborReader::new(bytes);
+            assert_eq!(reader.raw(), Ok(bytes));
+            assert_eq!(reader.finish(), Ok(()));
+        }
+    }
+
+    #[test]
+    fn repeated_keys_at_the_depth_limit_are_still_refused() {
+        const CAPACITY: usize = NESTING + 5;
+        let mut bytes = [0x81; CAPACITY];
+        let start = NESTING - 1;
+        bytes[start..start + 5].copy_from_slice(&[0xa2, 1, 0, 1, 0]);
+        assert_eq!(
+            CborReader::new(&bytes[..start + 5]).skip(),
+            Err(CborError::DuplicateKey)
+        );
+        bytes[start + 3] = 2;
+        assert_eq!(CborReader::new(&bytes[..start + 5]).skip(), Ok(()));
+        bytes[start..].copy_from_slice(&[0x81, 0xa2, 1, 0, 2, 0]);
+        assert_eq!(
+            CborReader::new(&bytes).skip(),
+            Err(CborError::DepthExceeded)
+        );
+    }
+
+    #[test]
+    fn skipped_maps_compare_the_full_unsigned_and_negative_key_ranges() {
+        for major in [0x1b, 0x3b] {
+            let mut bytes = [0xff; 21];
+            bytes[0] = 0xa2;
+            bytes[1] = major;
+            bytes[10] = 0;
+            bytes[11] = major;
+            bytes[20] = 0;
+            assert_eq!(CborReader::new(&bytes).skip(), Err(CborError::DuplicateKey));
+            bytes[19] = 0xfe;
+            assert_eq!(CborReader::new(&bytes).skip(), Ok(()));
+        }
     }
 
     /// The value carried verbatim, both ways.
