@@ -467,7 +467,7 @@ fn cell(text: &str) -> String {
 /// The failure is the right one either way — a generated table with nowhere to go must
 /// not be dropped — but "no section for `component_role`" is a sentence somebody can act
 /// on, and "no section for unknown outcome space" is one they have to bisect for.
-fn heading_for(key: &str) -> String {
+pub fn heading_for(key: &str) -> String {
     let known = match key {
         "command" => "## Command outcomes",
         "set_config" => "## SetConfig outcomes",

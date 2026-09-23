@@ -6,7 +6,8 @@
       "!**/node_modules",
       "!**/target",
       "!**/.test-out",
-      "!**/dist"
+      "!**/dist",
+      "!packages/km43/reference"
     ]
   },
   "formatter": {

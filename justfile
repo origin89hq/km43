@@ -42,9 +42,14 @@ build:
     pnpm run build
 
 # Rustdoc under deny-warnings: an intra-doc link to a constant that was renamed
-# or made private is a broken reference nothing else in the gate reads.
+# or made private is a broken reference nothing else in the gate reads. TypeDoc
+# does the same for the npm package and also refuses an export with no doc
+# comment, which is what a generator change that forgot one looks like. It
+# runs from the workspace root on TypeScript 6, because TypeDoc has no release
+# for the TypeScript 7 the package builds with.
 doc:
     RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --no-deps
+    pnpm run docs
 
 # The specification gate: vectors, registry, bindings, traceability, and the
 # cross-compile of the crate for the target. Read-only.
