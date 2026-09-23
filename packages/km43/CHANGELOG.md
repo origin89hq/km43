@@ -1,5 +1,12 @@
 # @origin89/km43
 
+## 0.4.0
+
+### Minor Changes
+
+- b929023: Add `ErrorCode.ChallengeUnavailable` for a readable refusal when `Discover` cannot return a valid challenge. Clients may accept this code as an unauthenticated retry hint; `BusyRetry` still requires a MAC.
+- b7bea40: Add registered BLE UUIDs and a bounded fragmentation API under `@origin89/km43/ble`. Rust and TypeScript consume shared transport traces; phone and board interoperability remains unverified.
+
 ## 0.3.0
 
 ### Minor Changes
