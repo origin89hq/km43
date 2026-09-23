@@ -2418,3 +2418,30 @@ fn p_093_published_time_bodies_decode_and_reencode_byte_for_byte() {
         assert_eq!(dst.get(..len), Some(published.as_slice()), "{name}");
     }
 }
+
+/// The generator writes each opcode from its own list, because it must not
+/// read this crate. Nothing compared that list to the registry for these
+/// entries, so a mistyped `0x8A` would have published a `TimeAck` under
+/// another message's number and every body test would still pass.
+#[test]
+fn the_published_time_bodies_carry_the_registry_opcodes() {
+    for (name, kind) in [
+        ("time_0x0A", MessageType::Time),
+        ("timeack_0x8A", MessageType::TimeResponse),
+        ("time_ack_unset_0x8A", MessageType::TimeResponse),
+    ] {
+        let entry = object(name);
+        let needle = "\"type\": ";
+        let from = entry.find(needle).expect("the entry names its type") + needle.len();
+        let tail = entry.get(from..).expect("the tail of the entry");
+        let end = tail
+            .find(|c: char| !c.is_ascii_digit())
+            .expect("the number is followed by something");
+        let published: u8 = tail
+            .get(..end)
+            .expect("the digits")
+            .parse()
+            .expect("a byte");
+        assert_eq!(published, kind as u8, "{name}");
+    }
+}
