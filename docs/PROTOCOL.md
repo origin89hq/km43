@@ -2989,6 +2989,11 @@ TimeAck  0x8A           wrapper
                            omitted when the clock has never been set
 ```
 
+`TimeAck` outcome 1 `accepted` always carries key 2, because the write it
+answers has just set the clock. A receiver refuses one without it: an answer
+that says the clock moved and not where leaves the client unable to tell
+whether the time that landed was its own.
+
 **P-110** — Setting the clock is a **signed write**. It changes what every later
 log record claims about when it happened.
 
