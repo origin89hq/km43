@@ -324,31 +324,37 @@ impl Concern {
         let (mut since, mut raw, mut vns, mut seq) = (None, None, None, None);
         for _ in 0..pairs {
             match ConcernKey::of(body.key()?) {
-                Some(ConcernKey::Cid) => cid = Some(Id::new(body.u16()?)?),
-                Some(ConcernKey::Dev) => dev = Some(Id::new(body.u16()?)?),
-                Some(ConcernKey::Cmp) => cmp = Some(body.u16()?),
-                Some(ConcernKey::Sig) => sig = Some(Id::new(body.u16()?)?),
-                Some(ConcernKey::Elem) => elem = Some(ElementAt::new(body.u8()?)?),
-                Some(ConcernKey::Cond) => cond = Some(Condition(body.u16()?)),
+                Some(k @ ConcernKey::Cid) => once(&mut cid, k as u8, Id::new(body.u16()?)?)?,
+                Some(k @ ConcernKey::Dev) => once(&mut dev, k as u8, Id::new(body.u16()?)?)?,
+                Some(k @ ConcernKey::Cmp) => once(&mut cmp, k as u8, body.u16()?)?,
+                Some(k @ ConcernKey::Sig) => once(&mut sig, k as u8, Id::new(body.u16()?)?)?,
+                Some(k @ ConcernKey::Elem) => {
+                    once(&mut elem, k as u8, ElementAt::new(body.u8()?)?)?;
+                }
+                Some(k @ ConcernKey::Cond) => once(&mut cond, k as u8, Condition(body.u16()?))?,
                 Some(ConcernKey::Sev) => {
                     let number = body.u8()?;
-                    sev = Some(
+                    once(
+                        &mut sev,
+                        ConcernKey::Sev as u8,
                         Severity::try_from(number)
                             .map_err(|()| ConcernsError::UnknownSeverity(number))?,
-                    );
+                    )?;
                 }
                 Some(ConcernKey::State) => {
                     let number = body.u8()?;
-                    state = Some(
+                    once(
+                        &mut state,
+                        ConcernKey::State as u8,
                         ConcernState::try_from(number)
                             .map_err(|()| ConcernsError::UnknownState(number))?,
-                    );
+                    )?;
                 }
-                Some(ConcernKey::Age) => age = Some(body.u32()?),
-                Some(ConcernKey::Since) => since = Some(body.u64()?),
-                Some(ConcernKey::Raw) => raw = Some(body.u32()?),
-                Some(ConcernKey::Vns) => vns = Some(VendorNamespace(body.u16()?)),
-                Some(ConcernKey::Seq) => seq = Some(body.u64()?),
+                Some(k @ ConcernKey::Age) => once(&mut age, k as u8, body.u32()?)?,
+                Some(k @ ConcernKey::Since) => once(&mut since, k as u8, body.u64()?)?,
+                Some(k @ ConcernKey::Raw) => once(&mut raw, k as u8, body.u32()?)?,
+                Some(k @ ConcernKey::Vns) => once(&mut vns, k as u8, VendorNamespace(body.u16()?))?,
+                Some(k @ ConcernKey::Seq) => once(&mut seq, k as u8, body.u64()?)?,
                 // A key a newer peer allocated. Skipped, never refused — that is
                 // P-013, and refusing here would drop a whole page of concerns
                 // because one row grew a field.
@@ -425,10 +431,10 @@ impl ConcernRaised {
         let (mut rev, mut concern) = (None, None);
         for _ in 0..pairs {
             match body.key()? {
-                1 => rev = Some(body.u32()?),
+                1 => once(&mut rev, 1, body.u32()?)?,
                 // Read as the bytes it arrived as and decoded by the row's own
                 // code, so the two paths cannot drift.
-                2 => concern = Some(Concern::decode(body.raw()?)?),
+                2 => once(&mut concern, 2, Concern::decode(body.raw()?)?)?,
                 _ => body.skip()?,
             }
         }
@@ -496,12 +502,12 @@ impl ConcernChanged {
         };
         for _ in 0..pairs {
             match body.key()? {
-                1 => rev = Some(body.u32()?),
-                2 => cid = Some(Id::new(body.u16()?)?),
-                3 => dev = Some(Id::new(body.u16()?)?),
-                4 => cond = Some(Condition(body.u16()?)),
-                5 => state = Some(read_state(&mut body)?),
-                6 => prev = Some(read_state(&mut body)?),
+                1 => once(&mut rev, 1, body.u32()?)?,
+                2 => once(&mut cid, 2, Id::new(body.u16()?)?)?,
+                3 => once(&mut dev, 3, Id::new(body.u16()?)?)?,
+                4 => once(&mut cond, 4, Condition(body.u16()?))?,
+                5 => once(&mut state, 5, read_state(&mut body)?)?,
+                6 => once(&mut prev, 6, read_state(&mut body)?)?,
                 _ => body.skip()?,
             }
         }
@@ -706,8 +712,8 @@ impl ReadConcerns {
         let (mut rev, mut from) = (None, None);
         for _ in 0..pairs {
             match body.key()? {
-                1 => rev = Some(body.u32()?),
-                2 => from = Some(body.u16()?),
+                1 => once(&mut rev, 1, body.u32()?)?,
+                2 => once(&mut from, 2, body.u16()?)?,
                 _ => body.skip()?,
             }
         }
@@ -810,27 +816,28 @@ impl ConcernsHeader {
         let pairs = body.map()?;
         let (mut rev, mut seq, mut next) = (None, None, None);
         let (mut total, mut refused, mut outcome) = (None, None, None);
-        let mut rows = 0usize;
+        let mut rows = None;
         for _ in 0..pairs {
             match body.key()? {
-                1 => rev = Some(body.u32()?),
-                2 => seq = Some(body.u64()?),
+                1 => once(&mut rev, 1, body.u32()?)?,
+                2 => once(&mut seq, 2, body.u64()?)?,
                 3 => {
                     let n = body.array()?;
                     for _ in 0..n {
                         body.skip()?;
                     }
-                    rows = n;
+                    once(&mut rows, 3, n)?;
                 }
-                4 => next = Some(body.u16()?),
-                5 => total = Some(body.u16()?),
-                6 => refused = Some(body.u16()?),
-                7 => outcome = Some(body.u8()?),
+                4 => once(&mut next, 4, body.u16()?)?,
+                5 => once(&mut total, 5, body.u16()?)?,
+                6 => once(&mut refused, 6, body.u16()?)?,
+                7 => once(&mut outcome, 7, body.u8()?)?,
                 _ => body.skip()?,
             }
         }
         body.finish()?;
 
+        let rows = rows.unwrap_or(0);
         let number = outcome.ok_or(ConcernsError::MissingResponse(7))?;
         let outcome = ConcernsOutcome::of(number).ok_or(ConcernsError::UnknownOutcome(number))?;
         let next = next.ok_or(ConcernsError::MissingResponse(4))?;
@@ -881,7 +888,7 @@ impl<'a> ConcernRows<'a> {
                 // Taken as bytes and walked to the end, so the body is proved
                 // well formed before a row is handed out. Returning at key 3
                 // left everything after the array unread.
-                3 => rows = Some(body.raw()?),
+                3 => once(&mut rows, 3, body.raw()?)?,
                 _ => body.skip()?,
             }
         }
@@ -915,10 +922,20 @@ impl Iterator for ConcernRows<'_> {
     }
 }
 
+fn once<T>(slot: &mut Option<T>, key: u8, value: T) -> Result<(), ConcernsError> {
+    if slot.is_some() {
+        return Err(ConcernsError::Duplicate(key));
+    }
+    *slot = Some(value);
+    Ok(())
+}
+
 /// Why a `ReadConcerns` or a `Concerns` was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ConcernsError {
+    /// A recognized key appeared twice (P-015).
+    Duplicate(u8),
     /// 0 handed to an id space that reserves it as the paging sentinel.
     ZeroId,
     /// A 1-based position given as 0, which would render as `ebase` − 1.
@@ -988,7 +1005,8 @@ impl ConcernsError {
     pub const fn refusal(self) -> Refusal {
         match self {
             Self::RowTooLong(_) => Refusal::Client(ErrorCode::PayloadTooLarge),
-            Self::ZeroId
+            Self::Duplicate(_)
+            | Self::ZeroId
             | Self::ZeroElement
             | Self::ElementPastSeries(_)
             | Self::ElementWithoutSignal
@@ -1012,6 +1030,7 @@ impl ConcernsError {
 impl fmt::Display for ConcernsError {
     fn fmt(&self, w: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Duplicate(k) => write!(w, "a concerns map carrying key {k} twice"),
             Self::ZeroId => w.write_str("0 is the end-of-paging sentinel and never an id"),
             Self::ZeroElement => w.write_str("an element position is 1-based and never 0"),
             Self::ElementPastSeries(n) => write!(
@@ -1065,7 +1084,8 @@ mod tests {
     /// because its bytes fit and it is the shape that is wrong.
     #[test]
     fn every_refusal_says_something_of_its_own() {
-        const EVERY: [ConcernsError; 18] = [
+        const EVERY: [ConcernsError; 19] = [
+            ConcernsError::Duplicate(1),
             ConcernsError::ZeroId,
             ConcernsError::ZeroElement,
             ConcernsError::ElementPastSeries(40),
@@ -1962,5 +1982,220 @@ mod tests {
         let with_tail = out.get(..len + 2).expect("the body and a tail");
         assert!(ConcernsHeader::decode(with_tail).is_err());
         assert!(ConcernRows::of(with_tail).is_err());
+    }
+
+    // Repeating an optional or empty field must not erase its first occurrence.
+    #[test]
+    fn p_015_concern_refuses_each_repeated_key() {
+        for key in 1u8..=13 {
+            for separated in [false, true] {
+                let mut out = [0u8; 256];
+                let mut used = 1;
+                out[0] = if separated { 0xa3 } else { 0xa2 };
+                for occurrence in 0..2 {
+                    if separated && occurrence == 1 {
+                        out[used..used + 3].copy_from_slice(&[0x18, 99, 0]);
+                        used += 3;
+                    }
+                    out[used] = key;
+                    used += 1;
+                    let mut cbor = CborWriter::new(&mut out[used..]);
+                    match key {
+                        7 => cbor.u64(Severity::Protection as u64),
+                        8 => cbor.u64(ConcernState::Active as u64),
+                        _ => cbor.u64(1),
+                    }
+                    .expect("value");
+                    used += cbor.finish().expect("value length");
+                }
+                let bytes = &out[..used];
+                let why = Concern::decode(bytes)
+                    .map(|_| ())
+                    .expect_err("duplicate refused");
+                assert_eq!(
+                    why,
+                    ConcernsError::Duplicate(key),
+                    "key {key}, separated {separated}"
+                );
+                assert_eq!(why.refusal(), Refusal::Client(ErrorCode::MalformedFrame));
+            }
+        }
+    }
+
+    // Repeating an optional or empty field must not erase its first occurrence.
+    #[test]
+    fn p_015_concern_raised_refuses_each_repeated_key() {
+        for key in 1u8..=2 {
+            for separated in [false, true] {
+                let mut out = [0u8; 256];
+                let mut used = 1;
+                out[0] = if separated { 0xa3 } else { 0xa2 };
+                for occurrence in 0..2 {
+                    if separated && occurrence == 1 {
+                        out[used..used + 3].copy_from_slice(&[0x18, 99, 0]);
+                        used += 3;
+                    }
+                    out[used] = key;
+                    used += 1;
+                    let mut cbor = CborWriter::new(&mut out[used..]);
+                    match key {
+                        2 => widest().encode(&mut cbor),
+                        _ => cbor.u64(1),
+                    }
+                    .expect("value");
+                    used += cbor.finish().expect("value length");
+                }
+                let bytes = &out[..used];
+                let why = ConcernRaised::decode(bytes)
+                    .map(|_| ())
+                    .expect_err("duplicate refused");
+                assert_eq!(
+                    why,
+                    ConcernsError::Duplicate(key),
+                    "key {key}, separated {separated}"
+                );
+                assert_eq!(why.refusal(), Refusal::Client(ErrorCode::MalformedFrame));
+            }
+        }
+    }
+
+    // Repeating an optional or empty field must not erase its first occurrence.
+    #[test]
+    fn p_015_concern_changed_refuses_each_repeated_key() {
+        for key in 1u8..=6 {
+            for separated in [false, true] {
+                let mut out = [0u8; 256];
+                let mut used = 1;
+                out[0] = if separated { 0xa3 } else { 0xa2 };
+                for occurrence in 0..2 {
+                    if separated && occurrence == 1 {
+                        out[used..used + 3].copy_from_slice(&[0x18, 99, 0]);
+                        used += 3;
+                    }
+                    out[used] = key;
+                    used += 1;
+                    let mut cbor = CborWriter::new(&mut out[used..]);
+                    match key {
+                        5 | 6 => cbor.u64(ConcernState::Active as u64),
+                        _ => cbor.u64(1),
+                    }
+                    .expect("value");
+                    used += cbor.finish().expect("value length");
+                }
+                let bytes = &out[..used];
+                let why = ConcernChanged::decode(bytes)
+                    .map(|_| ())
+                    .expect_err("duplicate refused");
+                assert_eq!(
+                    why,
+                    ConcernsError::Duplicate(key),
+                    "key {key}, separated {separated}"
+                );
+                assert_eq!(why.refusal(), Refusal::Client(ErrorCode::MalformedFrame));
+            }
+        }
+    }
+
+    // Repeating an optional or empty field must not erase its first occurrence.
+    #[test]
+    fn p_015_read_concerns_refuses_each_repeated_key() {
+        for key in 1u8..=2 {
+            for separated in [false, true] {
+                let mut out = [0u8; 256];
+                let mut used = 1;
+                out[0] = if separated { 0xa3 } else { 0xa2 };
+                for occurrence in 0..2 {
+                    if separated && occurrence == 1 {
+                        out[used..used + 3].copy_from_slice(&[0x18, 99, 0]);
+                        used += 3;
+                    }
+                    out[used] = key;
+                    used += 1;
+                    let mut cbor = CborWriter::new(&mut out[used..]);
+                    cbor.u64(1).expect("value");
+                    used += cbor.finish().expect("value length");
+                }
+                let bytes = &out[..used];
+                let why = ReadConcerns::decode(bytes)
+                    .map(|_| ())
+                    .expect_err("duplicate refused");
+                assert_eq!(
+                    why,
+                    ConcernsError::Duplicate(key),
+                    "key {key}, separated {separated}"
+                );
+                assert_eq!(why.refusal(), Refusal::Client(ErrorCode::MalformedFrame));
+            }
+        }
+    }
+
+    // Repeating an optional or empty field must not erase its first occurrence.
+    #[test]
+    fn p_015_concerns_header_refuses_each_repeated_key() {
+        for key in 1u8..=7 {
+            for separated in [false, true] {
+                let mut out = [0u8; 256];
+                let mut used = 1;
+                out[0] = if separated { 0xa3 } else { 0xa2 };
+                for occurrence in 0..2 {
+                    if separated && occurrence == 1 {
+                        out[used..used + 3].copy_from_slice(&[0x18, 99, 0]);
+                        used += 3;
+                    }
+                    out[used] = key;
+                    used += 1;
+                    let mut cbor = CborWriter::new(&mut out[used..]);
+                    match key {
+                        3 => cbor.array(0),
+                        _ => cbor.u64(1),
+                    }
+                    .expect("value");
+                    used += cbor.finish().expect("value length");
+                }
+                let bytes = &out[..used];
+                let why = ConcernsHeader::decode(bytes)
+                    .map(|_| ())
+                    .expect_err("duplicate refused");
+                assert_eq!(
+                    why,
+                    ConcernsError::Duplicate(key),
+                    "key {key}, separated {separated}"
+                );
+                assert_eq!(why.refusal(), Refusal::Client(ErrorCode::MalformedFrame));
+            }
+        }
+    }
+
+    // Repeating an optional or empty field must not erase its first occurrence.
+    #[test]
+    fn p_015_concern_rows_refuses_each_repeated_key() {
+        for key in 3u8..=3 {
+            for separated in [false, true] {
+                let mut out = [0u8; 256];
+                let mut used = 1;
+                out[0] = if separated { 0xa3 } else { 0xa2 };
+                for occurrence in 0..2 {
+                    if separated && occurrence == 1 {
+                        out[used..used + 3].copy_from_slice(&[0x18, 99, 0]);
+                        used += 3;
+                    }
+                    out[used] = key;
+                    used += 1;
+                    let mut cbor = CborWriter::new(&mut out[used..]);
+                    cbor.array(0).expect("value");
+                    used += cbor.finish().expect("value length");
+                }
+                let bytes = &out[..used];
+                let why = ConcernRows::of(bytes)
+                    .map(|_| ())
+                    .expect_err("duplicate refused");
+                assert_eq!(
+                    why,
+                    ConcernsError::Duplicate(key),
+                    "key {key}, separated {separated}"
+                );
+                assert_eq!(why.refusal(), Refusal::Client(ErrorCode::MalformedFrame));
+            }
+        }
     }
 }

@@ -1416,18 +1416,18 @@ impl InventoryHeader {
             (None, None, None, None, None, None, None);
         for _ in 0..pairs {
             match InventoryKey::of(body.key()?) {
-                Some(InventoryKey::Rev) => rev = Some(body.u32()?),
-                Some(InventoryKey::What) => what = Some(body.u8()?),
+                Some(k @ InventoryKey::Rev) => response_once(&mut rev, k, body.u32()?)?,
+                Some(k @ InventoryKey::What) => response_once(&mut what, k, body.u8()?)?,
                 Some(InventoryKey::Rows) => {
                     let n = body.array()?;
                     for _ in 0..n {
                         body.skip()?;
                     }
-                    rows = Some(n);
+                    response_once(&mut rows, InventoryKey::Rows, n)?;
                 }
-                Some(InventoryKey::Next) => next = Some(body.u16()?),
-                Some(InventoryKey::Total) => total = Some(body.u16()?),
-                Some(InventoryKey::Outcome) => outcome = Some(body.u8()?),
+                Some(k @ InventoryKey::Next) => response_once(&mut next, k, body.u16()?)?,
+                Some(k @ InventoryKey::Total) => response_once(&mut total, k, body.u16()?)?,
+                Some(k @ InventoryKey::Outcome) => response_once(&mut outcome, k, body.u8()?)?,
                 Some(InventoryKey::Digest) => {
                     let bytes = body.bytes()?;
                     let mut out = [0u8; 8];
@@ -1435,7 +1435,7 @@ impl InventoryHeader {
                         return Err(InventoryError::DigestWidth(bytes.len()));
                     }
                     out.copy_from_slice(bytes);
-                    digest = Some(out);
+                    response_once(&mut digest, InventoryKey::Digest, out)?;
                 }
                 None => body.skip()?,
             }
@@ -1464,6 +1464,18 @@ impl InventoryHeader {
             digest,
         })
     }
+}
+
+fn response_once<T>(
+    slot: &mut Option<T>,
+    key: InventoryKey,
+    value: T,
+) -> Result<(), InventoryError> {
+    if slot.is_some() {
+        return Err(InventoryError::DuplicateResponse(key));
+    }
+    *slot = Some(value);
+    Ok(())
 }
 
 /// P-148's domain label. ASCII, no trailing NUL, and nineteen bytes.
@@ -1611,6 +1623,8 @@ pub enum InventoryError {
     RowsOutOfOrder { after: RowKind, got: RowKind },
     /// The same key twice (P-015).
     Duplicate(ReadInventoryKey),
+    /// A response key appeared twice (P-015).
+    DuplicateResponse(InventoryKey),
     /// The CBOR underneath was refused.
     Cbor(CborError),
 }
@@ -1652,6 +1666,7 @@ impl InventoryError {
             | Self::DigestWidth(_)
             | Self::UnknownOutcome(_)
             | Self::RowsOutOfOrder { .. }
+            | Self::DuplicateResponse(_)
             | Self::Duplicate(_)
             | Self::Cbor(_) => Refusal::Client(ErrorCode::MalformedFrame),
         }
@@ -1708,6 +1723,7 @@ impl fmt::Display for InventoryError {
             }
             Self::RowTooLong(n) => write!(w, "a row of {n} bytes is past MAX_ROW_BYTES"),
             Self::Missing(key) => write!(w, "{key} never arrived"),
+            Self::DuplicateResponse(key) => write!(w, "inventory response {key} arrived twice"),
             Self::Duplicate(key) => write!(w, "{key} arrived twice"),
             Self::MissingResponse(key) => write!(w, "{key} never arrived"),
             Self::AnsweredNothing(o) => {
@@ -1744,7 +1760,8 @@ mod tests {
     /// its bytes fit and it is the shape that is wrong.
     #[test]
     fn every_refusal_says_something_of_its_own() {
-        const EVERY: [InventoryError; 25] = [
+        const EVERY: [InventoryError; 26] = [
+            InventoryError::DuplicateResponse(InventoryKey::Rev),
             InventoryError::RowShape {
                 kind: RowKind::Bus,
                 want: 5,
@@ -3191,5 +3208,45 @@ mod reading {
                 when: When::ShapeIsASeries
             }
         );
+    }
+
+    // Repeating an optional or empty field must not erase its first occurrence.
+    #[test]
+    fn p_015_inventory_header_refuses_each_repeated_key() {
+        for key in 1u8..=7 {
+            for separated in [false, true] {
+                let mut out = [0u8; 256];
+                let mut used = 1;
+                out[0] = if separated { 0xa3 } else { 0xa2 };
+                for occurrence in 0..2 {
+                    if separated && occurrence == 1 {
+                        out[used..used + 3].copy_from_slice(&[0x18, 99, 0]);
+                        used += 3;
+                    }
+                    out[used] = key;
+                    used += 1;
+                    let mut cbor = CborWriter::new(&mut out[used..]);
+                    match key {
+                        3 => cbor.array(0),
+                        7 => cbor.bytes(&[0; 8]),
+                        _ => cbor.u64(1),
+                    }
+                    .expect("value");
+                    used += cbor.finish().expect("value length");
+                }
+                let bytes = &out[..used];
+                let why = InventoryHeader::decode(bytes)
+                    .map(|_| ())
+                    .expect_err("duplicate refused");
+                assert_eq!(
+                    why,
+                    InventoryError::DuplicateResponse(
+                        InventoryKey::of(i64::from(key)).expect("known key")
+                    ),
+                    "key {key}, separated {separated}"
+                );
+                assert_eq!(why.refusal(), Refusal::Client(ErrorCode::MalformedFrame));
+            }
+        }
     }
 }

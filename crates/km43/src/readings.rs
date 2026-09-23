@@ -243,10 +243,10 @@ impl Sample {
         let (mut sig, mut value, mut q, mut age) = (None, None, None, None);
         for _ in 0..pairs {
             match body.key()? {
-                1 => sig = Some(Id::new(body.u16()?)?),
-                2 => value = Some(body.i32()?),
-                3 => q = Some(body.u8()?),
-                4 => age = Some(body.u32()?),
+                1 => once(&mut sig, 1, Id::new(body.u16()?)?)?,
+                2 => once(&mut value, 2, body.i32()?)?,
+                3 => once(&mut q, 3, body.u8()?)?,
+                4 => once(&mut age, 4, body.u32()?)?,
                 // P-013: a key this version has never heard of is skipped, not
                 // refused. A v2 controller must reach a v1 client as the reading
                 // it is.
@@ -364,7 +364,7 @@ impl<'a> Series<'a> {
             (None, None, None, None, None, false);
         for _ in 0..pairs {
             match body.key()? {
-                1 => sig = Some(Id::new(body.u16()?)?.get()),
+                1 => once(&mut sig, 1, Id::new(body.u16()?)?.get())?,
                 2 => {
                     let bytes = body.bytes()?;
                     let mut with_value = 0usize;
@@ -375,7 +375,7 @@ impl<'a> Series<'a> {
                         }
                         stale |= matches!(q.validity_of(), Validity::Stale);
                     }
-                    elements = Some(bytes.len());
+                    once(&mut elements, 2, bytes.len())?;
                     carrying = Some(with_value);
                 }
                 3 => {
@@ -383,9 +383,9 @@ impl<'a> Series<'a> {
                     for _ in 0..n {
                         body.i32()?;
                     }
-                    integers = Some(n);
+                    once(&mut integers, 3, n)?;
                 }
-                4 => age = Some(body.u32()?),
+                4 => once(&mut age, 4, body.u32()?)?,
                 _ => body.skip()?,
             }
         }
@@ -570,10 +570,12 @@ impl ReadSignals {
         let pairs = body.map()?;
         let (mut rev, mut from) = (None, None);
         let mut out = Self::everything(0, 0);
+        let mut selectors = None;
         for _ in 0..pairs {
             match body.key()? {
-                1 => rev = Some(body.u32()?),
+                1 => once(&mut rev, 1, body.u32()?)?,
                 2 => {
+                    once(&mut selectors, 2, ())?;
                     let count = body.array()?;
                     if count > MAX_SELECTORS {
                         return Err(ReadingsError::TooManySelectors);
@@ -582,7 +584,7 @@ impl ReadSignals {
                         out.select(Sel::decode(&mut body)?)?;
                     }
                 }
-                3 => from = Some(body.u16()?),
+                3 => once(&mut from, 3, body.u16()?)?,
                 _ => body.skip()?,
             }
         }
@@ -908,22 +910,24 @@ impl ReadingsHeader {
         let pairs = body.map()?;
         let (mut seq, mut rev, mut at, mut next, mut total, mut outcome) =
             (None, None, None, None, None, None);
-        let (mut samples, mut series) = (0usize, 0usize);
+        let (mut samples, mut series) = (None, None);
         for _ in 0..pairs {
             match body.key()? {
-                1 => seq = Some(body.u64()?),
-                2 => rev = Some(body.u32()?),
-                3 => at = Some(body.u64()?),
-                4 => samples = Self::count(&mut body)?,
-                5 => series = Self::count(&mut body)?,
-                6 => next = Some(body.u16()?),
-                7 => total = Some(body.u16()?),
-                8 => outcome = Some(body.u8()?),
+                1 => once(&mut seq, 1, body.u64()?)?,
+                2 => once(&mut rev, 2, body.u32()?)?,
+                3 => once(&mut at, 3, body.u64()?)?,
+                4 => once(&mut samples, 4, Self::count(&mut body)?)?,
+                5 => once(&mut series, 5, Self::count(&mut body)?)?,
+                6 => once(&mut next, 6, body.u16()?)?,
+                7 => once(&mut total, 7, body.u16()?)?,
+                8 => once(&mut outcome, 8, body.u8()?)?,
                 _ => body.skip()?,
             }
         }
         body.finish()?;
 
+        let samples = samples.unwrap_or(0);
+        let series = series.unwrap_or(0);
         let number = outcome.ok_or(ReadingsError::MissingResponse(8))?;
         let outcome = ReadingsOutcome::of(number).ok_or(ReadingsError::UnknownOutcome(number))?;
         let next = next.ok_or(ReadingsError::MissingResponse(6))?;
@@ -958,21 +962,26 @@ impl ReadingsHeader {
     {
         let mut body = CborReader::new(payload);
         let pairs = body.map()?;
-        let mut seen = 0usize;
+        let mut samples = None;
         for _ in 0..pairs {
             let key = body.key()?;
             if key == 4 {
-                let rows = body.array()?;
-                for _ in 0..rows {
-                    each(Sample::decode(&mut body)?);
-                    seen = seen.saturating_add(1);
-                }
+                once(&mut samples, 4, body.raw()?)?;
             } else {
                 body.skip()?;
             }
         }
         body.finish()?;
-        Ok(seen)
+        let Some(samples) = samples else {
+            return Ok(0);
+        };
+        // Refuse a repeated array before delivering anything to the callback.
+        let mut body = CborReader::new(samples);
+        let rows = body.array()?;
+        for _ in 0..rows {
+            each(Sample::decode(&mut body)?);
+        }
+        Ok(rows)
     }
 
     fn count(body: &mut CborReader<'_>) -> Result<usize, ReadingsError> {
@@ -984,10 +993,20 @@ impl ReadingsHeader {
     }
 }
 
+fn once<T>(slot: &mut Option<T>, key: u8, value: T) -> Result<(), ReadingsError> {
+    if slot.is_some() {
+        return Err(ReadingsError::Duplicate(key));
+    }
+    *slot = Some(value);
+    Ok(())
+}
+
 /// Why a `ReadSignals` or a `Readings` was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ReadingsError {
+    /// A recognized key appeared twice (P-015).
+    Duplicate(u8),
     /// 0 handed to an id space that reserves it as the paging sentinel.
     ZeroId,
     /// A `Sel` carrying none of the three keys, or two of them.
@@ -1048,7 +1067,8 @@ impl ReadingsError {
         match self {
             Self::RowTooLong(_) => Refusal::Client(ErrorCode::PayloadTooLarge),
             Self::Quality(why) => why.refusal(),
-            Self::ZeroId
+            Self::Duplicate(_)
+            | Self::ZeroId
             | Self::SelectorNamesNotOne(_)
             | Self::UnknownSelectorKey(_)
             | Self::TooManySelectors
@@ -1064,6 +1084,7 @@ impl ReadingsError {
 impl fmt::Display for ReadingsError {
     fn fmt(&self, w: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Duplicate(k) => write!(w, "a readings map carrying key {k} twice"),
             Self::ZeroId => w.write_str("0 is the end-of-paging sentinel and never an id"),
             Self::SelectorNamesNotOne(n) => {
                 write!(w, "a selector naming {n} things, and it names exactly one")
@@ -1191,7 +1212,8 @@ mod tests {
     /// because its bytes fit and it is the shape that is wrong.
     #[test]
     fn every_refusal_says_something_of_its_own() {
-        const EVERY: [ReadingsError; 12] = [
+        const EVERY: [ReadingsError; 13] = [
+            ReadingsError::Duplicate(1),
             ReadingsError::ZeroId,
             ReadingsError::SelectorNamesNotOne(2),
             ReadingsError::UnknownSelectorKey(9),
@@ -2269,5 +2291,228 @@ mod page {
             Some(&(2, None)),
             "the absence came back as a number"
         );
+    }
+
+    // Repeating an optional or empty field must not erase its first occurrence.
+    #[test]
+    fn p_015_sample_refuses_each_repeated_key() {
+        for key in 1u8..=4 {
+            for separated in [false, true] {
+                let mut out = [0u8; 256];
+                let mut used = 1;
+                out[0] = if separated { 0xa3 } else { 0xa2 };
+                for occurrence in 0..2 {
+                    if separated && occurrence == 1 {
+                        out[used..used + 3].copy_from_slice(&[0x18, 99, 0]);
+                        used += 3;
+                    }
+                    out[used] = key;
+                    used += 1;
+                    let mut cbor = CborWriter::new(&mut out[used..]);
+                    match key {
+                        3 => cbor.u64(u64::from(ok().byte())),
+                        _ => cbor.u64(1),
+                    }
+                    .expect("value");
+                    used += cbor.finish().expect("value length");
+                }
+                let bytes = &out[..used];
+                let why = Sample::decode(&mut CborReader::new(bytes))
+                    .map(|_| ())
+                    .expect_err("duplicate refused");
+                assert_eq!(
+                    why,
+                    ReadingsError::Duplicate(key),
+                    "key {key}, separated {separated}"
+                );
+                assert_eq!(
+                    why.refusal(),
+                    crate::Refusal::Client(crate::ErrorCode::MalformedFrame)
+                );
+            }
+        }
+    }
+
+    // Repeating an optional or empty field must not erase its first occurrence.
+    #[test]
+    fn p_015_series_refuses_each_repeated_key() {
+        for key in 1u8..=4 {
+            for separated in [false, true] {
+                let mut out = [0u8; 256];
+                let mut used = 1;
+                out[0] = if separated { 0xa3 } else { 0xa2 };
+                for occurrence in 0..2 {
+                    if separated && occurrence == 1 {
+                        out[used..used + 3].copy_from_slice(&[0x18, 99, 0]);
+                        used += 3;
+                    }
+                    out[used] = key;
+                    used += 1;
+                    let mut cbor = CborWriter::new(&mut out[used..]);
+                    match key {
+                        2 => cbor.bytes(&[ok().byte(), ok().byte()]),
+                        3 => cbor.array(0),
+                        _ => cbor.u64(1),
+                    }
+                    .expect("value");
+                    used += cbor.finish().expect("value length");
+                }
+                let bytes = &out[..used];
+                let why = Series::check(bytes)
+                    .map(|_| ())
+                    .expect_err("duplicate refused");
+                assert_eq!(
+                    why,
+                    ReadingsError::Duplicate(key),
+                    "key {key}, separated {separated}"
+                );
+                assert_eq!(
+                    why.refusal(),
+                    crate::Refusal::Client(crate::ErrorCode::MalformedFrame)
+                );
+            }
+        }
+    }
+
+    // Repeating an optional or empty field must not erase its first occurrence.
+    #[test]
+    fn p_015_read_signals_refuses_each_repeated_key() {
+        use super::ReadSignals;
+        for key in 1u8..=3 {
+            for separated in [false, true] {
+                let mut out = [0u8; 256];
+                let mut used = 1;
+                out[0] = if separated { 0xa3 } else { 0xa2 };
+                for occurrence in 0..2 {
+                    if separated && occurrence == 1 {
+                        out[used..used + 3].copy_from_slice(&[0x18, 99, 0]);
+                        used += 3;
+                    }
+                    out[used] = key;
+                    used += 1;
+                    let mut cbor = CborWriter::new(&mut out[used..]);
+                    match key {
+                        2 => cbor.array(0),
+                        _ => cbor.u64(1),
+                    }
+                    .expect("value");
+                    used += cbor.finish().expect("value length");
+                }
+                let bytes = &out[..used];
+                let why = ReadSignals::decode(bytes)
+                    .map(|_| ())
+                    .expect_err("duplicate refused");
+                assert_eq!(
+                    why,
+                    ReadingsError::Duplicate(key),
+                    "key {key}, separated {separated}"
+                );
+                assert_eq!(
+                    why.refusal(),
+                    crate::Refusal::Client(crate::ErrorCode::MalformedFrame)
+                );
+            }
+        }
+    }
+
+    // Repeating an optional or empty field must not erase its first occurrence.
+    #[test]
+    fn p_015_readings_header_refuses_each_repeated_key() {
+        for key in 1u8..=8 {
+            for separated in [false, true] {
+                let mut out = [0u8; 256];
+                let mut used = 1;
+                out[0] = if separated { 0xa3 } else { 0xa2 };
+                for occurrence in 0..2 {
+                    if separated && occurrence == 1 {
+                        out[used..used + 3].copy_from_slice(&[0x18, 99, 0]);
+                        used += 3;
+                    }
+                    out[used] = key;
+                    used += 1;
+                    let mut cbor = CborWriter::new(&mut out[used..]);
+                    match key {
+                        4 | 5 => cbor.array(0),
+                        _ => cbor.u64(1),
+                    }
+                    .expect("value");
+                    used += cbor.finish().expect("value length");
+                }
+                let bytes = &out[..used];
+                let why = ReadingsHeader::decode(bytes)
+                    .map(|_| ())
+                    .expect_err("duplicate refused");
+                assert_eq!(
+                    why,
+                    ReadingsError::Duplicate(key),
+                    "key {key}, separated {separated}"
+                );
+                assert_eq!(
+                    why.refusal(),
+                    crate::Refusal::Client(crate::ErrorCode::MalformedFrame)
+                );
+            }
+        }
+    }
+
+    // Repeating an optional or empty field must not erase its first occurrence.
+    #[test]
+    fn p_015_sample_walk_refuses_each_repeated_key() {
+        for key in 4u8..=4 {
+            for separated in [false, true] {
+                let mut out = [0u8; 256];
+                let mut used = 1;
+                out[0] = if separated { 0xa3 } else { 0xa2 };
+                for occurrence in 0..2 {
+                    if separated && occurrence == 1 {
+                        out[used..used + 3].copy_from_slice(&[0x18, 99, 0]);
+                        used += 3;
+                    }
+                    out[used] = key;
+                    used += 1;
+                    let mut cbor = CborWriter::new(&mut out[used..]);
+                    cbor.array(0).expect("value");
+                    used += cbor.finish().expect("value length");
+                }
+                let bytes = &out[..used];
+                let why = ReadingsHeader::for_each_sample(bytes, |_| panic!("empty array"))
+                    .map(|_| ())
+                    .expect_err("duplicate refused");
+                assert_eq!(
+                    why,
+                    ReadingsError::Duplicate(key),
+                    "key {key}, separated {separated}"
+                );
+                assert_eq!(
+                    why.refusal(),
+                    crate::Refusal::Client(crate::ErrorCode::MalformedFrame)
+                );
+            }
+        }
+    }
+    #[test]
+    fn p_015_a_repeated_sample_array_delivers_no_readings() {
+        let sample = Sample::new(id(1), ok(), Some(42), None).expect("sample");
+        let mut out = [0u8; 64];
+        let mut cbor = CborWriter::new(&mut out);
+        cbor.map(1).expect("map");
+        cbor.key(4).expect("samples");
+        cbor.array(1).expect("one sample");
+        sample.encode(&mut cbor).expect("sample");
+        let len = cbor.finish().expect("body");
+        let mut delivered = 0;
+        assert_eq!(
+            ReadingsHeader::for_each_sample(&out[..len], |_| delivered += 1),
+            Ok(1)
+        );
+        assert_eq!(delivered, 1);
+        out[0] = 0xa2;
+        out[len..len + 2].copy_from_slice(&[4, 0x80]);
+        delivered = 0;
+        assert_eq!(
+            ReadingsHeader::for_each_sample(&out[..len + 2], |_| delivered += 1),
+            Err(ReadingsError::Duplicate(4))
+        );
+        assert_eq!(delivered, 0);
     }
 }
