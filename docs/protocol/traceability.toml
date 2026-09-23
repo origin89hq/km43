@@ -1037,7 +1037,11 @@
 # covered, so they did not move the number. P-103 left the `deferred` bucket
 # rather than this count: its blocker was a key number, and the registry has
 # one now.
-uncovered = 125
+# 125 -> 124: the four configuration messages have codecs. P-100 comes down,
+# covered by the version check a `SetConfig` operation carries. P-108 is new
+# and arrived covered. P-102, the A/B slot and its pointer flip, stays up: it
+# is the controller's FRAM, and nothing in this tree stores a section.
+uncovered = 124
 
 # P-045 is the shape this file is for. Nothing can drive an implementation into
 # transmitting a key it does not have, so the thing that stands behind it reads

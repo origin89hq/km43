@@ -796,6 +796,8 @@ enum PairOutcome {
 enum Msg {
     Event = 0x04,
     ReadLog = 0x05,
+    GetConfig = 0x06,
+    SetConfig = 0x07,
     Command = 0x08,
     Time = 0x0A,
     Pair = 0x0B,
@@ -803,6 +805,8 @@ enum Msg {
     // `Hello` is the 0x81 *response*; the request 0x01 has no vector here.
     Hello = 0x81,
     LogPage = 0x85,
+    Config = 0x86,
+    SetConfigAck = 0x87,
     Ack = 0x88,
     TimeAck = 0x8A,
     PairAck = 0x8B,
@@ -2282,7 +2286,91 @@ impl Builder {
         .chain([Self::readlog_entry()?, Self::logpage_entry()?])
         .chain(Self::time_entries()?)
         .chain(Self::config_section_entries()?)
+        .chain(Self::config_message_entries()?)
         .collect::<Vec<_>>()))
+    }
+
+    /// The four configuration messages, around the network section bodies
+    /// published beside them: the write a client signs, the ack, the answer
+    /// that reads it back without the passphrase, and the answer for a section
+    /// never written, which has no key 3 at all (P-108).
+    fn config_message_entries() -> Result<Vec<(&'static str, Value)>> {
+        const WRAPPED: &str = "this is the inner body; on the wire it is key 1 of the wrapper, whose key 2 is a MAC under session_key with the label 'km43/v1/rsp'";
+        const REQUEST: &str = "this is the inner body; on the wire it is key 1 of the wrapper, whose key 2 is a MAC under session_key with the label 'km43/v1/wrq'";
+        const OPERATION: &str = "this is the operation body; on the wire it is key 3 of the signed body, and the MAC in key 4 covers these bytes as they arrived";
+        let network = || {
+            cmap! {
+                1 => Cb::T("cabin".into()),
+                4 => Cb::T("CA".into()),
+                5 => Cb::T("origin89-cabin".into()),
+            }
+        };
+        let Cb::M(mut write) = network() else {
+            bail!("the network body is a map");
+        };
+        write.insert(2, Cb::T("correct horse battery".into()));
+        let Cb::M(mut read) = network() else {
+            bail!("the network body is a map");
+        };
+        read.insert(3, Cb::Bool(true));
+        [
+            (
+                "getconfig_0x06",
+                Msg::GetConfig,
+                REQUEST,
+                cmap! { 1 => Cb::U(0x20) },
+                Some("{1:section}"),
+                "section 0x0020 network",
+            ),
+            (
+                "setconfig_0x07",
+                Msg::SetConfig,
+                OPERATION,
+                cmap! { 1 => Cb::U(0x20), 2 => Cb::U(0), 3 => Cb::M(write) },
+                Some("{1:section, 2:expected_version, 3:body}"),
+                "the first write of the network section, so expected_version 0; key 3 is networkwrite_0x0020 byte for byte",
+            ),
+            (
+                "setconfigack_0x87",
+                Msg::SetConfigAck,
+                WRAPPED,
+                cmap! { 1 => Cb::U(0x20), 2 => Cb::U(1), 3 => Cb::U(1) },
+                Some("{1:section, 2:version, 3:outcome}"),
+                "section 0x0020 accepted at version 1",
+            ),
+            (
+                "config_0x86",
+                Msg::Config,
+                WRAPPED,
+                cmap! { 1 => Cb::U(0x20), 2 => Cb::U(1), 3 => Cb::M(read) },
+                Some("{1:section, 2:version, 3:body}"),
+                "the network section at version 1; key 3 is networkread_0x0020 byte for byte, the passphrase absent (P-106)",
+            ),
+            (
+                "config_unwritten_0x86",
+                Msg::Config,
+                WRAPPED,
+                cmap! { 1 => Cb::U(0x01), 2 => Cb::U(0) },
+                None,
+                "identity and site never written: version 0 and no key 3, never an empty body (P-108)",
+            ),
+        ]
+        .into_iter()
+        .map(|(name, kind, authentication, body, readable, meaning)| {
+            let bytes = cbor(&body)?;
+            Ok((
+                name,
+                obj(vec![
+                    ("type", json!(kind as u8)),
+                    ("authentication", json!(authentication)),
+                    ("body_readable", json!(readable)),
+                    ("values_readable", json!(meaning)),
+                    ("body_cbor", json!(hex(&bytes))),
+                    ("body_len", json!(bytes.len())),
+                ]),
+            ))
+        })
+        .collect()
     }
 
     /// The section bodies `Config 0x86` and `SetConfig 0x07` carry as key 3.

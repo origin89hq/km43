@@ -3070,7 +3070,8 @@ GetConfig  0x06         wrapper
 Config  0x86            wrapper
   1: section      u16
   2: version      u32      increments on every accepted write
-  3: body         map      the section's body as Config carries it, below
+  3: body         map      optional; the section's body as Config carries it,
+                           below, and absent exactly when version is 0
 
 operation body of SetConfig  0x07
   1: section      u16
@@ -3086,6 +3087,14 @@ SetConfigAck  0x87      wrapper
 **P-100** — `expected_version` MUST be checked and a mismatch refused with
 `stale_version`. A phone and a browser editing the same setpoints is not
 hypothetical.
+
+**P-108** — A section that has never been written MUST be answered with
+`version` 0 and no key 3, and a written one MUST carry key 3, so a client MUST
+refuse a `Config` in which the two disagree. *Never written* is an answer a
+person needs — a unit out of its box has no network and no site name — and
+the alternative is a body of defaults, which reads exactly like a
+configuration somebody chose. A first write sends `expected_version` 0, which
+is how P-100 tells it from a write that lost a race.
 
 **P-101** — Validation happens on the controller and rejection is loud. A
 configuration naming a channel that does not exist is refused, not stored, with

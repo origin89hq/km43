@@ -780,6 +780,12 @@ pub const REQUIREMENTS: &[Requirement] = &[
         statement: "`expected_version` MUST be checked and a mismatch refused with `stale_version`.",
     },
     Requirement {
+        id: "P-108",
+        document: "docs/PROTOCOL.md",
+        section: "Configuration",
+        statement: "A section that has never been written MUST be answered with `version` 0 and no key 3, and a written one MUST carry key 3, so a client MUST refuse a `Config` in which the two disagree.",
+    },
+    Requirement {
         id: "P-101",
         document: "docs/PROTOCOL.md",
         section: "Configuration",

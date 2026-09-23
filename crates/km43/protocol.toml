@@ -92,7 +92,7 @@ response = 0x86
 name = "GetConfig"
 auth_request = "wrq"
 auth_response = "rsp"
-status = "reserved"
+status = "live"
 since = "1.0"
 
 [[messages]]
@@ -101,7 +101,7 @@ response = 0x87
 name = "SetConfig"
 auth_request = "signed"
 auth_response = "rsp"
-status = "reserved"
+status = "live"
 since = "1.0"
 
 [[messages]]

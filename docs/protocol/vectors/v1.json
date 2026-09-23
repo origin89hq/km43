@@ -508,6 +508,46 @@
       "values_readable": "no network held: keys 1 and 3 both absent, never an empty ssid or psk_set false",
       "body_cbor": "a204624341056e6f726967696e38392d636162696e",
       "body_len": 21
+    },
+    "getconfig_0x06": {
+      "type": 6,
+      "authentication": "this is the inner body; on the wire it is key 1 of the wrapper, whose key 2 is a MAC under session_key with the label 'km43/v1/wrq'",
+      "body_readable": "{1:section}",
+      "values_readable": "section 0x0020 network",
+      "body_cbor": "a1011820",
+      "body_len": 4
+    },
+    "setconfig_0x07": {
+      "type": 7,
+      "authentication": "this is the operation body; on the wire it is key 3 of the signed body, and the MAC in key 4 covers these bytes as they arrived",
+      "body_readable": "{1:section, 2:expected_version, 3:body}",
+      "values_readable": "the first write of the network section, so expected_version 0; key 3 is networkwrite_0x0020 byte for byte",
+      "body_cbor": "a3011820020003a40165636162696e0275636f727265637420686f727365206261747465727904624341056e6f726967696e38392d636162696e",
+      "body_len": 58
+    },
+    "setconfigack_0x87": {
+      "type": 135,
+      "authentication": "this is the inner body; on the wire it is key 1 of the wrapper, whose key 2 is a MAC under session_key with the label 'km43/v1/rsp'",
+      "body_readable": "{1:section, 2:version, 3:outcome}",
+      "values_readable": "section 0x0020 accepted at version 1",
+      "body_cbor": "a301182002010301",
+      "body_len": 8
+    },
+    "config_0x86": {
+      "type": 134,
+      "authentication": "this is the inner body; on the wire it is key 1 of the wrapper, whose key 2 is a MAC under session_key with the label 'km43/v1/rsp'",
+      "body_readable": "{1:section, 2:version, 3:body}",
+      "values_readable": "the network section at version 1; key 3 is networkread_0x0020 byte for byte, the passphrase absent (P-106)",
+      "body_cbor": "a3011820020103a40165636162696e03f504624341056e6f726967696e38392d636162696e",
+      "body_len": 37
+    },
+    "config_unwritten_0x86": {
+      "type": 134,
+      "authentication": "this is the inner body; on the wire it is key 1 of the wrapper, whose key 2 is a MAC under session_key with the label 'km43/v1/rsp'",
+      "body_readable": null,
+      "values_readable": "identity and site never written: version 0 and no key 3, never an empty body (P-108)",
+      "body_cbor": "a201010200",
+      "body_len": 5
     }
   },
   "crc16": [

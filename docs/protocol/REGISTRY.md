@@ -147,8 +147,8 @@ value.
 | `0x03` | `0x83` | Subscribe | `wrq` | `rsp` | 1.0 | live |
 | — | `0x04` | Event | — | `evt` | 1.0 | live |
 | `0x05` | `0x85` | ReadLog | `wrq` | `rsp` | 1.0 | live |
-| `0x06` | `0x86` | GetConfig | `wrq` | `rsp` | 1.0 | reserved |
-| `0x07` | `0x87` | SetConfig | `signed` | `rsp` | 1.0 | reserved |
+| `0x06` | `0x86` | GetConfig | `wrq` | `rsp` | 1.0 | live |
+| `0x07` | `0x87` | SetConfig | `signed` | `rsp` | 1.0 | live |
 | `0x08` | `0x88` | Command | `signed` | `rsp` | 1.0 | reserved |
 | `0x09` | `0x89` | Firmware | `signed` | `rsp` | 1.0 | reserved |
 | `0x0A` | `0x8A` | Time | `signed` | `rsp` | 1.0 | live |
@@ -161,11 +161,11 @@ value.
 | `0x60`–`0x7E` | `0xE0`–`0xFE` | *link-local, see [LINK.md](LINK.md)* | — | — | 1.0 | live |
 | — | `0xFF` | Error | — | `rsp_or_bare` | 1.0 | live |
 
-`GetConfig` and `SetConfig` are **reserved** rather than live because their
-envelopes are settled and their `body` is not: no section has a field list yet,
-so two implementations can exchange a config read and disagree about every byte
-inside it. The numbers are allocated; the schemas are deferred — see
-[DEFERRED.md](DEFERRED.md).
+`GetConfig` and `SetConfig` are **live**: the four messages are settled, and so
+are the bodies of the two sections marked live under **Config sections** below.
+A section still marked reserved there has a number and no field list, and a
+client must not depend on the contents of one — see
+[DEFERRED.md](DEFERRED.md) entry 9.
 
 `Pair` authenticates under `pair_key`, which P-088 derives from `printed_secret`
 with the label `km43/v1/pair-key`. The printed secret is never an HMAC key

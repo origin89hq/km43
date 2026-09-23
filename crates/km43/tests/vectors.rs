@@ -75,7 +75,7 @@ fn every_published_body_is_one_this_reader_walks_to_the_end() {
             seen += 1;
         }
     }
-    assert_eq!(seen, 46, "the vector file grew or shrank a body");
+    assert_eq!(seen, 51, "the vector file grew or shrank a body");
 }
 
 /// The envelope the generator publishes must decode here to the same four
@@ -297,10 +297,10 @@ fn the_pairing_and_hello_tags_are_ones_this_crate_recomputes_too() {
 /// `Readings 0x8E`, the `Concerns 0x8F`, the six event bodies — the two
 /// concern records `0x0501` and `0x0502`, then `0x0102`, `0x0901` and `0x0902`,
 /// then the boot record `0x0601`, followed by nine controller-record examples —
-/// and the fifteen read by name rather than by position: `Pair 0x0B`,
+/// and the twenty read by name rather than by position: `Pair 0x0B`,
 /// `Pair 0x8B`, the bare `Error 0xFF`, `ReadLog 0x05`, `LogPage 0x85`, the
-/// `Time 0x0A` operation, the two `TimeAck 0x8A`, and the seven config section
-/// bodies.
+/// `Time 0x0A` operation, the two `TimeAck 0x8A`, the seven config section
+/// bodies, and the five configuration messages around them.
 ///
 /// Asserted rather than assumed, so a file that lost one does not hand the
 /// wrong bytes to whichever test still finds something at index 0. The count
@@ -309,7 +309,7 @@ fn the_pairing_and_hello_tags_are_ones_this_crate_recomputes_too() {
 /// after that message was retired.
 fn published_bodies() -> Vec<Vec<u8>> {
     let found = blobs("body_cbor");
-    assert_eq!(found.len(), 35, "the vector file grew or shrank a body");
+    assert_eq!(found.len(), 40, "the vector file grew or shrank a body");
     found
 }
 
@@ -2741,5 +2741,83 @@ fn the_published_section_bodies_carry_the_registry_section_numbers() {
             .parse()
             .expect("a section number");
         assert_eq!(published, section as u16, "{name}");
+    }
+}
+
+/// The configuration messages from the committed witness, decoded and
+/// rewritten byte for byte, and each body inside them the section vector of
+/// the same name: a message codec that re-encoded the body instead of carrying
+/// it would move the bytes a signature covers.
+#[test]
+fn p_108_published_config_messages_decode_and_reencode_byte_for_byte() {
+    use km43::{
+        ConfigAnswer, ConfigMessageError, ConfigSection, GetConfigRequest, SetConfig, SetConfigAck,
+        SetConfigOperation,
+    };
+
+    fn same(name: &str, encode: impl FnOnce(&mut [u8]) -> Result<usize, ConfigMessageError>) {
+        let published = blob_under(name, "body_cbor");
+        let mut dst = [0; 256];
+        let len = encode(&mut dst).expect("fits");
+        assert_eq!(dst.get(..len), Some(published.as_slice()), "{name}");
+    }
+
+    let get = blob_under("getconfig_0x06", "body_cbor");
+    let get = GetConfigRequest::decode(&get).expect("a valid request");
+    assert_eq!(get.section, ConfigSection::Network);
+    same("getconfig_0x06", |dst| get.encode(dst));
+
+    let write = blob_under("setconfig_0x07", "body_cbor");
+    let write = SetConfigOperation::decode(&write).expect("a valid write");
+    assert_eq!(write.expected_version, 0);
+    assert_eq!(write.check_version(0), Ok(()));
+    assert_eq!(write.body, blob_under("networkwrite_0x0020", "body_cbor"));
+    same("setconfig_0x07", |dst| write.encode(dst));
+
+    let ack = blob_under("setconfigack_0x87", "body_cbor");
+    let ack = SetConfigAck::decode(&ack).expect("a valid ack");
+    assert_eq!((ack.version, ack.outcome), (1, SetConfig::Accepted));
+    same("setconfigack_0x87", |dst| ack.encode(dst));
+
+    let answer = blob_under("config_0x86", "body_cbor");
+    let answer = ConfigAnswer::decode(&answer).expect("a valid answer");
+    assert_eq!(answer.version(), 1);
+    assert_eq!(
+        answer.body(),
+        Some(blob_under("networkread_0x0020", "body_cbor").as_slice())
+    );
+    same("config_0x86", |dst| answer.encode(dst));
+
+    let unwritten = blob_under("config_unwritten_0x86", "body_cbor");
+    let unwritten = ConfigAnswer::decode(&unwritten).expect("a valid answer");
+    assert_eq!(unwritten.section(), ConfigSection::IdentityAndSite);
+    assert_eq!((unwritten.version(), unwritten.body()), (0, None));
+    same("config_unwritten_0x86", |dst| unwritten.encode(dst));
+}
+
+/// The generator names each message's opcode from its own list. Nothing else
+/// compares that list to the registry for these entries.
+#[test]
+fn the_published_config_messages_carry_the_registry_opcodes() {
+    for (name, kind) in [
+        ("getconfig_0x06", MessageType::GetConfig),
+        ("setconfig_0x07", MessageType::SetConfig),
+        ("setconfigack_0x87", MessageType::SetConfigResponse),
+        ("config_0x86", MessageType::GetConfigResponse),
+        ("config_unwritten_0x86", MessageType::GetConfigResponse),
+    ] {
+        let entry = object(name);
+        let needle = "\"type\": ";
+        let from = entry.find(needle).expect("the entry names its type") + needle.len();
+        let tail = entry.get(from..).expect("the tail of the entry");
+        let end = tail
+            .find(|c: char| !c.is_ascii_digit())
+            .expect("the number is followed by something");
+        let published: u8 = tail
+            .get(..end)
+            .expect("the digits")
+            .parse()
+            .expect("a byte");
+        assert_eq!(published, kind as u8, "{name}");
     }
 }
