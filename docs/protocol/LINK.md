@@ -814,6 +814,12 @@ board reports `net_version = 0`, gets pushed the current credentials within a
 second of link-up, and associates — no re-pairing, no provisioning step, no
 second place to factory-reset.
 
+The master copy is the `0x0020 network` config section, whose body
+[PROTOCOL.md](../PROTOCOL.md) defines under *Section bodies*. Each field below
+is the section's field of the same name, key 2 is that section's `version`, and
+the section's bounds are these, so a network a client wrote and the controller
+accepted is never one this link refuses for its shape.
+
 ```text
 NetConfig  0x65
   1: op           u8      1 set · 2 clear

@@ -452,6 +452,62 @@
       "values_readable": "outcome 2 rejected on a controller whose clock was never set, so key 2 is absent rather than 0",
       "body_cbor": "a10102",
       "body_len": 3
+    },
+    "identity_0x0001": {
+      "section": 1,
+      "authentication": "this is a section body; on the wire it is key 3 of Config 0x86 or of the SetConfig 0x07 operation, the same in both",
+      "body_readable": "{1:site_name}",
+      "values_readable": "site_name \"Chalet du Lac-à-l'Eau\", 22 bytes of UTF-8 for 21 characters",
+      "body_cbor": "a101764368616c6574206475204c61632dc3a02d6c27456175",
+      "body_len": 25
+    },
+    "behaviour_0x0010": {
+      "section": 16,
+      "authentication": "this is a section body; on the wire it is key 3 of Config 0x86 or of the SetConfig 0x07 operation, the same in both",
+      "body_readable": "{1:shadow}",
+      "values_readable": "shadow true: the behaviour decides and actuates nothing (P-103); the same key in 0x0010 to 0x0013",
+      "body_cbor": "a101f5",
+      "body_len": 3
+    },
+    "networkwrite_0x0020": {
+      "section": 32,
+      "authentication": "this is a section body; on the wire it is key 3 of the SetConfig 0x07 operation, and the MAC in the signed body's key 4 covers the operation as it arrived",
+      "body_readable": "{1:ssid, 2:psk, 4:country, 5:hostname}",
+      "values_readable": "join cabin with a 21-byte passphrase, in Canada, as origin89-cabin",
+      "body_cbor": "a40165636162696e0275636f727265637420686f727365206261747465727904624341056e6f726967696e38392d636162696e",
+      "body_len": 51
+    },
+    "network_write_keep_0x0020": {
+      "section": 32,
+      "authentication": "this is a section body; on the wire it is key 3 of the SetConfig 0x07 operation, and the MAC in the signed body's key 4 covers the operation as it arrived",
+      "body_readable": null,
+      "values_readable": "cabin again with no psk: keeps the held passphrase because the ssid is byte-identical to the one it was given for, and is refused invalid otherwise (P-107)",
+      "body_cbor": "a30165636162696e04624341056e6f726967696e38392d636162696e",
+      "body_len": 28
+    },
+    "network_write_clear_0x0020": {
+      "section": 32,
+      "authentication": "this is a section body; on the wire it is key 3 of the SetConfig 0x07 operation, and the MAC in the signed body's key 4 covers the operation as it arrived",
+      "body_readable": null,
+      "values_readable": "no ssid and no psk: no network, pushed to the comms processor as NetConfig op = clear",
+      "body_cbor": "a204624341056e6f726967696e38392d636162696e",
+      "body_len": 21
+    },
+    "networkread_0x0020": {
+      "section": 32,
+      "authentication": "this is a section body; on the wire it is key 3 of Config 0x86, inside a wrapper MAC'd under session_key with the label 'km43/v1/rsp'",
+      "body_readable": "{1:ssid, 3:psk_set, 4:country, 5:hostname}",
+      "values_readable": "the answer to GetConfig after networkwrite_0x0020: key 2 absent, psk_set true (P-106)",
+      "body_cbor": "a40165636162696e03f504624341056e6f726967696e38392d636162696e",
+      "body_len": 30
+    },
+    "network_read_none_0x0020": {
+      "section": 32,
+      "authentication": "this is a section body; on the wire it is key 3 of Config 0x86, inside a wrapper MAC'd under session_key with the label 'km43/v1/rsp'",
+      "body_readable": null,
+      "values_readable": "no network held: keys 1 and 3 both absent, never an empty ssid or psk_set false",
+      "body_cbor": "a204624341056e6f726967696e38392d636162696e",
+      "body_len": 21
     }
   },
   "crc16": [

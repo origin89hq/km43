@@ -136,7 +136,7 @@ Three buckets, and the middle one is the whole design:
 |---|---|---|
 | `hardware` | P-033 — RTS/CTS on the **production connector** | a dated `bench-logs/YYYY-MM-DD.md` entry, named in the toml. Stage 8 owns it |
 | `spec-check` | P-045 "no key is ever transmitted" | `no_response_carries_key_material` — a check over the corpus, not over an implementation. This generalises what already exists |
-| `deferred` | P-103's `shadow` key number | DEFERRED entry 9. The entry's trigger *is* the test's due date, which is what stops this bucket being a graveyard |
+| `deferred` | no entry holds this kind; P-103 sat here until the section schemas allocated its `shadow` key | a DEFERRED entry whose trigger *is* the test's due date, which is what stops this bucket being a graveyard. The entry leaves in the commit that brings the test |
 | `judgement` | P-075 (SHOULD; a board swap regresses `seq` legitimately) | a test proves the surfacing happened; nothing proves an operator read it. Say so |
 
 **A rule that states two things needs a test for each, and a count of tests cannot see that.** `[[clauses]]` in the same toml names the sentences and a fragment of the test name standing behind each one; a requirement with a clause nobody has tested is **uncovered**, however many tests cite it. This exists because P-164 sat covered for months with half of it unbuilt — *report `unnamed_state` with no value* was tested and *raise a concern carrying the source's own code* did not exist, there was no concern table in the crate at all, and the only thing that said so was a paragraph in a design document. A half-built rule reading greener than an unbuilt one is the worst direction for this file to be wrong in: nobody goes looking at a number that is already the right colour.

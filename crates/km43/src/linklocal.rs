@@ -966,10 +966,10 @@ pub enum NetChange<'a> {
 }
 
 /// The passphrase bounds L-131 fixes, which are WPA's own.
-const PSK_SHORTEST: usize = 8;
-const PSK_LONGEST: usize = 63;
+pub(crate) const PSK_SHORTEST: usize = 8;
+pub(crate) const PSK_LONGEST: usize = 63;
 /// ISO 3166-1 alpha-2, and there is no other length.
-const COUNTRY_BYTES: usize = 2;
+pub(crate) const COUNTRY_BYTES: usize = 2;
 
 impl<'a> NetChange<'a> {
     /// # Errors

@@ -1031,7 +1031,13 @@
 # 129 -> 126: BLE transport traces now exercise P-036, P-037 and P-039. Radio
 # and native adapter evidence remains in DEFERRED entry 7; the conformance
 # claim is unchanged.
-uncovered = 126
+# 126 -> 125: the identity, network and behaviour section bodies landed with
+# DEFERRED entry 9 narrowed. P-101 comes down, covered by `config.rs`'s refusal
+# of every value its section schemas forbid. P-106 and P-107 are new and arrived
+# covered, so they did not move the number. P-103 left the `deferred` bucket
+# rather than this count: its blocker was a key number, and the registry has
+# one now.
+uncovered = 125
 
 # P-045 is the shape this file is for. Nothing can drive an implementation into
 # transmitting a key it does not have, so the thing that stands behind it reads
@@ -1068,19 +1074,6 @@ says nobody has checked."""
 # example of each. Two of those examples are requirements, and neither had an
 # entry here — so the document that governs this file and the file itself
 # disagreed about which bucket two rules were already in.
-
-# P-103's own last sentence defers it: until the `shadow` key number lands with
-# the section schemas, there is no field an implementer can write.
-[[entry]]
-id = "P-103"
-kind = "deferred"
-reason = """
-The requirement is a promise about what a section must contain rather than a \
-field that exists. DEFERRED entry 9 owns the section body schemas, and its \
-trigger — the first configuration written over the API rather than flashed — is \
-this test's due date. A test written now would assert a key number nobody has \
-allocated, which is the shape of check that passes forever and means nothing. \
-It comes out of this bucket in the same commit as the schema."""
 
 # P-075 is a SHOULD about a client, and the half that matters is a person.
 [[entry]]

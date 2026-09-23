@@ -75,7 +75,7 @@ fn every_published_body_is_one_this_reader_walks_to_the_end() {
             seen += 1;
         }
     }
-    assert_eq!(seen, 39, "the vector file grew or shrank a body");
+    assert_eq!(seen, 46, "the vector file grew or shrank a body");
 }
 
 /// The envelope the generator publishes must decode here to the same four
@@ -297,9 +297,10 @@ fn the_pairing_and_hello_tags_are_ones_this_crate_recomputes_too() {
 /// `Readings 0x8E`, the `Concerns 0x8F`, the six event bodies — the two
 /// concern records `0x0501` and `0x0502`, then `0x0102`, `0x0901` and `0x0902`,
 /// then the boot record `0x0601`, followed by nine controller-record examples —
-/// and the eight read by name rather than by position: `Pair 0x0B`,
+/// and the fifteen read by name rather than by position: `Pair 0x0B`,
 /// `Pair 0x8B`, the bare `Error 0xFF`, `ReadLog 0x05`, `LogPage 0x85`, the
-/// `Time 0x0A` operation and the two `TimeAck 0x8A`.
+/// `Time 0x0A` operation, the two `TimeAck 0x8A`, and the seven config section
+/// bodies.
 ///
 /// Asserted rather than assumed, so a file that lost one does not hand the
 /// wrong bytes to whichever test still finds something at index 0. The count
@@ -308,7 +309,7 @@ fn the_pairing_and_hello_tags_are_ones_this_crate_recomputes_too() {
 /// after that message was retired.
 fn published_bodies() -> Vec<Vec<u8>> {
     let found = blobs("body_cbor");
-    assert_eq!(found.len(), 28, "the vector file grew or shrank a body");
+    assert_eq!(found.len(), 35, "the vector file grew or shrank a body");
     found
 }
 
@@ -2632,4 +2633,113 @@ fn p_036_p_037_p_039_shared_ble_trace_checks_bytes_faults_and_queue_state() {
         steps > 1500,
         "the wrap trace must run through the whole ID space"
     );
+}
+
+/// The section bodies from the committed witness, decoded and rewritten here
+/// byte for byte. Two implementations that agree only with themselves would
+/// both pass a round trip; this is the one comparison with the other.
+#[test]
+fn p_101_published_section_bodies_decode_and_reencode_byte_for_byte() {
+    use km43::{BehaviourSection, ConfigError, IdentitySection, NetworkRead, NetworkWrite};
+
+    fn same(name: &str, encode: impl FnOnce(&mut [u8]) -> Result<usize, ConfigError>) {
+        let published = blob_under(name, "body_cbor");
+        let mut dst = [0; 256];
+        let len = encode(&mut dst).expect("fits");
+        assert_eq!(dst.get(..len), Some(published.as_slice()), "{name}");
+    }
+
+    let identity = blob_under("identity_0x0001", "body_cbor");
+    let identity = IdentitySection::decode(&identity).expect("a valid identity");
+    assert_eq!(identity.site_name.as_str(), "Chalet du Lac-\u{e0}-l'Eau");
+    same("identity_0x0001", |dst| identity.encode(dst));
+
+    let behaviour = blob_under("behaviour_0x0010", "body_cbor");
+    let behaviour = BehaviourSection::decode(&behaviour).expect("a valid behaviour");
+    assert!(behaviour.shadow);
+    same("behaviour_0x0010", |dst| behaviour.encode(dst));
+
+    for name in [
+        "networkwrite_0x0020",
+        "network_write_keep_0x0020",
+        "network_write_clear_0x0020",
+    ] {
+        let published = blob_under(name, "body_cbor");
+        let write = NetworkWrite::decode(&published).expect("a valid write");
+        assert_eq!(write.country.as_str(), "CA", "{name}");
+        assert_eq!(write.hostname.as_str(), "origin89-cabin", "{name}");
+        same(name, |dst| write.encode(dst));
+    }
+    for name in ["networkread_0x0020", "network_read_none_0x0020"] {
+        let published = blob_under(name, "body_cbor");
+        let read = NetworkRead::decode(&published).expect("a valid read");
+        same(name, |dst| read.encode(dst));
+    }
+}
+
+/// The published answer to the published write carries the network and says
+/// a passphrase is held, and nowhere in its bytes is the passphrase. The keep
+/// write is the one P-107 lets through for that held network and no other.
+#[test]
+fn p_106_the_published_config_answer_says_a_passphrase_is_held_and_never_which() {
+    use km43::{NetworkRead, NetworkWrite, PassphraseChange, Ssid};
+
+    let write = blob_under("networkwrite_0x0020", "body_cbor");
+    let write = NetworkWrite::decode(&write).expect("a valid write");
+    let join = write.join.expect("the write names a network");
+    let psk = join.psk.expect("the write carries a passphrase");
+
+    let answer = blob_under("networkread_0x0020", "body_cbor");
+    let read = NetworkRead::decode(&answer).expect("a valid read");
+    let shown = read.join.expect("the answer names the network");
+    assert_eq!(shown.ssid, join.ssid);
+    assert!(shown.psk_set);
+    assert!(
+        !answer
+            .windows(psk.as_str().len())
+            .any(|w| w == psk.as_str().as_bytes()),
+        "the Config body carries the passphrase"
+    );
+
+    let none = blob_under("network_read_none_0x0020", "body_cbor");
+    assert_eq!(NetworkRead::decode(&none).expect("a valid read").join, None);
+
+    let keep = blob_under("network_write_keep_0x0020", "body_cbor");
+    let keep = NetworkWrite::decode(&keep).expect("a valid write");
+    assert_eq!(keep.passphrase(Some(join.ssid)), Ok(PassphraseChange::Keep));
+    let elsewhere = Ssid::new("Cabin").expect("an ssid");
+    assert!(keep.passphrase(Some(elsewhere)).is_err());
+}
+
+/// The generator writes each section number from its own list, because it
+/// must not read this crate. Nothing else ties those numbers to the registry,
+/// so a mistyped `0x0021` would publish a network body under the cloud section
+/// with every body test still green.
+#[test]
+fn the_published_section_bodies_carry_the_registry_section_numbers() {
+    use km43::ConfigSection;
+
+    for (name, section) in [
+        ("identity_0x0001", ConfigSection::IdentityAndSite),
+        ("behaviour_0x0010", ConfigSection::GeneratorBehaviour),
+        ("networkwrite_0x0020", ConfigSection::Network),
+        ("network_write_keep_0x0020", ConfigSection::Network),
+        ("network_write_clear_0x0020", ConfigSection::Network),
+        ("networkread_0x0020", ConfigSection::Network),
+        ("network_read_none_0x0020", ConfigSection::Network),
+    ] {
+        let entry = object(name);
+        let needle = "\"section\": ";
+        let from = entry.find(needle).expect("the entry names its section") + needle.len();
+        let tail = entry.get(from..).expect("the tail of the entry");
+        let end = tail
+            .find(|c: char| !c.is_ascii_digit())
+            .expect("the number is followed by something");
+        let published: u16 = tail
+            .get(..end)
+            .expect("the digits")
+            .parse()
+            .expect("a section number");
+        assert_eq!(published, section as u16, "{name}");
+    }
 }

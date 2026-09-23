@@ -587,37 +587,48 @@ Which part of the configuration a `GetConfig` or `SetConfig` names in its
 
 | Section | Name | Status |
 |---|---|---|
-| `0x0001` | identity and site | reserved |
+| `0x0001` | identity and site | live |
 | `0x0002` | channels | reserved |
 | `0x0003` | buses and devices | reserved |
 | `0x0010` | generator behaviour | reserved |
 | `0x0011` | frost behaviour | reserved |
 | `0x0012` | schedule behaviour | reserved |
 | `0x0013` | load-shed behaviour | reserved |
-| `0x0020` | network | reserved |
+| `0x0020` | network | live |
 | `0x0021` | cloud | reserved |
 
-Every row is **reserved**, and again it is the `body`. The section numbers are
-settled — a client can ask for `0x0011` and be told whether it exists — and no
-section has a field list, a key number, a unit or a scale for anything inside
-it. The numbers are allocated; the body schemas are deferred — see
-[DEFERRED.md](DEFERRED.md).
+The two **live** rows have bodies, defined in [PROTOCOL.md](../PROTOCOL.md)
+under *Section bodies*: identity and site, and the network. The **reserved** rows
+have a number and no field list — a client can ask for `0x0011` and be told it
+exists — and their bodies are open in [DEFERRED.md](DEFERRED.md) entry 9. The
+behaviour sections among them already share one settled key, `shadow`, in the
+table below.
 
 The **network** and **cloud** sections hold credentials — the site's Wi-Fi
 passphrase among them, because the controller holds the master copy and
-[LINK.md](LINK.md) says why. One rule about those schemas is settled already and
-is not waiting on the field lists: **a field marked `secret` is never returned by
-`GetConfig`**, which the controller answers with a body and which every enrolled
-client can call, the cloud client included. [DEFERRED.md](DEFERRED.md) entry 9
-carries it. Anybody drafting a section body from this table alone would write the
-leak straight back in.
+[LINK.md](LINK.md) says why. **A field marked `secret` is never returned in a
+`Config` body** (P-106), which every enrolled client can ask for, the cloud client
+included; the body says whether the field is set under a key of its own. Anybody
+drafting the cloud section from this table alone would write the leak straight
+back in.
 
-Every behaviour section carries a `shadow` flag. It is a flag rather than a
-subsystem, and it is readable by a client so that "nothing is actuating" is a
-thing a person can confirm rather than believe. Its key number arrives with the
-section schemas, and it must be the same number in all four behaviour sections:
-a `shadow` that means key 9 for frost and key 4 for the generator is a flag
-somebody reads wrong exactly once.
+---
+
+## Behaviour section keys — `u16`
+
+The keys all four behaviour sections, `0x0010` to `0x0013`, carry under one
+number (P-103). A key only one behaviour reads belongs to that section's body,
+not here.
+
+| Key | Name | Status |
+|---|---|---|
+| 1 | shadow | live |
+
+`shadow` is readable by a client so that "nothing is actuating" is a thing a
+person can confirm rather than believe, and it is one number because a `shadow`
+that meant key 9 for frost and key 4 for the generator is a flag somebody reads
+wrong exactly once. It is not capability bit 7: that bit says *some* behaviour is
+in shadow, site-wide, and cannot say which.
 
 ---
 

@@ -2245,7 +2245,7 @@ status = "live"
 [[codes.config_section]]
 number = 1
 name = "identity and site"
-status = "reserved"
+status = "live"
 
 [[codes.config_section]]
 number = 2
@@ -2280,12 +2280,22 @@ status = "reserved"
 [[codes.config_section]]
 number = 32
 name = "network"
-status = "reserved"
+status = "live"
 
 [[codes.config_section]]
 number = 33
 name = "cloud"
 status = "reserved"
+
+
+# The keys every behaviour section (0x0010 to 0x0013) shares, each under one
+# number in all four (P-103). A key a single section owns is in that section's
+# body and not here; this space exists because a `shadow` that meant key 9 for
+# frost and key 4 for the generator is a flag somebody reads wrong exactly once.
+[[codes.behaviour_key]]
+number = 1
+name = "shadow"
+status = "live"
 
 
 [[codes.command_kind]]

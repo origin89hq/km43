@@ -798,6 +798,18 @@ pub const REQUIREMENTS: &[Requirement] = &[
         statement: "Every behaviour section MUST carry a `shadow` flag readable by a client, under one key number that is the same in all four behaviour sections.",
     },
     Requirement {
+        id: "P-106",
+        document: "docs/PROTOCOL.md",
+        section: "Section bodies",
+        statement: "A field marked `secret` MUST NOT be returned in a `Config` body, and a client MUST refuse a `Config` body that carries one.",
+    },
+    Requirement {
+        id: "P-107",
+        document: "docs/PROTOCOL.md",
+        section: "Section bodies",
+        statement: "A `SetConfig` of the network section that carries an `ssid` and no `psk` MUST keep the passphrase the controller already holds only when that `ssid` is byte-for-byte the one it is held for, and MUST be refused with outcome 3 `invalid` otherwise, including when no passphrase is held at all.",
+    },
+    Requirement {
         id: "P-110",
         document: "docs/PROTOCOL.md",
         section: "Time",

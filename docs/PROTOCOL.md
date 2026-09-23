@@ -3070,13 +3070,12 @@ GetConfig  0x06         wrapper
 Config  0x86            wrapper
   1: section      u16
   2: version      u32      increments on every accepted write
-  3: body         map      the schema per section is deferred — see REGISTRY
-                           and DEFERRED.md
+  3: body         map      the section's body as Config carries it, below
 
 operation body of SetConfig  0x07
   1: section      u16
   2: expected_version  u32
-  3: body         map      same schema as the section's Config body
+  3: body         map      the section's body as SetConfig carries it, below
 
 SetConfigAck  0x87      wrapper
   1: section      u16
@@ -3093,6 +3092,15 @@ configuration naming a channel that does not exist is refused, not stored, with
 `SetConfigAck` outcome 3 `invalid`; a `GetConfig` or `SetConfig` naming a section
 that is not allocated is error 6, because that one never reaches a handler at
 all. A behaviour that silently never runs is worse than a write that failed.
+A section body whose values break its schema below MUST be refused with outcome
+3 and MUST NOT be stored: text outside its byte bounds, a `country` that is not
+two capital letters, a `hostname` that is not a host name, a `psk` with no
+`ssid` to join, and a key a section carries only in `Config` sent in a
+`SetConfig`. A body whose CBOR breaks P-015 — a required key missing, a key
+twice, a value of the wrong type — is error 1 like any other body. Nothing in a
+section is truncated, trimmed or case-folded to make it fit: `ca` is not `CA`
+to a radio, and a controller that fixed it quietly would store a value nobody
+wrote.
 
 **P-102** — Writes MUST land in the inactive **A/B slot** with a sequence number
 and CRC and take effect by an atomic pointer flip. A power cut mid-write leaves
@@ -3102,13 +3110,73 @@ the previous configuration intact and running.
 client, under one key number that is the same in all four behaviour sections.
 While every site runs in shadow nothing actuates, and a deployment whose whole
 purpose is to be audited must let a person confirm that rather than believe it.
-The key number lands with the section schemas — see
-[REGISTRY.md](protocol/REGISTRY.md) — and until it does, this is a promise about
-what a section must contain rather than a field an implementer can write.
+The key is `1`, allocated once as **Behaviour section keys** in
+[REGISTRY.md](protocol/REGISTRY.md), and it is a required `bool`: a behaviour
+body without it is error 1, never a behaviour presumed live or presumed shadowed.
 
 The earlier draft carried a `crc` in the Config response. It is removed: it
 described the FRAM slot's own CRC, which a client cannot compute or check, so it
 was a field that could only ever be ignored or wrongly trusted.
+
+### Section bodies
+
+A section has one key space, and `Config` and `SetConfig` both use it. Where the
+two differ it is because one field is `secret`, and the network section is the
+only place that happens. The sections not listed here are allocated in
+[REGISTRY.md](protocol/REGISTRY.md) with their bodies still open in
+[DEFERRED.md](protocol/DEFERRED.md) entry 9.
+
+```text
+Identity  0x0001        identity and site, in Config and SetConfig
+  1: site_name    text     1 to MAX_LABEL bytes; what a person calls the site
+
+Behaviour  0x0010       every behaviour section, 0x0010 to 0x0013
+  1: shadow       bool     true while the behaviour decides and actuates nothing
+
+NetworkWrite  0x0020    network, as SetConfig carries it
+  1: ssid         text     optional; 1 to 32 bytes; absent when no network is set
+  2: psk          text     optional; 8 to 63 bytes; secret
+  4: country      text     exactly 2 bytes, ISO 3166-1 alpha-2, A to Z
+  5: hostname     text     1 to 32 bytes: letters, digits and hyphens, with
+                           no hyphen first or last
+
+NetworkRead  0x0020     network, as Config carries it
+  1: ssid         text     optional; as above
+  3: psk_set      bool     present exactly when key 1 is: whether a passphrase
+                           is held for that network
+  4: country      text     as above
+  5: hostname     text     as above
+```
+
+The **network** section is the master copy L-130 puts on the controller, and
+each field is the one `NetConfig 0x65` pushes under the same name: an `ssid`
+and a `psk` become an `op = set`, no `ssid` becomes an `op = clear`, and
+`country` and `hostname` travel in both. The bounds are `NetConfig`'s, so a
+section the controller accepted is one the comms processor cannot refuse as
+`rejected_invalid` for its shape. A network with no passphrase is not supported:
+a WPA passphrase is what L-131 carries, and an open network is a different
+section body, not an empty `psk`.
+
+**P-106** — A field marked `secret` MUST NOT be returned in a `Config` body, and
+a client MUST refuse a `Config` body that carries one. The body carries the
+field's presence under a key of its own instead — `psk_set` for `psk` — and
+never the field's key holding a placeholder. `GetConfig` is answered to every
+enrolled client, the cloud client included, so a readable passphrase is a
+customer's Wi-Fi credential sitting in our own relay's logs. A `psk` returned
+as `"********"` is worse than none: a client reads the section, edits the
+hostname, writes the body back, and sets the site's passphrase to eight
+asterisks from four hours away. The client refuses as well as the controller
+omitting, so that a controller which leaks is a failure somebody sees rather
+than a value somebody stores.
+
+**P-107** — A `SetConfig` of the network section that carries an `ssid` and no
+`psk` MUST keep the passphrase the controller already holds only when that
+`ssid` is byte-for-byte the one it is held for, and MUST be refused with outcome
+3 `invalid` otherwise, including when no passphrase is held at all. This is
+what lets a person change the hostname without retyping a passphrase nobody can
+show them. It is never a passphrase following a network it was not given for:
+the controller would join the neighbour's access point with the cabin's
+credential, and the site would drop off the air with nothing to point at.
 
 ---
 
