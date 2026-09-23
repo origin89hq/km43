@@ -369,11 +369,11 @@ Nothing cryptographic until framing is boring. That is BENCH.md's own bring-up o
 
 **What "conforming" should mean.** Five clauses, and one of them is a negative:
 
-1. Reproduces every vector in `vectors/v1.json` exactly (P-001) — including the two that do not exist yet: the QR payload and its length, and the worst-case `Snapshot` at `MAX_CHANNELS`.
+1. Reproduces every applicable vector in `vectors/v1.json` exactly (P-001; BLE traces additionally apply to BLE qualification) — including the two that do not exist yet: the QR payload and its length, and the worst-case `Snapshot` at `MAX_CHANNELS`.
 2. Passes the transcript corpus: the same accept/reject decision on every step, and byte-identical emissions on the deterministic subset.
 3. Passes the hostile corpus without panicking, without allocating after init, and without acting on an unauthenticated message.
 4. Reaches every cap under load and **refuses**, and evicts nowhere except `MAX_EVENT_QUEUE` under its written rule.
-5. Names its transports. Conformance is claimed for **UART, USB CDC and WebSocket**; BLE and MQTT are specified, unimplemented, unverified, and not conformance surface.
+5. Names its transports. Conformance is claimed for **UART, USB CDC and WebSocket**; BLE has host transport vectors but still needs firmware/native-client and phone/board evidence; MQTT remains unimplemented and unverified. Neither is conformance surface (DEFERRED entry 7).
 
 And what it must **not** mean: passing our unit tests. Those cite our module boundaries and our type-state, and a third party that has to adopt them has been handed an implementation, not a specification.
 

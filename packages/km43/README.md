@@ -21,17 +21,35 @@ LinkErrorCode.BeforeLinkUp;   // 0x102
 datasetName(MetricKind.DC_VOLTAGE, 0x01, 0x0003); // "battery-voltage"
 ```
 
-What this package does not do: frame, authenticate or decode a message. The
-wire is bytes, CBOR, a MAC and a CRC, and the reference implementation of all
-of that is the `km43` Rust crate. These bindings are the vocabulary a client
-needs to read what that crate produces and to name what it asks for.
+The root export contains generated protocol identifiers. `@origin89/km43/ble`
+adds `BleReceiver`, `BleSender`, `BleValueLimit` and `bleValueLength` for bounded BLE value
+fragmentation. It does not decode CBOR or authenticate messages. BLE connection
+or bonding grants no KM43 permission.
 
-The generated file is the whole package. Every export and member carries a
-doc comment taken from the registry, so an editor shows what an outcome means
-and which rule produces it without a trip to the specification. It is
-regenerated whenever the registry changes and published under a new version,
-so pin the version you built against: a renumbering is a breaking change and is
-released as one.
+For each connection, create one receiver and sender. Pass the negotiated ATT
+MTU (23 until exchange completes) to the receiver. For transmission, construct a
+`BleValueLimit` with `fromMtu(mtu)` or `fromMtu(mtu, selectedValueLength)`; the
+latter rejects a selection above that MTU's value budget. When the platform
+reports only a value length, use `fromValueLength(length)` after capping it at
+`BLE_MAX_VALUE`. Values include the two KM43 header bytes and must be at least
+20 bytes. `enqueue(message, limit)` freezes the limit for that message, owns a
+copy and refuses while busy;
+`fragment` fills a caller-owned buffer without advancing; call `accepted` only
+when the platform accepts those bytes into its ordered FIFO. Retry the same
+fragment after backpressure. Feed received values and monotonic milliseconds to
+`receive`, and call `expire` from a timer even when no values arrive. Reset both
+objects on disconnect, notification disable or controller loss, and purge the
+platform queue and old callbacks. The adapter must close a connection after
+5000 ms without transmit progress; these classes do not run platform timers.
+
+Discover the generated `BLE_SERVICE_UUID`, `BLE_RX_UUID` and `BLE_TX_UUID`, then
+subscribe before sending Discover. Adapters whose APIs expose value length
+instead of ATT MTU use the value-length constructor; do not invent an MTU. Rust and TypeScript tests consume the same `ble` action traces in
+`docs/protocol/vectors/v1.json`; native phone and radio qualification remains
+tracked by km43#81 and firmware#96. Host trace agreement is not BLE conformance.
+
+Generated identifiers carry registry documentation and are regenerated together
+with the Rust bindings. Pin the package version used by the client.
 
 The specification, the registry and the published test vectors are in the
 [km43 repository](https://github.com/origin89hq/km43). Licensed under either

@@ -90,6 +90,21 @@ impl Bindings {
         }
         let _ = writeln!(o, "{}{}\n", Self::DIGEST_MARKER, self.registry.digest);
 
+        for (name, uuid, doc) in self.registry.ble.uuids() {
+            let _ = writeln!(o, "/// {doc}\npub const {name}: &str = {uuid:?};\n");
+        }
+        for (name, value, doc) in self.registry.ble.flags() {
+            let _ = writeln!(o, "/// {doc}\npub const {name}: u8 = {value};\n");
+        }
+
+        for limit in self.registry.transport_limits() {
+            let _ = writeln!(
+                o,
+                "/// {}\npub const {}: {} = {};\n",
+                limit.doc, limit.name, limit.rust_type, limit.value
+            );
+        }
+
         closed_enum(
             &mut o,
             "MessageType",
@@ -691,6 +706,21 @@ impl Bindings {
             let _ = writeln!(o, "// {line}");
         }
         let _ = writeln!(o, "{}{}\n", Self::DIGEST_MARKER, self.registry.digest);
+
+        for (name, uuid, doc) in self.registry.ble.uuids() {
+            let _ = writeln!(o, "/** {doc} */\nexport const {name} = {uuid:?};\n");
+        }
+        for (name, value, doc) in self.registry.ble.flags() {
+            let _ = writeln!(o, "/** {doc} */\nexport const {name} = {value};\n");
+        }
+
+        for limit in self.registry.transport_limits() {
+            let _ = writeln!(
+                o,
+                "/** {} */\nexport const {} = {};\n",
+                limit.doc, limit.name, limit.value
+            );
+        }
 
         ts_enum(
             &mut o,

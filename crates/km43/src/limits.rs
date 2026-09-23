@@ -36,7 +36,7 @@ const_assert!(
 );
 
 /// The encoded envelope a receiver will accept; anything larger gets error 5 and the frame is dropped.
-pub const MAX_PAYLOAD: usize = 1024;
+pub use crate::generated::MAX_PAYLOAD;
 
 /// What a receiver sizes its frame buffer at before a byte arrives; a longer frame is dropped and it resynchronises.
 pub const MAX_FRAME: usize = 1032;

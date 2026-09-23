@@ -452,36 +452,35 @@ bootloader yet.
 
 ---
 
-## 7. BLE and MQTT — specified, unimplemented, unverified
+## 7. BLE and MQTT — interoperability unverified
 
-**The question.** The BLE fragmentation header, its assembly rules, and the MQTT
-topic layout are written down, and nothing has ever put a byte through either.
-Do they survive contact?
+BLE has an allocated service and characteristic contract, envelope byte format,
+bounded fragmentation/reassembly and ordered transmit admission in PROTOCOL.md.
+The `ble` traces in [`vectors/v1.json`](vectors/v1.json) exercise minimum and
+negotiated MTUs, full payloads, malformed/missing/duplicate/out-of-order fragments,
+changed IDs, wrap with blocked sends, timeout and disconnect cleanup against the
+Rust and TypeScript transport APIs. This is host evidence, not a radio or native-client result.
 
-**Why they were specified anyway.** Because they constrain the layer above. A
-1024-byte payload has to survive an MTU of 23, and MQTT QoS 1 at-least-once is a
-large part of why `cmd_id` deduplication exists at all. Those constraints had to
-be settled before the message layer, or the message layer would have been
-designed against three transports and retrofitted to the fourth.
+Still required: the firmware and supported native phone implementations must run
+the same traces, then demonstrate discovery/subscription, platform value limits,
+FIFO queue order through wrap, bounded stack memory and send-stall cleanup,
+concurrent upload/notifications, reconnect/callback isolation, BLE/Wi-Fi coexistence
+and controller-loss shutdown on the board. Pair must fail outside/after the
+STM32 physical window and with a wrong proof, including on a bonded connection.
+Record supported phone OS versions, negotiated MTUs and implementation revisions
+with that evidence. [km43#81](https://github.com/origin89hq/km43/issues/81) owns
+protocol qualification; [firmware#96](https://github.com/origin89hq/firmware/issues/96)
+owns stack integration and phone/board acceptance. Neither is complete on host
+vectors alone.
 
-**What is missing is evidence, not a decision.** There is no BLE stack and no
-broker, so there is no conformance vector. Everything in
-[`vectors/v1.json`](vectors/v1.json) can be checked by two implementations on a
-laptop; a 5-second assembly timeout cannot be checked by anything until something
-fragments. Specifically unverified: whether one assembly per connection is enough
-for a client that subscribes while uploading, what `msg_id` wrap does behind a
-real notify queue that has backed up, and whether MQTT topics need a session
-dimension now that the controller mints a session and binds it to a connection.
+MQTT remains specified, unimplemented and unverified: broker behavior, QoS 1
+redelivery and whether topics need a session dimension still need evidence.
 
-**The rule until they are.** **An implementation claiming conformance is claiming
-it for UART, USB CDC and WebSocket.** The BLE and MQTT sections carry no vectors
-and are not conformance surface. Say so out loud rather than letting somebody
-infer it from an empty vector file.
-
-**Trigger.** The first byte over either link. **Deadline: the BLE section is
-rewritten against a working stack, or deleted, before a native app is scheduled.**
-A transport spec that has never run is worse than no spec — somebody implements
-against it, ships, and finds out.
+Conformance remains **UART, USB CDC and WebSocket**. Extend the BLE claim only
+after shared-vector consumption and the supported phone/board evidence exist.
+MQTT requires its own implementation and verification before a claim. Initial
+native-app pairing depends on BLE qualification; Bluetooth connection or bonding
+never replaces KM43 authorization.
 
 ---
 
