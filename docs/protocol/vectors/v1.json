@@ -305,6 +305,78 @@
       "body_readable": "{1:reason, 2:backup, 3:rtc_crystal, 4:rail_cycled, 5:task, 6:overdue, 7:file, 8:line}",
       "values_readable": "reason 5 panic, the backup domain invalid, the RTC on its crystal, the comms processor left powered, and the site: file hash 0x9E3779B9 at line 212, both resolved against the image that was running. Keys 5 and 6 are absent because they belong to a watchdog, and a panic without keys 7 and 8 is refused (P-214)"
     },
+    "timeset_0x0604": {
+      "kind": 1540,
+      "class": "A",
+      "body_cbor": "a3011b0000018bcfe57b88021b0000018bcfe568000301",
+      "body_len": 23,
+      "values_readable": "old 1700000005000, new 1700000000000, source client: a backward step",
+      "body_readable": "{1:old, 2:new, 3:source}"
+    },
+    "time_set_unknown_0x0604": {
+      "kind": 1540,
+      "class": "A",
+      "body_cbor": "a2021b0000018bcfe568000302",
+      "body_len": 13,
+      "values_readable": "old absent, new 1700000000000, source ntp-via-comms",
+      "body_readable": null
+    },
+    "recordfailedcrc_0x0702": {
+      "kind": 1794,
+      "class": "A",
+      "body_cbor": "a10102",
+      "body_len": 3,
+      "values_readable": "two stored records failed CRC in this scan",
+      "body_readable": "{1:count}"
+    },
+    "commslinklost_0x0801": {
+      "kind": 2049,
+      "class": "A",
+      "body_cbor": "a0",
+      "body_len": 1,
+      "values_readable": "the first recovery rung; no diagnosis in the body",
+      "body_readable": null
+    },
+    "commspowercycled_0x0802": {
+      "kind": 2050,
+      "class": "A",
+      "body_cbor": "a10103",
+      "body_len": 3,
+      "values_readable": "third rail cycle in the preceding hour",
+      "body_readable": "{1:count}"
+    },
+    "commsunrecoverable_0x0803": {
+      "kind": 2051,
+      "class": "A",
+      "body_cbor": "a101f4",
+      "body_len": 3,
+      "values_readable": "the rail left off during the recovery pause",
+      "body_readable": "{1:rail_on}"
+    },
+    "comms_unrecoverable_on_0x0803": {
+      "kind": 2051,
+      "class": "A",
+      "body_cbor": "a101f5",
+      "body_len": 3,
+      "values_readable": "the board exception: rail left on and uncycled",
+      "body_readable": null
+    },
+    "sessionsshedforbackpressure_0x0804": {
+      "kind": 2052,
+      "class": "A",
+      "body_cbor": "a10101",
+      "body_len": 3,
+      "values_readable": "first session shed for backpressure in the preceding hour",
+      "body_readable": "{1:count}"
+    },
+    "commsbootnoise_0x0805": {
+      "kind": 2053,
+      "class": "A",
+      "body_cbor": "a101190474",
+      "body_len": 5,
+      "values_readable": "1140 bytes classified as non-frames during one comms boot attempt",
+      "body_readable": "{1:count}"
+    },
     "pair_0x0B": {
       "type": 11,
       "authentication": "key 3 is macs.pair_proof.out16, computed over keys 1 and 2 and the trio the Discover above fixed; no wrapper, the proof is the authentication",
