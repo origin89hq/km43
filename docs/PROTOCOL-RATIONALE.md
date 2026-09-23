@@ -511,6 +511,26 @@ key the frame was MAC'd under. The tolerance for reordering is not a weakening â
 four requests may be in flight and may arrive in any order, so a strict
 must-exceed rule would refuse honest traffic on a bad radio.
 
+What the controller says when it refuses was left open for a while, and the
+answer is nothing. The obvious move is an `Error`, and under the session key it
+is the one thing this rule must never produce: the response MAC covers
+`(type, session_id, req_id)` and nothing that moves, so an answer to a replayed
+`req_id` is a second genuine response to a pair that was already answered, and
+the relay now holds two to choose between. A bare code avoids that and buys
+nothing. It would need an allocation argued for out loud, and the only peers
+that would ever read it are a relay replaying frames and a client with a bug,
+because an honest client never reuses a `req_id` and never has more than
+`MAX_INFLIGHT` in flight. The broken client times out and retries under a new
+`req_id`, which it does after any lost frame anyway.
+
+The refusal also has to undo what the frame did on its way in. It carries a
+valid MAC, so under the old wording of the session timer it counted as traffic,
+and a relay replaying one captured request every fourteen minutes held a
+session open forever while staying clear of the failure limit. So a refused
+request refreshes nothing, and it is not counted as a failure either, since
+that would let the relay close an honest client's connection with the client's
+own frames.
+
 The general lesson is the one worth keeping: a rule written as client behaviour
 is not a rule. If it protects the controller, the controller has to check it.
 
