@@ -731,9 +731,15 @@ one flag, so `1` became `power` and `3 brown-out` is retired; pin reset,
 option-byte reload, the window watchdog and low-power entry were added, because
 the part tells them apart and a bank swap is not a power cut.
 
-*What stays owed:* `0x0604 time set`'s body, which is one of the six promises
-above and is now load-bearing for two more requirements than it was — P-115 and
-P-116 point at it for the size of a clock step — and the other thirteen.
+**The controller's first producers are settled under P-215.** `0x0604` carries
+old (absent when unknown), new and time source; `0x0702` counts failed stored
+records without trusting their contents; `0x0801` is an empty map; `0x0802`
+counts cycles in the rolling hour; `0x0803` names the rail branch; and `0x0804`
+counts sessions shed. `0x0805` preserves the non-frame byte count per comms boot
+attempt. Each has a codec and a published vector.
+
+*What stays owed:* the other reserved event bodies, including the dropped count,
+the applied-or-shadowed decision and the client-enrolment capability mask.
 
 If the space keeps gaining producers, the honest answer is to allocate distinct
 event kinds rather than to keep widening a discriminator inside one — but that is

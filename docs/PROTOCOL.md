@@ -2720,6 +2720,70 @@ itself, and whoever reads it in April cannot tell which half happened. A watchdo
 may arrive without a task, because the run that starved it did not always get
 as far as saying who.
 
+The controller's clock, recovery ladder and log reader write these class A
+bodies in `Event 0x04` key 4: time set, record failed CRC, comms link lost,
+comms power cycled, comms unrecoverable, sessions shed for backpressure and
+comms boot noise. Their integer keys are local to each kind.
+
+```text
+TimeSet  0x0604
+  1: old          u64     optional; ms since epoch before the change
+  2: new          u64     ms since epoch after the change
+  3: source       u8      time_source, see REGISTRY
+
+RecordFailedCRC  0x0702
+  1: count        u32     stored records skipped in this scan because their CRC failed
+
+CommsLinkLost  0x0801
+                           empty map; the first rung, from L-110 or L-022
+
+CommsPowerCycled  0x0802
+  1: count        u32     cycles inside the preceding hour, including this cycle
+
+CommsUnrecoverable  0x0803
+  1: rail_on      bool    true: left on and uncycled; false: left off (L-112)
+
+SessionsShedForBackpressure  0x0804
+  1: count        u32     sessions shed inside the preceding hour, including this shed
+
+CommsBootNoise  0x0805
+  1: count        u32     bytes refused as non-frames during this comms boot attempt
+```
+
+**P-215** — These bodies MUST carry every listed key except `Time set.old`,
+which MUST be omitted when the previous clock was unknown (P-093). A receiver
+MUST refuse a missing required key, a duplicate known key, an unallocated time
+source, or a zero count in `0x0702`, `0x0802` or `0x0804`. Unknown keys are
+skipped under P-014. Counts saturate at `u32::MAX`; that value means at least
+that many, never a wrapped total.
+
+`Time set.source` uses the same space as P-111: a signed client write is
+`client`, an accepted offer is `ntp-via-comms`, never the link-local source
+number (L-162). An old value of zero is a known epoch, not absence. The outer
+record's `at`, when present, uses the clock after the change. The body records
+both forward and backward steps without an unsigned delta.
+
+The power-cycle and session-shed counts use the same rolling hour as L-111 and
+L-022. They count actions, not emitted records; L-023 can require only the first
+shed to be logged. `rail_on` records the branch actually taken for the recovery
+pause, not a request to change the rail. `Comms link lost` carries no diagnosis:
+both an unanswered heartbeat and backpressure escalation reach that rung.
+
+`Record failed CRC` counts failed stored records, not UART frames (P-031).
+A scan emits one summary after it finishes, if any records failed. It does not
+copy `seq`, kind or time from damaged bytes: the failed CRC makes those values
+untrusted. Re-reading the same damaged record in another scan can count it
+again; this is not a lifetime count of distinct losses.
+
+`Comms boot noise` preserves the ROM and bootloader text count that would
+otherwise exist only in a probe log. The interval starts when the controller
+starts a comms boot attempt and ends at the first valid `LinkUp`, or when the
+controller abandons that attempt before starting another. It counts bytes
+classified as non-frames, not malformed frames or refusal messages, and is
+recorded once per attempt, including zero. It saturates by the same rule as the
+other counts. A client compares the count against the expected boot output for
+the comms image; the body does not encode a firmware-specific fault threshold.
+
 **P-182** — The controller MUST NOT enqueue more than one `0x0102` and one
 `0x0902` per tick. Each carries an array of what fits its cap; entries that do
 not fit are carried to the next tick and MUST NOT be dropped. **`0x0501` and
