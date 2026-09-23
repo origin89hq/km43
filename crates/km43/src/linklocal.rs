@@ -566,7 +566,7 @@ fn versioned(key: LinkField, text: &str) -> Result<&str, LinkError> {
         (1..=PRE_RELEASE_LONGEST).contains(&pre.len()) && pre.split('.').all(identifier)
     };
 
-    let Some((release, commit)) = text.split_once("+g") else {
+    let Some((release, commit)) = commit_split(text) else {
         return Err(LinkError::NotAVersion(key));
     };
     let (core, pre) = match release.split_once('-') {
@@ -588,6 +588,15 @@ fn versioned(key: LinkField, text: &str) -> Result<&str, LinkError> {
     } else {
         Err(LinkError::NotAVersion(key))
     }
+}
+
+/// `text` split at its first `+g`, as `split_once("+g")` would, without the
+/// substring searcher a `&str` pattern links: about 1.3 KB of `core` in a
+/// firmware image for two bytes found once per `LinkUp`. `+` is ASCII, so
+/// both halves start and end on a character boundary.
+fn commit_split(text: &str) -> Option<(&str, &str)> {
+    let at = text.as_bytes().windows(2).position(|pair| pair == b"+g")?;
+    Some((text.get(..at)?, text.get(at.checked_add(2)?..)?))
 }
 
 /// Fill a slot once, refusing the second copy before either is used (P-015).
@@ -1626,6 +1635,29 @@ fn outcome<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The byte search splits exactly where `split_once("+g")` does, the
+    /// first `+g`, with multibyte text on either side of it.
+    #[test]
+    fn a_version_splits_at_its_first_plus_g_as_split_once_would() {
+        for text in [
+            "",
+            "+",
+            "+g",
+            "g+",
+            "0.1.0",
+            "0.1.0+g",
+            "+gabcdef01",
+            "0.1.0+gabcdef01",
+            "0.1.0-rc.1+gabcdef01",
+            "1+g2+g3",
+            "é+gü",
+            "+g+g",
+            "++gg",
+        ] {
+            assert_eq!(commit_split(text), text.split_once("+g"), "{text:?}");
+        }
+    }
     use crate::cbor::CborError;
     use crate::envelope::ReqId;
     use crate::envelope::{EnvelopeError, Refusal};
