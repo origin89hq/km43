@@ -2482,3 +2482,32 @@ fn the_published_time_bodies_carry_the_registry_opcodes() {
         assert_eq!(published, kind as u8, "{name}");
     }
 }
+
+/// The command bodies the file already publishes, read and rewritten here: the
+/// operation the signed request signs and the ack the response wraps. `args`
+/// must come back as the bytes that went in, because the MAC and the
+/// controller's dedup hash (P-120) are both over the operation as it arrived.
+#[test]
+fn the_published_command_and_ack_bodies_decode_and_reencode_byte_for_byte() {
+    use km43::{Command, CommandAck, CommandKind, CommandOperation, MAX_COMMAND_ACK_BYTES};
+
+    let published = blob_under("signed_request", "operation_cbor");
+    let operation = CommandOperation::decode(&published).expect("the published operation");
+    assert_eq!(operation.cmd_id, 0x2A);
+    assert_eq!(operation.kind, CommandKind::StartGenerator);
+    assert_eq!(operation.args, [0xa1, 0x01, 0x19, 0x03, 0x84]);
+    let mut dst = [0; 32];
+    let len = operation.encode(&mut dst).expect("fits");
+    assert_eq!(dst.get(..len), Some(published.as_slice()));
+
+    let published = blob_under("response", "inner_body_cbor");
+    let want = CommandAck {
+        cmd_id: 0x2A,
+        outcome: Command::Accepted,
+        detail: "generator starting",
+    };
+    assert_eq!(CommandAck::decode(&published), Ok(want));
+    let mut dst = [0; MAX_COMMAND_ACK_BYTES];
+    let len = want.encode(&mut dst).expect("fits");
+    assert_eq!(dst.get(..len), Some(published.as_slice()));
+}
