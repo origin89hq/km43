@@ -4,6 +4,11 @@
 //! markdown, because a data file carrying kilobytes of documentation is a
 //! document with an awkward syntax.
 
+#![cfg_attr(
+    not(test),
+    deny(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)
+)]
+
 use anyhow::{Context, Result};
 use std::fmt::Write as _;
 use std::path::Path;
@@ -23,16 +28,21 @@ impl Section {
         let at = doc
             .find(&self.heading)
             .with_context(|| format!("REGISTRY.md has no {:?} section", self.heading))?;
-        let rel = doc[at..]
-            .find("\n|")
+        let section = doc
+            .get(at..)
+            .context("section is not on a character boundary")?;
+        let (before_table, table) = section
+            .split_once("\n|")
             .with_context(|| format!("{:?} has no table", self.heading))?;
-        let start = at + rel + 1;
-        let end = doc[start..].find("\n\n").map_or(doc.len(), |n| start + n);
+        let suffix = table.split_once("\n\n").map(|(_, rest)| rest);
+        let prefix = doc
+            .get(..at)
+            .context("section is not on a character boundary")?;
         Ok(format!(
-            "{}{}{}",
-            &doc[..start],
+            "{prefix}{before_table}\n{}{}{}",
             self.table.trim_end(),
-            &doc[end..]
+            if suffix.is_some() { "\n\n" } else { "" },
+            suffix.unwrap_or("")
         ))
     }
 }
@@ -519,4 +529,56 @@ pub fn heading_for(key: &str) -> String {
 
 fn auth(a: Option<Auth>) -> String {
     a.map_or_else(|| "—".to_owned(), |a| format!("`{a}`"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Section;
+
+    #[test]
+    fn splicing_preserves_utf8_prose_around_the_table() {
+        let section = Section {
+            heading: "## Café".into(),
+            table: "| new |\n".into(),
+        };
+        assert_eq!(
+            section
+                .splice("préface\n\n## Café\n\nexplanation\n\n| old |\n| row |\n\nsuffix é\n")
+                .expect("existing table"),
+            "préface\n\n## Café\n\nexplanation\n\n| new |\n\nsuffix é\n"
+        );
+    }
+
+    #[test]
+    fn splicing_accepts_a_table_at_end_of_file() {
+        let section = Section {
+            heading: "## End".into(),
+            table: "| new |\n".into(),
+        };
+        for doc in ["## End\n| old |", "## End\n| old |\n"] {
+            assert_eq!(section.splice(doc).expect("last table"), "## End\n| new |");
+        }
+    }
+
+    #[test]
+    fn splicing_refuses_a_missing_heading_or_table() {
+        let section = Section {
+            heading: "## Missing".into(),
+            table: "| new |".into(),
+        };
+        assert!(
+            section
+                .splice("## Other\n| old |")
+                .expect_err("missing heading")
+                .to_string()
+                .contains("section")
+        );
+        assert!(
+            section
+                .splice("## Missing\nprose only")
+                .expect_err("missing table")
+                .to_string()
+                .contains("no table")
+        );
+    }
 }

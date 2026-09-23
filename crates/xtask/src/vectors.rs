@@ -6,7 +6,12 @@
 //!
 //! cites: P-005, P-006, P-087
 
-use anyhow::{Result, bail};
+#![cfg_attr(
+    not(test),
+    deny(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)
+)]
+
+use anyhow::{Context, Result, bail};
 use hmac::{Hmac, KeyInit, Mac};
 use serde_json::{Value, json, map::Map};
 use sha2::{Digest, Sha256};
@@ -14,23 +19,28 @@ use std::collections::BTreeMap;
 
 type HmacSha256 = Hmac<Sha256>;
 
-fn hmac(key: &[u8], msg: &[u8]) -> [u8; 32] {
-    let mut m = <HmacSha256 as KeyInit>::new_from_slice(key).expect("HMAC accepts any key length");
+fn hmac(key: &[u8], msg: &[u8]) -> Result<[u8; 32]> {
+    let mut m = <HmacSha256 as KeyInit>::new_from_slice(key)
+        .map_err(|_| anyhow::anyhow!("HMAC-SHA256 rejected the key length"))?;
     m.update(msg);
-    m.finalize().into_bytes().into()
+    Ok(m.finalize().into_bytes().into())
 }
 
 fn t16(d: [u8; 32]) -> Vec<u8> {
-    d[..16].to_vec()
+    d.into_iter().take(16).collect()
 }
 
 /// RFC 5869 HKDF-SHA256, with salt, IKM and info as named arguments.
-fn hkdf(salt: &[u8], ikm: &[u8], info: &[u8], len: usize) -> Vec<u8> {
+fn hkdf(salt: &[u8], ikm: &[u8], info: &[u8], len: usize) -> Result<Vec<u8>> {
+    const MAX_HKDF_SHA256_OUTPUT: usize = 255 * 32;
+    if len > MAX_HKDF_SHA256_OUTPUT {
+        bail!("HKDF-SHA256 output length {len} exceeds {MAX_HKDF_SHA256_OUTPUT}");
+    }
     let mut okm = vec![0u8; len];
     hkdf::Hkdf::<Sha256>::new(Some(salt), ikm)
         .expand(info, &mut okm)
-        .expect("length is well under 255 * 32");
-    okm
+        .map_err(|_| anyhow::anyhow!("HKDF-SHA256 rejected output length {len}"))?;
+    Ok(okm)
 }
 
 /// CRC-16/CCITT-FALSE: poly 0x1021, init 0xFFFF, no reflection, xorout 0x0000.
@@ -55,44 +65,49 @@ fn crc16(data: &[u8]) -> u16 {
 /// `c - 1` bytes then a zero. So a run of exactly 254 followed by a zero needs
 /// both groups — drop the second and the trailing zero is lost, which a round
 /// trip cannot see because the decoder loses it too.
-fn cobs_encode(data: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(data.len() + data.len() / 254 + 2);
-    let runs: Vec<&[u8]> = data.split(|&b| b == 0).collect();
-    let last = runs.len() - 1;
-    for (idx, run) in runs.iter().enumerate() {
-        let mut rest: &[u8] = run;
+fn cobs_encode(data: &[u8]) -> Result<Vec<u8>> {
+    let capacity = data
+        .len()
+        .checked_add(data.len() / 254)
+        .and_then(|n| n.checked_add(2))
+        .context("COBS encoded length overflow")?;
+    let mut out = Vec::with_capacity(capacity);
+    let mut runs = data.split(|&b| b == 0).peekable();
+    while let Some(run) = runs.next() {
+        let mut rest = run;
         let mut emitted_full_block = false;
-        while rest.len() >= 254 {
+        while let Some((block, tail)) = rest.split_at_checked(254) {
             out.push(0xFF);
-            out.extend_from_slice(&rest[..254]);
-            rest = &rest[254..];
+            out.extend_from_slice(block);
+            rest = tail;
             emitted_full_block = true;
         }
-        if idx == last && emitted_full_block && rest.is_empty() {
+        if runs.peek().is_none() && emitted_full_block && rest.is_empty() {
             continue; // the 0xFF group already ended the data
         }
-        out.push(u8::try_from(rest.len() + 1).expect("rest is under 254"));
+        let code = u8::try_from(rest.len())?
+            .checked_add(1)
+            .context("COBS remainder exceeds a block")?;
+        out.push(code);
         out.extend_from_slice(rest);
     }
-    out
+    Ok(out)
 }
 
 fn cobs_decode(data: &[u8]) -> Result<Vec<u8>> {
     let mut out = Vec::new();
-    let mut i = 0usize;
-    while i < data.len() {
-        let code = data[i];
+    let mut rest = data;
+    while let Some((&code, tail)) = rest.split_first() {
         if code == 0 {
             bail!("zero code byte inside a COBS frame");
         }
-        i += 1;
-        let end = i + usize::from(code) - 1;
-        if end > data.len() {
-            bail!("COBS block runs past the end of the frame");
-        }
-        out.extend_from_slice(&data[i..end]);
-        i = end;
-        if code != 0xFF && i < data.len() {
+        let count = code.checked_sub(1).context("zero COBS code")?;
+        let (block, tail) = tail
+            .split_at_checked(usize::from(count))
+            .context("COBS block runs past the end of the frame")?;
+        out.extend_from_slice(block);
+        rest = tail;
+        if code != 0xFF && !rest.is_empty() {
             out.push(0);
         }
     }
@@ -115,17 +130,18 @@ enum Cb {
 
 fn head(major: u8, val: u64) -> Vec<u8> {
     let m = major << 5;
+    let [_, _, _, _, b3, b2, b1, b0] = val.to_be_bytes();
     match val {
-        0..=23 => vec![m | u8::try_from(val).expect("under 24")],
-        24..=0xFF => vec![m | 0x18, u8::try_from(val).expect("under 256")],
+        0..=23 => vec![m | b0],
+        24..=0xFF => vec![m | 0x18, b0],
         0x100..=0xFFFF => {
             let mut v = vec![m | 0x19];
-            v.extend_from_slice(&u16::try_from(val).expect("under 65536").to_be_bytes());
+            v.extend_from_slice(&[b1, b0]);
             v
         }
         0x1_0000..=0xFFFF_FFFF => {
             let mut v = vec![m | 0x1A];
-            v.extend_from_slice(&u32::try_from(val).expect("under 2^32").to_be_bytes());
+            v.extend_from_slice(&[b3, b2, b1, b0]);
             v
         }
         _ => {
@@ -136,8 +152,8 @@ fn head(major: u8, val: u64) -> Vec<u8> {
     }
 }
 
-fn cbor(c: &Cb) -> Vec<u8> {
-    match c {
+fn cbor(c: &Cb) -> Result<Vec<u8>> {
+    Ok(match c {
         Cb::U(v) => head(0, *v),
         // Nothing carries a sign bit. Major 0 counts up from 0 and major 1
         // counts down from -1, so a negative goes out as -1 - n and -1 is one
@@ -154,31 +170,43 @@ fn cbor(c: &Cb) -> Vec<u8> {
         // why `false` and `true` are one byte and not a tagged anything.
         Cb::Bool(b) => head(7, if *b { 21 } else { 20 }),
         Cb::B(b) => {
-            let mut o = head(2, b.len() as u64);
+            let mut o = head(
+                2,
+                u64::try_from(b.len()).context("CBOR length exceeds u64")?,
+            );
             o.extend_from_slice(b);
             o
         }
         Cb::T(s) => {
-            let mut o = head(3, s.len() as u64);
+            let mut o = head(
+                3,
+                u64::try_from(s.len()).context("CBOR length exceeds u64")?,
+            );
             o.extend_from_slice(s.as_bytes());
             o
         }
         Cb::A(items) => {
-            let mut o = head(4, items.len() as u64);
+            let mut o = head(
+                4,
+                u64::try_from(items.len()).context("CBOR length exceeds u64")?,
+            );
             for i in items {
-                o.extend(cbor(i));
+                o.extend(cbor(i)?);
             }
             o
         }
         Cb::M(m) => {
-            let mut o = head(5, m.len() as u64);
+            let mut o = head(
+                5,
+                u64::try_from(m.len()).context("CBOR length exceeds u64")?,
+            );
             for (k, v) in m {
                 o.extend(head(0, *k));
-                o.extend(cbor(v));
+                o.extend(cbor(v)?);
             }
             o
         }
-    }
+    })
 }
 
 macro_rules! cmap {
@@ -191,11 +219,10 @@ macro_rules! cmap {
 
 fn hex(b: &[u8]) -> String {
     use std::fmt::Write as _;
-    b.iter()
-        .fold(String::with_capacity(b.len() * 2), |mut s, x| {
-            let _ = write!(s, "{x:02x}");
-            s
-        })
+    b.iter().fold(String::new(), |mut s, x| {
+        let _ = write!(s, "{x:02x}");
+        s
+    })
 }
 
 /// Accumulates the primitive checks so one failure does not hide the rest.
@@ -220,27 +247,27 @@ impl SelfCheck {
         }
     }
 
-    fn kdf_and_mac(&mut self) {
+    fn kdf_and_mac(&mut self) -> Result<()> {
         // RFC 5869 A.1 and A.3
         self.expect(
             "HKDF-SHA256 RFC 5869 A.1",
             &hex(&hkdf(
                 &(0u8..=12).collect::<Vec<u8>>(),
                 &[0x0b; 22],
-                &hex_to_bytes("f0f1f2f3f4f5f6f7f8f9"),
+                &hex_to_bytes("f0f1f2f3f4f5f6f7f8f9")?,
                 42,
-            )),
+            )?),
             "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf34007208d5b887185865",
         );
         self.expect(
             "HKDF-SHA256 RFC 5869 A.3 zero salt/info",
-            &hex(&hkdf(&[], &[0x0b; 22], &[], 42)),
+            &hex(&hkdf(&[], &[0x0b; 22], &[], 42)?),
             "8da4e775a563c18f715f802a063c5a31b8a11f5c5ee1879ec3454e5f3c738d2d9d201395faa4b61a96c8",
         );
         // RFC 4231 case 2
         self.expect(
             "HMAC-SHA256 RFC 4231 case 2",
-            &hex(&hmac(b"Jefe", b"what do ya want for nothing?")),
+            &hex(&hmac(b"Jefe", b"what do ya want for nothing?")?),
             "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843",
         );
         self.expect(
@@ -248,11 +275,12 @@ impl SelfCheck {
             &format!("{:#06x}", crc16(b"123456789")),
             "0x29b1",
         );
+        Ok(())
     }
 
     fn cobs(&mut self) -> Result<()> {
         // Cheshire & Baker's own examples. Cases 6-9 are the 254-byte boundary.
-        let r = |a: u16, b: u16| -> Vec<u8> { (a..b).map(|v| u8::try_from(v).unwrap()).collect() };
+        let r = |a: u8, b: u8| -> Vec<u8> { (a..=b).collect() };
         let cases: Vec<(&str, Vec<u8>, Vec<u8>)> = vec![
             ("case 1", vec![0x00], vec![0x01, 0x01]),
             ("case 2", vec![0x00, 0x00], vec![0x01, 0x01, 0x01]),
@@ -281,32 +309,32 @@ impl SelfCheck {
             ),
             (
                 "case 6 (254 B, exactly one block)",
-                r(1, 255),
-                [vec![0xFF], r(1, 255)].concat(),
+                r(1, 254),
+                [vec![0xFF], r(1, 254)].concat(),
             ),
             (
                 "case 7 (leading zero, 255 B)",
-                r(0, 255),
-                [vec![0x01, 0xFF], r(1, 255)].concat(),
+                r(0, 254),
+                [vec![0x01, 0xFF], r(1, 254)].concat(),
             ),
             (
                 "case 8 (255 B, overflows a block)",
-                r(1, 256),
-                [vec![0xFF], r(1, 255), vec![0x02, 0xFF]].concat(),
+                r(1, 255),
+                [vec![0xFF], r(1, 254), vec![0x02, 0xFF]].concat(),
             ),
             (
                 "case 9 (trailing zero, 255 B)",
-                [r(2, 256), vec![0]].concat(),
-                [vec![0xFF], r(2, 256), vec![0x01, 0x01]].concat(),
+                [r(2, 255), vec![0]].concat(),
+                [vec![0xFF], r(2, 255), vec![0x01, 0x01]].concat(),
             ),
             (
                 "case 10 (zero one byte short of a block, 255 B)",
-                [r(3, 256), vec![0, 1]].concat(),
-                [vec![0xFE], r(3, 256), vec![0x02, 0x01]].concat(),
+                [r(3, 255), vec![0, 1]].concat(),
+                [vec![0xFE], r(3, 255), vec![0x02, 0x01]].concat(),
             ),
         ];
         for (name, raw, enc) in &cases {
-            self.expect(&format!("COBS {name}"), &hex(&cobs_encode(raw)), &hex(enc));
+            self.expect(&format!("COBS {name}"), &hex(&cobs_encode(raw)?), &hex(enc));
             self.expect(
                 &format!("COBS {name} decode"),
                 &hex(&cobs_decode(enc)?),
@@ -319,14 +347,16 @@ impl SelfCheck {
         for n in (0usize..300).chain([1024, 1026]) {
             for filler in [0x00u8, 0x41, 0xFF] {
                 let d = vec![filler; n];
-                if cobs_decode(&cobs_encode(&d))? != d {
+                if cobs_decode(&cobs_encode(&d)?)? != d {
                     rt_ok = false;
                 }
             }
-            let d: Vec<u8> = (0..n)
-                .map(|i| u8::try_from((i * 7 + 1) % 256).unwrap())
+            let d: Vec<u8> = (0u8..=255)
+                .cycle()
+                .take(n)
+                .map(|i| i.wrapping_mul(7).wrapping_add(1))
                 .collect();
-            if cobs_decode(&cobs_encode(&d))? != d {
+            if cobs_decode(&cobs_encode(&d)?)? != d {
                 rt_ok = false;
             }
         }
@@ -338,12 +368,13 @@ impl SelfCheck {
         Ok(())
     }
 
-    fn cbor(&mut self) {
-        self.cbor_unsigned_widths();
-        self.cbor_negative_widths();
-        self.cbor_string_widths();
-        self.cbor_maps_and_arrays();
-        self.cbor_flags();
+    fn cbor(&mut self) -> Result<()> {
+        self.cbor_unsigned_widths()?;
+        self.cbor_negative_widths()?;
+        self.cbor_string_widths()?;
+        self.cbor_maps_and_arrays()?;
+        self.cbor_flags()?;
+        Ok(())
     }
 
     /// Major type 0 at every width the head can take.
@@ -351,7 +382,7 @@ impl SelfCheck {
     /// A head that grows one value too late or one too early still round trips
     /// against itself, so only an outside answer catches it — most of these
     /// rows are RFC 8949 Appendix A, and the rest are the same boundaries.
-    fn cbor_unsigned_widths(&mut self) {
+    fn cbor_unsigned_widths(&mut self) -> Result<()> {
         for (name, v, want) in [
             ("CBOR uint 0", Cb::U(0), "00"),
             ("CBOR uint 1", Cb::U(1), "01"),
@@ -391,8 +422,9 @@ impl SelfCheck {
             ),
             ("CBOR uint u64::MAX", Cb::U(u64::MAX), "1bffffffffffffffff"),
         ] {
-            self.expect(name, &hex(&cbor(&v)), want);
+            self.expect(name, &hex(&cbor(&v)?), want);
         }
+        Ok(())
     }
 
     /// Major type 1, which is on the wire the first time a bank discharges.
@@ -400,7 +432,7 @@ impl SelfCheck {
     /// P-089 puts a signed `i32` in `Value` key 3, and major 1 stores `-1 - n`
     /// rather than a sign, so -1 is one byte and -25 needs two while -24 does
     /// not. An encoder written from memory is off by one here.
-    fn cbor_negative_widths(&mut self) {
+    fn cbor_negative_widths(&mut self) -> Result<()> {
         for (name, v, want) in [
             ("CBOR nint -1", Cb::I(-1), "20"),
             ("CBOR nint -5", Cb::I(-5), "24"),
@@ -463,8 +495,9 @@ impl SelfCheck {
                 "1a7fffffff",
             ),
         ] {
-            self.expect(name, &hex(&cbor(&v)), want);
+            self.expect(name, &hex(&cbor(&v)?), want);
         }
+        Ok(())
     }
 
     /// Byte and text strings share the head, so they share the boundary.
@@ -472,7 +505,7 @@ impl SelfCheck {
     /// A 16-byte MAC sits under it and a 32-byte tag over it, and an encoder
     /// that writes a one-byte head for 24 makes the next field start a byte
     /// early — the map after it decodes as garbage rather than as an error.
-    fn cbor_string_widths(&mut self) {
+    fn cbor_string_widths(&mut self) -> Result<()> {
         for (name, v, want) in [
             ("CBOR bstr empty", Cb::B(Vec::new()), "40"),
             ("CBOR bstr of one zero byte", Cb::B(vec![0]), "4100"),
@@ -515,8 +548,9 @@ impl SelfCheck {
                 "78186162636465666768696a6b6c6d6e6f70717273747576c3a9",
             ),
         ] {
-            self.expect(name, &hex(&cbor(&v)), want);
+            self.expect(name, &hex(&cbor(&v)?), want);
         }
+        Ok(())
     }
 
     /// Containers, and the ordering P-016 requires of them.
@@ -525,7 +559,7 @@ impl SelfCheck {
     /// nothing pinned that until this row, and two encoders that disagree
     /// produce two different byte strings for one body with nothing to point
     /// at but a hex dump.
-    fn cbor_maps_and_arrays(&mut self) {
+    fn cbor_maps_and_arrays(&mut self) -> Result<()> {
         for (name, v, want) in [
             ("CBOR array empty", Cb::A(Vec::new()), "80"),
             (
@@ -582,14 +616,15 @@ impl SelfCheck {
                 "a20182a201010224a2010202000242dead",
             ),
         ] {
-            self.expect(name, &hex(&cbor(&v)), want);
+            self.expect(name, &hex(&cbor(&v)?), want);
         }
+        Ok(())
     }
 
     /// The four booleans on the wire — `provisioned`, `pairing_open`, `gap`,
     /// `complete` — are major 7 simple values, one byte each and never a
     /// number. An encoder that writes them as 0 and 1 is a decoder's error 1.
-    fn cbor_flags(&mut self) {
+    fn cbor_flags(&mut self) -> Result<()> {
         for (name, v, want) in [
             ("CBOR false", Cb::Bool(false), "f4"),
             ("CBOR true", Cb::Bool(true), "f5"),
@@ -599,8 +634,9 @@ impl SelfCheck {
                 "a205f506f4",
             ),
         ] {
-            self.expect(name, &hex(&cbor(&v)), want);
+            self.expect(name, &hex(&cbor(&v)?), want);
         }
+        Ok(())
     }
 
     /// The two bodies that had no outside opinion at all.
@@ -610,7 +646,7 @@ impl SelfCheck {
     /// `max_channels` of 32 emitted as one byte, or key 15 emitted as 16, round
     /// trips against itself and reads correctly in a hex dump. Every byte below
     /// was derived by hand from the field lists in `docs/PROTOCOL.md`.
-    fn pre_session_bodies(&mut self, b: &Builder) {
+    fn pre_session_bodies(&mut self, b: &Builder) -> Result<()> {
         const DISCOVER: &str = concat!(
             "a8",   // map, 8 keys
             "0101", // 1: protocol_major = 1
@@ -668,8 +704,9 @@ impl SelfCheck {
             "181d04",     // 29: max_topology_depth = 4
         );
 
-        self.expect("Discover 0x80 body", &hex(&b.discover_body()), DISCOVER);
-        self.expect("Hello 0x81 inner body", &hex(&b.hello_body()), HELLO);
+        self.expect("Discover 0x80 body", &hex(&b.discover_body()?), DISCOVER);
+        self.expect("Hello 0x81 inner body", &hex(&b.hello_body()?), HELLO);
+        Ok(())
     }
 
     fn finish(self) -> Result<()> {
@@ -690,17 +727,27 @@ impl SelfCheck {
 
 fn self_check(b: &Builder) -> Result<()> {
     let mut c = SelfCheck::new();
-    c.kdf_and_mac();
+    c.kdf_and_mac()?;
     c.cobs()?;
-    c.cbor();
-    c.pre_session_bodies(b);
+    c.cbor()?;
+    c.pre_session_bodies(b)?;
     c.finish()
 }
 
-fn hex_to_bytes(s: &str) -> Vec<u8> {
-    (0..s.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).expect("valid hex literal"))
+fn hex_to_bytes(s: &str) -> Result<Vec<u8>> {
+    let (pairs, remainder) = s.as_bytes().as_chunks::<2>();
+    if !remainder.is_empty() {
+        bail!("hex input has an odd number of bytes");
+    }
+    pairs
+        .iter()
+        .map(|pair| {
+            if !pair.iter().all(u8::is_ascii_hexdigit) {
+                bail!("invalid hex pair");
+            }
+            let text = std::str::from_utf8(pair).context("hex pair is not UTF-8")?;
+            u8::from_str_radix(text, 16).context("invalid hex pair")
+        })
         .collect()
 }
 
@@ -938,9 +985,9 @@ struct WholeEnvelope {
 }
 
 impl WholeEnvelope {
-    fn entry(self) -> (&'static str, Value) {
-        let whole = Builder::envelope(self.kind, self.session, self.req_id, &self.body);
-        (
+    fn entry(self) -> Result<(&'static str, Value)> {
+        let whole = Builder::envelope(self.kind, self.session, self.req_id, &self.body)?;
+        Ok((
             self.name,
             obj(vec![
                 ("type", json!(self.kind as u8)),
@@ -954,7 +1001,7 @@ impl WholeEnvelope {
                 ("whole_envelope_cbor", json!(hex(&whole))),
                 ("whole_envelope_len", json!(whole.len())),
             ]),
-        )
+        ))
     }
 }
 
@@ -965,11 +1012,11 @@ struct Response {
 }
 
 impl Builder {
-    fn new() -> Self {
+    fn new() -> Result<Self> {
         let printed_secret: Vec<u8> = (0u8..32).collect();
         let device_id = b"ORIGIN89 DEMO 01".to_vec();
-        let challenge = hex_to_bytes("a0a1a2a3a4a5a6a7a8a9aaabacadaeaf");
-        let client_nonce = hex_to_bytes("b0b1b2b3b4b5b6b7b8b9babbbcbdbebf");
+        let challenge = hex_to_bytes("a0a1a2a3a4a5a6a7a8a9aaabacadaeaf")?;
+        let client_nonce = hex_to_bytes("b0b1b2b3b4b5b6b7b8b9babbbcbdbebf")?;
         let client_id: u32 = 7;
         let session_id: u16 = 3;
 
@@ -981,12 +1028,12 @@ impl Builder {
         let client_key_info =
             [L_CLIENT_KEY, &epoch.to_be_bytes(), &client_id.to_be_bytes()].concat();
         let session_salt = [challenge.clone(), client_nonce.clone()].concat();
-        let session_key_info = [L_SESSION_KEY, &session_id.to_be_bytes()[..]].concat();
-        let client_key = hkdf(&device_id, &printed_secret, &client_key_info, 32);
+        let session_key_info = [L_SESSION_KEY, &session_id.to_be_bytes()].concat();
+        let client_key = hkdf(&device_id, &printed_secret, &client_key_info, 32)?;
 
-        Self {
-            pair_key: hkdf(&device_id, &printed_secret, L_PAIR_KEY, 32),
-            session_key: hkdf(&session_salt, &client_key, &session_key_info, 32),
+        Ok(Self {
+            pair_key: hkdf(&device_id, &printed_secret, L_PAIR_KEY, 32)?,
+            session_key: hkdf(&session_salt, &client_key, &session_key_info, 32)?,
             client_key,
             client_key_info,
             session_key_info,
@@ -994,7 +1041,7 @@ impl Builder {
             printed_secret,
             device_id,
             challenge,
-            next_challenge: hex_to_bytes("c0c1c2c3c4c5c6c7c8c9cacbcccdcecf"),
+            next_challenge: hex_to_bytes("c0c1c2c3c4c5c6c7c8c9cacbcccdcecf")?,
             client_nonce,
             client_id,
             session_id,
@@ -1003,7 +1050,7 @@ impl Builder {
             label: "kitchen phone",
             epoch,
             report: SelfReport::new(),
-        }
+        })
     }
 
     /// The client's pairing proof preimage. `label` goes last because it is
@@ -1041,38 +1088,38 @@ impl Builder {
         .concat()
     }
 
-    fn pair_proof(&self) -> (&'static str, Value) {
-        (
+    fn pair_proof(&self) -> Result<(&'static str, Value)> {
+        Ok((
             "pair_proof",
-            MacVector::new(DerivedKey::Pair, self.pair_proof_preimage(), "'km43/v1/pair-proof' | device_id[16] | challenge[16] | client_nonce[16] | client_kind:u8 | label (UTF-8, no NUL, last)").finish(&self.pair_key),
-        )
+            MacVector::new(DerivedKey::Pair, self.pair_proof_preimage(), "'km43/v1/pair-proof' | device_id[16] | challenge[16] | client_nonce[16] | client_kind:u8 | label (UTF-8, no NUL, last)").finish(&self.pair_key)?,
+        ))
     }
 
-    fn pair_ack(&self) -> (&'static str, Value) {
-        (
+    fn pair_ack(&self) -> Result<(&'static str, Value)> {
+        Ok((
             "pair_ack_mac",
-            MacVector::new(DerivedKey::Pair, self.pair_ack_preimage(), "'km43/v1/pair-ack' | device_id[16] | challenge[16] | client_nonce[16] | outcome:u8 | client_id:u32be | epoch:u32be | next_challenge[16]").finish(&self.pair_key),
-        )
+            MacVector::new(DerivedKey::Pair, self.pair_ack_preimage(), "'km43/v1/pair-ack' | device_id[16] | challenge[16] | client_nonce[16] | outcome:u8 | client_id:u32be | epoch:u32be | next_challenge[16]").finish(&self.pair_key)?,
+        ))
     }
 
     /// The `Pair 0x0B` body: the fields the proof attests, the proof, and the
     /// nonce both preimages share (P-069).
-    fn pair_request_body(&self) -> Vec<u8> {
+    fn pair_request_body(&self) -> Result<Vec<u8>> {
         cbor(&cmap! {
             1 => Cb::U(ClientKind::App as u64),
             2 => Cb::T(self.label.into()),
-            3 => Cb::B(t16(hmac(&self.pair_key, &self.pair_proof_preimage()))),
+            3 => Cb::B(t16(hmac(&self.pair_key, &self.pair_proof_preimage())?)),
             4 => Cb::B(self.client_nonce.clone()),
         })
     }
 
     /// The `Pair 0x8B` body. `epoch` is under the MAC and not in the body:
     /// P-087 has `Discover 0x80` say it, and both ends supply it from there.
-    fn pair_ack_body(&self) -> Vec<u8> {
+    fn pair_ack_body(&self) -> Result<Vec<u8>> {
         cbor(&cmap! {
             1 => Cb::U(PairOutcome::Enrolled as u64),
             2 => Cb::U(u64::from(self.client_id)),
-            3 => Cb::B(t16(hmac(&self.pair_key, &self.pair_ack_preimage()))),
+            3 => Cb::B(t16(hmac(&self.pair_key, &self.pair_ack_preimage())?)),
             4 => Cb::B(self.next_challenge.clone()),
         })
     }
@@ -1080,7 +1127,7 @@ impl Builder {
     /// `ReadLog 0x05`: from 1216, at most 64. One function so the body
     /// published on its own and the one inside `macs.wrapper_request` are the
     /// same bytes.
-    fn readlog_body() -> Vec<u8> {
+    fn readlog_body() -> Result<Vec<u8>> {
         cbor(&cmap! {1 => Cb::U(0x04C0), 2 => Cb::U(64)})
     }
 
@@ -1092,7 +1139,7 @@ impl Builder {
     /// that defaults an absent key 2 to 0 reads back a different page. Its body
     /// is a cold boot after the backup cell died: reason 1 power, the backup
     /// domain invalid, the RTC on its crystal, the comms rail cycled.
-    fn logpage_body() -> Vec<u8> {
+    fn logpage_body() -> Result<Vec<u8>> {
         cbor(&cmap! {
             1 => Cb::A(vec![
                 cmap! {
@@ -1114,31 +1161,31 @@ impl Builder {
 
     /// The two keys of `Error 0xFF`, as the standalone map that goes bare into
     /// an envelope or wrapped under a session key.
-    fn error_body(code: ErrorCode, detail: &str) -> Vec<u8> {
+    fn error_body(code: ErrorCode, detail: &str) -> Result<Vec<u8>> {
         cbor(&cmap! {1 => Cb::U(code as u64), 2 => Cb::T(detail.into())})
     }
 
     /// A whole envelope, head and body, for the messages the crate writes in
     /// one piece: `[type, session_id, req_id, body]`.
-    fn envelope(kind: Msg, session: u16, req_id: u32, body: &[u8]) -> Vec<u8> {
+    fn envelope(kind: Msg, session: u16, req_id: u32, body: &[u8]) -> Result<Vec<u8>> {
         // An array of four whose fourth item is the body's own bytes: the
         // head says four, and the body follows the three scalars as written.
-        [
+        Ok([
             head(4, 4).as_slice(),
-            &cbor(&Cb::U(kind as u64)),
-            &cbor(&Cb::U(u64::from(session))),
-            &cbor(&Cb::U(u64::from(req_id))),
+            &cbor(&Cb::U(kind as u64))?,
+            &cbor(&Cb::U(u64::from(session)))?,
+            &cbor(&Cb::U(u64::from(req_id)))?,
             body,
         ]
-        .concat()
+        .concat())
     }
 
-    fn hello_proof(&self) -> (&'static str, Value) {
+    fn hello_proof(&self) -> Result<(&'static str, Value)> {
         let inner = cbor(&cmap! {
             1 => Cb::U(PROTOCOL_MAJOR), 2 => Cb::U(PROTOCOL_MINOR),
             3 => Cb::U(u64::from(self.client_id)),
             4 => Cb::T("o89-cli 0.1.0".into()), 5 => Cb::B(self.client_nonce.clone()),
-        });
+        })?;
         let preimage = [
             L_HELLO_PROOF,
             &self.challenge,
@@ -1147,12 +1194,12 @@ impl Builder {
             &inner,
         ]
         .concat();
-        (
+        Ok((
             "hello_proof",
             MacVector::new(DerivedKey::Client, preimage, "'km43/v1/hello-proof' | challenge[16] | client_nonce[16] | client_id:u32be | payload")
                 .with("inner_body_cbor", hex(&inner))
-                .finish(&self.client_key),
-        )
+                .finish(&self.client_key)?,
+        ))
     }
 
     /// `Discover 0x80`, the only thing an unauthenticated peer is given.
@@ -1160,7 +1207,7 @@ impl Builder {
     /// The challenge is the one the `Pair` and `Hello` proofs below are computed
     /// against, so this is the Discover at the top of the enrolment flow:
     /// nothing enrolled yet and somebody holding the button.
-    fn discover_body(&self) -> Vec<u8> {
+    fn discover_body(&self) -> Result<Vec<u8>> {
         cbor(&cmap! {
             1 => Cb::U(PROTOCOL_MAJOR),
             2 => Cb::U(PROTOCOL_MINOR),
@@ -1178,7 +1225,7 @@ impl Builder {
     /// Key 11 is one below the counter the signed request uses, because it is
     /// the highest value already *accepted*: publish the two as equal and the
     /// request beside it is a replay.
-    fn hello_body(&self) -> Vec<u8> {
+    fn hello_body(&self) -> Result<Vec<u8>> {
         let r = &self.report;
         cbor(&cmap! {
             1 => Cb::U(PROTOCOL_MAJOR),
@@ -1297,7 +1344,7 @@ impl Builder {
                     // closed spaces, no vendor range, so a number outside one
                     // is error 1 rather than a value to skip.
                     7 => Cb::U(9), 8 => Cb::U(u16max), 9 => Cb::U(3),
-                    10 => Cb::U(16), 11 => Cb::U(u16max), 12 => Cb::U(u16max - 15),
+                    10 => Cb::U(16), 11 => Cb::U(u16max), 12 => Cb::U(u16max.saturating_sub(15)),
                     13 => Cb::U(u16max), 14 => Cb::U(u8max), 15 => Cb::U(u8max),
                     16 => Cb::U(u16max), 17 => Cb::U(3),
                     18 => Cb::T(Self::widest_label()),
@@ -1384,25 +1431,25 @@ impl Builder {
         ]
     }
 
-    fn inventory_entry() -> (&'static str, Value) {
+    fn inventory_entry() -> Result<(&'static str, Value)> {
         let request = cbor(&cmap! {
             1 => Cb::U(41), 2 => Cb::U(2), 3 => Cb::U(0), 4 => Cb::U(7),
-        });
+        })?;
         let bus = || {
             Self::inventory_narrowest_rows()
                 .into_iter()
                 .find(|(n, _)| *n == "bus")
                 .map(|(_, r)| r)
-                .expect("the bus row is in the list")
+                .context("inventory fixture has no bus row")
         };
         let page = cbor(&cmap! {
             1 => Cb::U(41), 2 => Cb::U(1),
-            3 => Cb::A(vec![bus(), bus(), bus()]),
+            3 => Cb::A(vec![bus()?, bus()?, bus()?]),
             4 => Cb::U(0), 5 => Cb::U(3), 6 => Cb::U(1),
             7 => Cb::B(vec![1, 2, 3, 4, 5, 6, 7, 8]),
-        });
+        })?;
 
-        let mut fields = vec![
+        let mut fields = Map::from_iter(vec![
             ("type", json!(0x8Du8)),
             (
                 "authentication",
@@ -1433,28 +1480,28 @@ impl Builder {
                     "rev 41, what 1 buses, three bus rows, next 0 so the walk is complete, total 3, outcome 1 ok, and the digest. Key 7 rides this page and only this shape of page: P-145 lets a whole-topology digest travel when key 4 is 0 and the outcome is 1, and nowhere else"
                 ),
             ),
-        ];
+        ].into_iter().map(|(key, value)| (key.to_owned(), value)));
         for (name, row) in Self::inventory_widest_rows() {
-            let bytes = cbor(&row);
-            fields.push((
-                Box::leak(format!("{name}_widest").into_boxed_str()),
+            let bytes = cbor(&row)?;
+            fields.insert(
+                format!("{name}_widest"),
                 json!({ "row_cbor": hex(&bytes), "row_len": bytes.len() }),
-            ));
+            );
         }
         for (name, row) in Self::inventory_narrowest_rows() {
-            let bytes = cbor(&row);
-            fields.push((
-                Box::leak(format!("{name}_required_keys_only").into_boxed_str()),
+            let bytes = cbor(&row)?;
+            fields.insert(
+                format!("{name}_required_keys_only"),
                 json!({ "row_cbor": hex(&bytes), "row_len": bytes.len() }),
-            ));
+            );
         }
         let (name, row) = Self::inventory_labelled_series();
-        let bytes = cbor(&row);
-        fields.push((
-            name,
+        let bytes = cbor(&row)?;
+        fields.insert(
+            name.to_owned(),
             json!({ "row_cbor": hex(&bytes), "row_len": bytes.len() }),
-        ));
-        ("inventory_0x8D", obj(fields))
+        );
+        Ok(("inventory_0x8D", Value::Object(fields)))
     }
 
     /// A `Sample` and a `Series` at the top of the widths their declared types
@@ -1491,12 +1538,12 @@ impl Builder {
         ]
     }
 
-    fn readings_entry() -> (&'static str, Value) {
+    fn readings_entry() -> Result<(&'static str, Value)> {
         let request = cbor(&cmap! {
             1 => Cb::U(41),
             2 => Cb::A(vec![cmap! { 1 => Cb::U(7) }, cmap! { 3 => Cb::U(21) }]),
             3 => Cb::U(0),
-        });
+        })?;
 
         // One scalar and one series, in ascending `sig` — which is the order
         // P-198 fixes and the only one a page may be a prefix of. `sig` 21 is
@@ -1513,9 +1560,9 @@ impl Builder {
             4 => Cb::A(vec![sample]),
             5 => Cb::A(vec![series]),
             6 => Cb::U(0), 7 => Cb::U(2), 8 => Cb::U(1),
-        });
+        })?;
 
-        let mut fields = vec![
+        let mut fields = Map::from_iter(vec![
             ("type", json!(0x8Eu8)),
             (
                 "authentication",
@@ -1542,15 +1589,15 @@ impl Builder {
                     "seq 4211, rev 41, one scalar at sig 9 reading 12.50 V, and a three-element series at sig 21 whose middle cell has an open sense wire: its q byte is 0x50 sensor_fault, it carries no integer at all, and the two that are readable sit either side of the gap. next 0 so the selection is complete, total 2, outcome 1 ok"
                 ),
             ),
-        ];
+        ].into_iter().map(|(key, value)| (key.to_owned(), value)));
         for (name, row) in Self::readings_widest_rows() {
-            let bytes = cbor(&row);
-            fields.push((
-                Box::leak(format!("{name}_widest").into_boxed_str()),
+            let bytes = cbor(&row)?;
+            fields.insert(
+                format!("{name}_widest"),
                 json!({ "row_cbor": hex(&bytes), "row_len": bytes.len() }),
-            ));
+            );
         }
-        ("readings_0x8E", obj(fields))
+        Ok(("readings_0x8E", Value::Object(fields)))
     }
 
     /// The two ends of the `Concern` row budget, as an outside opinion.
@@ -1590,8 +1637,8 @@ impl Builder {
         ]
     }
 
-    fn concerns_entry() -> (&'static str, Value) {
-        let request = cbor(&cmap! { 1 => Cb::U(41), 2 => Cb::U(0) });
+    fn concerns_entry() -> Result<(&'static str, Value)> {
+        let request = cbor(&cmap! { 1 => Cb::U(41), 2 => Cb::U(0) })?;
 
         // Pack 2's cell 23, which is element 7 of a half-string signal whose
         // `ebase` is 17. Both numbers are correct and they are different, which
@@ -1620,9 +1667,9 @@ impl Builder {
             1 => Cb::U(41), 2 => Cb::U(4_211),
             3 => Cb::A(vec![cell, unnamed, over]),
             4 => Cb::U(0), 5 => Cb::U(3), 6 => Cb::U(2), 7 => Cb::U(1),
-        });
+        })?;
 
-        let mut fields = vec![
+        let mut fields = Map::from_iter(vec![
             ("type", json!(0x8Fu8)),
             (
                 "authentication",
@@ -1649,15 +1696,15 @@ impl Builder {
                     "rev 41, seq 4211 as the pin a walk is held against, and three rows in cid ascending. cid 9 is pack 2's cell 23 over voltage — dev 3, cmp 57, sig 204, elem 7, and the label a client renders is that signal's ebase of 17 plus 7 minus 1. cid 11 is the charger as a whole at cmp 0, reporting a state this build cannot name, carrying the vendor's own 0x0021 and the namespace that reads it. cid 12 is a low-temperature protection that ended at dawn and has not been released, so it is state 5 cleared and still a row the walk returns. next 0 so the walk is complete, total 3 with the cleared row counted, refused 2 since boot, outcome 1 ok"
                 ),
             ),
-        ];
+        ].into_iter().map(|(key, value)| (key.to_owned(), value)));
         for (name, row) in Self::concern_rows() {
-            let bytes = cbor(&row);
-            fields.push((
-                name,
+            let bytes = cbor(&row)?;
+            fields.insert(
+                name.to_owned(),
                 json!({ "row_cbor": hex(&bytes), "row_len": bytes.len() }),
-            ));
+            );
         }
-        ("concerns_0x8F", obj(fields))
+        Ok(("concerns_0x8F", Value::Object(fields)))
     }
 
     /// The two records a concern writes, `0x0501` and `0x0502`.
@@ -1668,19 +1715,19 @@ impl Builder {
     /// row leaving the table at dawn, and it carries the state it moved **from**
     /// so a client that lost a record to a hole in `seq` can tell that from a
     /// controller that skipped a state.
-    fn concern_events() -> Vec<(&'static str, Value)> {
+    fn concern_events() -> Result<Vec<(&'static str, Value)>> {
         let cell = cmap! {
             1 => Cb::U(9), 2 => Cb::U(3), 3 => Cb::U(57), 4 => Cb::U(204),
             5 => Cb::U(7), 6 => Cb::U(0x0001), 7 => Cb::U(4), 8 => Cb::U(1),
             9 => Cb::U(21_600), 10 => Cb::U(1_767_204_000), 13 => Cb::U(4_198),
         };
-        let raised = cbor(&cmap! { 1 => Cb::U(41), 2 => cell });
+        let raised = cbor(&cmap! { 1 => Cb::U(41), 2 => cell })?;
         let changed = cbor(&cmap! {
             1 => Cb::U(41), 2 => Cb::U(12), 3 => Cb::U(3), 4 => Cb::U(0x0004),
             5 => Cb::U(5), 6 => Cb::U(3),
-        });
+        })?;
 
-        vec![
+        Ok(vec![
             (
                 "concernraised_0x0501",
                 obj(vec![
@@ -1728,7 +1775,7 @@ impl Builder {
                     ),
                 ]),
             ),
-        ]
+        ])
     }
 
     /// The three remaining change records, `0x0102`, `0x0901` and `0x0902`.
@@ -1736,27 +1783,27 @@ impl Builder {
     /// The validity sweep is the failure the array exists for, at three signals
     /// rather than 384: one RS-485 pair going quiet takes everything behind it
     /// with it, and one event per signal would close every session.
-    fn change_events() -> Vec<(&'static str, Value)> {
+    fn change_events() -> Result<Vec<(&'static str, Value)>> {
         // `0x11` is ok/measured — what the client was last told — and `0x70` is
         // absent with no provenance, because there is no number to have a source.
         let entry = |sig: u64| cmap! { 1 => Cb::U(sig), 2 => Cb::U(0x70), 3 => Cb::U(0x11) };
         let validity = cbor(&cmap! {
             1 => Cb::U(41),
             2 => Cb::A(vec![entry(9), entry(21), entry(204)]),
-        });
+        })?;
         let topology = cbor(&cmap! {
             1 => Cb::U(42), 2 => Cb::U(3), 3 => Cb::U(17), 4 => Cb::U(0),
-        });
+        })?;
         let presence = cbor(&cmap! {
             1 => Cb::U(41),
             2 => Cb::A(vec![
                 cmap! { 1 => Cb::U(3), 2 => Cb::U(3), 3 => Cb::U(1) },
                 cmap! { 1 => Cb::U(5), 2 => Cb::U(2), 3 => Cb::U(1) },
             ]),
-        });
+        })?;
 
         let auth = "an event body; on the wire it is Event 0x04 key 4, inside a wrapper MAC'd under session_key with the label 'km43/v1/evt'";
-        vec![
+        Ok(vec![
             (
                 "validitychanged_0x0102",
                 obj(vec![
@@ -1811,18 +1858,18 @@ impl Builder {
                     ),
                 ]),
             ),
-        ]
+        ])
     }
 
     /// The boot record `0x0601`, as a panic leaves it: the site in keys 7
     /// and 8 at full `u32` width, a dead backup cell, and no task, because
     /// keys 5 and 6 belong to a watchdog (P-214).
-    fn boot_events() -> Vec<(&'static str, Value)> {
+    fn boot_events() -> Result<Vec<(&'static str, Value)>> {
         let panicked = cbor(&cmap! {
             1 => Cb::U(5), 2 => Cb::Bool(false), 3 => Cb::Bool(true), 4 => Cb::Bool(false),
             7 => Cb::U(0x9E37_79B9), 8 => Cb::U(212),
-        });
-        vec![(
+        })?;
+        Ok(vec![(
             "boot_0x0601",
             obj(vec![
                 ("kind", json!(0x0601u16)),
@@ -1848,11 +1895,11 @@ impl Builder {
                     ),
                 ),
             ]),
-        )]
+        )])
     }
 
     /// Independent encodings of the controller's durable records (P-215).
-    fn controller_events() -> Vec<(&'static str, Value)> {
+    fn controller_events() -> Result<Vec<(&'static str, Value)>> {
         [
             (
                 "timeset_0x0604",
@@ -1924,8 +1971,8 @@ impl Builder {
                 "commsunrecoverable_0x0803" => Some("{1:rail_on}"),
                 _ => None,
             };
-            let bytes = cbor(&body);
-            (
+            let bytes = cbor(&body)?;
+            Ok((
                 name,
                 obj(vec![
                     ("kind", json!(kind)),
@@ -1935,7 +1982,7 @@ impl Builder {
                     ("values_readable", json!(meaning)),
                     ("body_readable", json!(readable)),
                 ]),
-            )
+            ))
         })
         .collect()
     }
@@ -1969,14 +2016,19 @@ impl Builder {
                 Cb::U(u64::from(session)),
                 Cb::U(u64::from(req_id)),
                 body,
-            ]));
+            ]))?;
             let crc = crc16(&envelope);
             let framed = [envelope.clone(), crc.to_le_bytes().to_vec()].concat();
-            let mut encoded = cobs_encode(&framed);
+            let mut encoded = cobs_encode(&framed)?;
             encoded.push(0);
             // The same round trip the client frame takes, because a vector that
             // has not been decoded is a vector nobody has checked.
-            if cobs_decode(&encoded[..encoded.len() - 1])? != framed {
+            if cobs_decode(
+                encoded
+                    .strip_suffix(&[0])
+                    .context("COBS frame has no delimiter")?,
+            )? != framed
+            {
                 bail!("the {name} vector does not survive its own round trip");
             }
             out.push((
@@ -2144,22 +2196,22 @@ impl Builder {
         ])
     }
 
-    fn bodies(&self) -> Value {
-        obj(vec![
-            self.discover_entry(),
-            self.hello_entry(),
-            Self::inventory_entry(),
-            Self::readings_entry(),
-            Self::concerns_entry(),
+    fn bodies(&self) -> Result<Value> {
+        Ok(obj(vec![
+            self.discover_entry()?,
+            self.hello_entry()?,
+            Self::inventory_entry()?,
+            Self::readings_entry()?,
+            Self::concerns_entry()?,
         ]
         .into_iter()
-        .chain(Self::concern_events())
-        .chain(Self::change_events())
-        .chain(Self::boot_events())
-        .chain(Self::controller_events())
-        .chain(self.whole_envelope_entries())
-        .chain([Self::readlog_entry(), Self::logpage_entry()])
-        .collect::<Vec<_>>())
+        .chain(Self::concern_events()?)
+        .chain(Self::change_events()?)
+        .chain(Self::boot_events()?)
+        .chain(Self::controller_events()?)
+        .chain(self.whole_envelope_entries()?)
+        .chain([Self::readlog_entry()?, Self::logpage_entry()?])
+        .collect::<Vec<_>>()))
     }
 
     /// The three bodies the crate writes only as a whole envelope: a `Pair`
@@ -2168,7 +2220,7 @@ impl Builder {
     /// published twice — the body map on its own, under the name the spec
     /// check reads, and the whole `[type, session_id, req_id, body]` a decoder
     /// meets on a wire.
-    fn whole_envelope_entries(&self) -> Vec<(&'static str, Value)> {
+    fn whole_envelope_entries(&self) -> Result<Vec<(&'static str, Value)>> {
         [
             WholeEnvelope {
                 // `session_id` 0: the client has no session yet (P-021), and the
@@ -2177,7 +2229,7 @@ impl Builder {
                 kind: Msg::Pair,
                 session: 0,
                 req_id: self.req_id,
-                body: self.pair_request_body(),
+                body: self.pair_request_body()?,
                 authentication: "key 3 is macs.pair_proof.out16, computed over keys 1 and 2 and the trio the Discover above fixed; no wrapper, the proof is the authentication",
                 body_readable: "{1:client_kind=1, 2:label, 3:proof, 4:client_nonce}",
                 envelope_readable: "[type:0x0B, session_id:0, req_id:17, {1:client_kind, 2:label, 3:proof, 4:client_nonce}]",
@@ -2189,7 +2241,7 @@ impl Builder {
                 kind: Msg::PairAck,
                 session: self.session_id,
                 req_id: self.req_id,
-                body: self.pair_ack_body(),
+                body: self.pair_ack_body()?,
                 authentication: "key 3 is macs.pair_ack_mac.out16, computed over keys 1, 2 and 4, the trio, and an epoch the body does not carry (P-087); no wrapper",
                 body_readable: "{1:outcome=enrolled, 2:client_id=7, 3:mac, 4:next_challenge}",
                 envelope_readable: "[type:0x8B, session_id:3, req_id:17, {1:outcome, 2:client_id, 3:mac, 4:next_challenge}]",
@@ -2202,7 +2254,7 @@ impl Builder {
                 kind: Msg::Error,
                 session: self.session_id,
                 req_id: self.req_id,
-                body: Self::error_body(ErrorCode::HelloRequiredFirst, "no session on this connection"),
+                body: Self::error_body(ErrorCode::HelloRequiredFirst, "no session on this connection")?,
                 authentication: "none; this is the bare shape, and the wrapped one is macs.error_response",
                 body_readable: "{1:code=4, 2:detail}",
                 envelope_readable: "[type:0xFF, session_id:3, req_id:17, {1:code, 2:detail}]",
@@ -2213,9 +2265,9 @@ impl Builder {
         .collect()
     }
 
-    fn readlog_entry() -> (&'static str, Value) {
-        let body = Self::readlog_body();
-        (
+    fn readlog_entry() -> Result<(&'static str, Value)> {
+        let body = Self::readlog_body()?;
+        Ok((
             "readlog_0x05",
             obj(vec![
                 ("type", json!(Msg::ReadLog as u8)),
@@ -2232,12 +2284,12 @@ impl Builder {
                 ("body_cbor", json!(hex(&body))),
                 ("body_len", json!(body.len())),
             ]),
-        )
+        ))
     }
 
-    fn logpage_entry() -> (&'static str, Value) {
-        let body = Self::logpage_body();
-        (
+    fn logpage_entry() -> Result<(&'static str, Value)> {
+        let body = Self::logpage_body()?;
+        Ok((
             "logpage_0x85",
             obj(vec![
                 ("type", json!(Msg::LogPage as u8)),
@@ -2266,12 +2318,12 @@ impl Builder {
                 ("body_cbor", json!(hex(&body))),
                 ("body_len", json!(body.len())),
             ]),
-        )
+        ))
     }
 
-    fn discover_entry(&self) -> (&'static str, Value) {
-        let discover = self.discover_body();
-        (
+    fn discover_entry(&self) -> Result<(&'static str, Value)> {
+        let discover = self.discover_body()?;
+        Ok((
             "discover_0x80",
             obj(vec![
                 ("type", json!(Msg::Discover as u8)),
@@ -2288,12 +2340,12 @@ impl Builder {
                 ("body_cbor", json!(hex(&discover))),
                 ("body_len", json!(discover.len())),
             ]),
-        )
+        ))
     }
 
-    fn hello_entry(&self) -> (&'static str, Value) {
-        let hello = self.hello_body();
-        (
+    fn hello_entry(&self) -> Result<(&'static str, Value)> {
+        let hello = self.hello_body()?;
+        Ok((
             "hello_0x81",
             obj(vec![
                 ("type", json!(Msg::Hello as u8)),
@@ -2330,13 +2382,13 @@ impl Builder {
                 ("body_cbor", json!(hex(&hello))),
                 ("body_len", json!(hello.len())),
             ]),
-        )
+        ))
     }
 
-    fn signed_request(&self) -> (&'static str, Value) {
+    fn signed_request(&self) -> Result<(&'static str, Value)> {
         let operation = cbor(&cmap! {
             1 => Cb::U(0x2A), 2 => Cb::U(0x0101), 3 => cmap!{1 => Cb::U(900)},
-        });
+        })?;
         let preimage = [
             L_REQ,
             &[Msg::Command as u8],
@@ -2347,24 +2399,24 @@ impl Builder {
             &operation,
         ]
         .concat();
-        let mac = t16(hmac(&self.session_key, &preimage));
+        let mac = t16(hmac(&self.session_key, &preimage)?);
         let body = cbor(&cmap! {
             1 => Cb::U(u64::from(self.client_id)), 2 => Cb::U(self.counter),
             3 => Cb::B(operation.clone()), 4 => Cb::B(mac.clone()),
-        });
-        (
+        })?;
+        Ok((
             "signed_request",
             MacVector::new(DerivedKey::Session, preimage, "'km43/v1/req' | type:u8 | session_id:u16be | req_id:u32be | client_id:u32be | counter:u64be | operation")
                 .with("type", Msg::Command as u8)
                 .with("operation_cbor", hex(&operation))
                 .body(hex(&body))
-                .finish(&self.session_key),
-        )
+                .finish(&self.session_key)?,
+        ))
     }
 
     /// Read-only requests carry no counter, so they need their own label.
-    fn wrapper_request(&self) -> (&'static str, Value) {
-        let inner = Self::readlog_body();
+    fn wrapper_request(&self) -> Result<(&'static str, Value)> {
+        let inner = Self::readlog_body()?;
         let preimage = [
             L_WRQ,
             &[Msg::ReadLog as u8],
@@ -2373,8 +2425,8 @@ impl Builder {
             &inner,
         ]
         .concat();
-        let mac = t16(hmac(&self.session_key, &preimage));
-        (
+        let mac = t16(hmac(&self.session_key, &preimage)?);
+        Ok((
             "wrapper_request",
             MacVector::new(
                 DerivedKey::Session,
@@ -2383,15 +2435,15 @@ impl Builder {
             )
             .with("type", Msg::ReadLog as u8)
             .with("inner_body_cbor", hex(&inner))
-            .body(wrapped(&inner, &mac))
-            .finish(&self.session_key),
-        )
+            .body(wrapped(&inner, &mac)?)
+            .finish(&self.session_key)?,
+        ))
     }
 
-    fn response(&self) -> ((&'static str, Value), Response) {
+    fn response(&self) -> Result<((&'static str, Value), Response)> {
         let inner = cbor(&cmap! {
             1 => Cb::U(0x2A), 2 => Cb::U(1), 3 => Cb::T("generator starting".into()),
-        });
+        })?;
         let preimage = [
             L_RSP,
             &[Msg::Ack as u8],
@@ -2400,7 +2452,7 @@ impl Builder {
             &inner,
         ]
         .concat();
-        let mac = t16(hmac(&self.session_key, &preimage));
+        let mac = t16(hmac(&self.session_key, &preimage)?);
         let entry = MacVector::new(
             DerivedKey::Session,
             preimage,
@@ -2408,16 +2460,16 @@ impl Builder {
         )
         .with("type", Msg::Ack as u8)
         .with("inner_body_cbor", hex(&inner))
-        .body(wrapped(&inner, &mac))
-        .finish(&self.session_key);
-        (("response", entry), Response { inner, mac })
+        .body(wrapped(&inner, &mac)?)
+        .finish(&self.session_key)?;
+        Ok((("response", entry), Response { inner, mac }))
     }
 
     /// The wrapped `Error 0xFF`: the shape P-142 gives a refusal from a
     /// controller that holds a session for the `session_id`, carrying the one
     /// kind of code that never goes bare.
-    fn error_response(&self) -> (&'static str, Value) {
-        let inner = Self::error_body(ErrorCode::BusyRetry, "four requests already in flight");
+    fn error_response(&self) -> Result<(&'static str, Value)> {
+        let inner = Self::error_body(ErrorCode::BusyRetry, "four requests already in flight")?;
         let preimage = [
             L_RSP,
             &[Msg::Error as u8],
@@ -2426,8 +2478,8 @@ impl Builder {
             &inner,
         ]
         .concat();
-        let mac = t16(hmac(&self.session_key, &preimage));
-        (
+        let mac = t16(hmac(&self.session_key, &preimage)?);
+        Ok((
             "error_response",
             MacVector::new(
                 DerivedKey::Session,
@@ -2436,16 +2488,16 @@ impl Builder {
             )
             .with("type", Msg::Error as u8)
             .with("inner_body_cbor", hex(&inner))
-            .body(wrapped(&inner, &mac))
-            .finish(&self.session_key),
-        )
+            .body(wrapped(&inner, &mac)?)
+            .finish(&self.session_key)?,
+        ))
     }
 
-    fn event(&self) -> (&'static str, Value) {
+    fn event(&self) -> Result<(&'static str, Value)> {
         let inner = cbor(&cmap! {
             1 => Cb::U(0x04D2), 2 => Cb::U(0x0000_018F_1E2A_3B40), 3 => Cb::U(0x0201),
             4 => cmap!{1 => Cb::U(3), 2 => Cb::U(1)},
-        });
+        })?;
         let preimage = [
             L_EVT,
             &[Msg::Event as u8],
@@ -2454,8 +2506,8 @@ impl Builder {
             &inner,
         ]
         .concat();
-        let mac = t16(hmac(&self.session_key, &preimage));
-        (
+        let mac = t16(hmac(&self.session_key, &preimage)?);
+        Ok((
             "event",
             MacVector::new(
                 DerivedKey::Session,
@@ -2464,9 +2516,9 @@ impl Builder {
             )
             .with("type", Msg::Event as u8)
             .with("inner_body_cbor", hex(&inner))
-            .body(wrapped(&inner, &mac))
-            .finish(&self.session_key),
-        )
+            .body(wrapped(&inner, &mac)?)
+            .finish(&self.session_key)?,
+        ))
     }
 
     /// One complete frame, envelope through delimiter.
@@ -2476,12 +2528,17 @@ impl Builder {
             Cb::U(u64::from(self.session_id)),
             Cb::U(u64::from(self.req_id)),
             cmap! {1 => Cb::B(rsp.inner.clone()), 2 => Cb::B(rsp.mac.clone())},
-        ]));
+        ]))?;
         let crc = crc16(&envelope);
         let framed = [envelope.clone(), crc.to_le_bytes().to_vec()].concat();
-        let mut encoded = cobs_encode(&framed);
+        let mut encoded = cobs_encode(&framed)?;
         encoded.push(0);
-        if cobs_decode(&encoded[..encoded.len() - 1])? != framed {
+        if cobs_decode(
+            encoded
+                .strip_suffix(&[0])
+                .context("COBS frame has no delimiter")?,
+        )? != framed
+        {
             bail!("the frame vector does not survive its own round trip");
         }
         Ok(obj(vec![
@@ -2574,20 +2631,26 @@ impl Builder {
     }
 
     fn document(&self) -> Result<Value> {
-        let (response, rsp) = self.response();
+        let (response, rsp) = self.response()?;
         let macs = vec![
-            self.pair_proof(),
-            self.pair_ack(),
-            self.hello_proof(),
-            self.signed_request(),
-            self.wrapper_request(),
+            self.pair_proof()?,
+            self.pair_ack()?,
+            self.hello_proof()?,
+            self.signed_request()?,
+            self.wrapper_request()?,
             response,
-            self.event(),
-            self.error_response(),
+            self.event()?,
+            self.error_response()?,
         ];
         let (crc_v, cobs_v) = edge_cases()?;
-        let cobs_input = MAX_PAYLOAD + 2;
+        let cobs_input = MAX_PAYLOAD
+            .checked_add(2)
+            .context("CRC frame length overflow")?;
         let overhead = cobs_input.div_ceil(254);
+        let max_frame = cobs_input
+            .checked_add(overhead)
+            .and_then(|n| n.checked_add(1))
+            .context("delimited COBS frame length overflow")?;
 
         Ok(obj(vec![
             (
@@ -2605,15 +2668,12 @@ impl Builder {
                     ("max_payload", json!(MAX_PAYLOAD)),
                     ("cobs_input", json!(cobs_input)),
                     ("max_cobs_overhead", json!(overhead)),
-                    (
-                        "max_frame_including_delimiter",
-                        json!(cobs_input + overhead + 1),
-                    ),
+                    ("max_frame_including_delimiter", json!(max_frame)),
                 ]),
             ),
             ("derived_keys", self.derived_keys()),
             ("macs", obj(macs)),
-            ("bodies", self.bodies()),
+            ("bodies", self.bodies()?),
             ("crc16", Value::Array(crc_v)),
             ("cobs", Value::Array(cobs_v)),
             ("frame", self.frame(&rsp)?),
@@ -2704,16 +2764,16 @@ impl MacVector {
     }
 
     /// Computes the MAC under `key_bytes` and renders the entry.
-    fn finish(self, key_bytes: &[u8]) -> Value {
+    fn finish(self, key_bytes: &[u8]) -> Result<Value> {
         let mut pairs = vec![("key", json!(self.key.to_string()))];
         pairs.extend(self.extra);
         pairs.push(("preimage", json!(hex(&self.preimage))));
         pairs.push(("preimage_readable", json!(self.readable)));
-        pairs.push(("out16", json!(hex(&t16(hmac(key_bytes, &self.preimage))))));
+        pairs.push(("out16", json!(hex(&t16(hmac(key_bytes, &self.preimage)?)))));
         if let Some(b) = self.body {
             pairs.push(("full_body_cbor", json!(b)));
         }
-        obj(pairs)
+        Ok(obj(pairs))
     }
 }
 
@@ -2728,10 +2788,10 @@ fn key_entry(salt: &[u8], ikm: &[u8], info: &[u8], readable: &str, out: &[u8]) -
     ])
 }
 
-fn wrapped(inner: &[u8], mac: &[u8]) -> String {
-    hex(&cbor(
+fn wrapped(inner: &[u8], mac: &[u8]) -> Result<String> {
+    Ok(hex(&cbor(
         &cmap! {1 => Cb::B(inner.to_vec()), 2 => Cb::B(mac.to_vec())},
-    ))
+    )?))
 }
 
 /// The inputs that break a careless encoder.
@@ -2742,18 +2802,16 @@ fn edge_cases() -> Result<(Vec<Value>, Vec<Value>)> {
         ("empty", Vec::new()),
         ("single zero", vec![0u8]),
         ("no zeros", b"origin89".to_vec()),
-        ("embedded zero", hex_to_bytes("11223300445566")),
+        ("embedded zero", hex_to_bytes("11223300445566")?),
     ] {
         crc_v.push(
             json!({"label": lbl, "input": hex(&data), "crc": format!("{:#06x}", crc16(&data))}),
         );
         cobs_v
-            .push(json!({"label": lbl, "input": hex(&data), "encoded": hex(&cobs_encode(&data))}));
+            .push(json!({"label": lbl, "input": hex(&data), "encoded": hex(&cobs_encode(&data)?)}));
     }
 
-    let b254: Vec<u8> = (1u16..255)
-        .map(|v| u8::try_from(v).expect("under 255"))
-        .collect();
+    let b254: Vec<u8> = (1u8..255).collect();
     let mut b255 = b254.clone();
     b255.push(0x41);
     let mut b254z = b254.clone();
@@ -2767,16 +2825,16 @@ fn edge_cases() -> Result<(Vec<Value>, Vec<Value>)> {
             &b254z,
         ),
     ] {
-        cobs_v.push(json!({"label": lbl, "input": hex(d), "encoded": hex(&cobs_encode(d))}));
+        cobs_v.push(json!({"label": lbl, "input": hex(d), "encoded": hex(&cobs_encode(d)?)}));
     }
-    if cobs_decode(&cobs_encode(&b254z))? != b254z {
+    if cobs_decode(&cobs_encode(&b254z)?)? != b254z {
         bail!("the silent-loss case does not round trip");
     }
     Ok((crc_v, cobs_v))
 }
 
 pub fn build() -> Result<String> {
-    let b = Builder::new();
+    let b = Builder::new()?;
     self_check(&b)?;
     println!("client_key   = {}", hex(&b.client_key));
     println!("session_key  = {}", hex(&b.session_key));
@@ -2791,12 +2849,94 @@ pub fn build() -> Result<String> {
 mod tests {
     use super::{Builder, Cb, PROTOCOL_MAJOR, SelfReport, cbor, hex};
 
+    #[test]
+    fn regenerated_vectors_match_the_committed_witness() {
+        assert_eq!(
+            super::build().expect("the independent primitive checks pass"),
+            include_str!("../../../docs/protocol/vectors/v1.json")
+        );
+    }
+
+    #[test]
+    fn hex_accepts_empty_and_mixed_case_bytes() {
+        assert!(super::hex_to_bytes("").expect("empty hex").is_empty());
+        assert_eq!(
+            super::hex_to_bytes("00aAFf").expect("hex bytes"),
+            [0, 170, 255]
+        );
+    }
+
+    #[test]
+    fn malformed_hex_returns_an_error_instead_of_panicking() {
+        for text in ["0", "001", "gg", "+1", " 1", "é", "0€"] {
+            assert!(super::hex_to_bytes(text).is_err(), "accepted {text:?}");
+        }
+    }
+
+    #[test]
+    fn hkdf_accepts_zero_and_maximum_output_lengths() {
+        assert!(
+            super::hkdf(&[], b"input", &[], 0)
+                .expect("empty output")
+                .is_empty()
+        );
+        assert_eq!(
+            super::hkdf(&[], b"input", &[], 8160)
+                .expect("255 SHA-256 blocks")
+                .len(),
+            8160
+        );
+    }
+
+    #[test]
+    fn hkdf_refuses_oversize_output_before_allocating() {
+        for len in [8161, usize::MAX] {
+            let error = super::hkdf(&[], b"input", &[], len).expect_err("too many HKDF blocks");
+            assert!(error.to_string().contains("exceeds 8160"));
+        }
+    }
+
+    #[test]
+    fn cobs_preserves_empty_input_and_full_blocks_followed_by_zero() {
+        assert_eq!(super::cobs_encode(&[]).expect("empty input"), [1]);
+        assert!(super::cobs_decode(&[1]).expect("empty block").is_empty());
+        assert!(super::cobs_decode(&[]).expect("no blocks").is_empty());
+        let mut raw = vec![0x41; 254];
+        raw.push(0);
+        let mut expected = vec![0xff];
+        expected.extend_from_slice(&[0x41; 254]);
+        expected.extend_from_slice(&[1, 1]);
+        assert_eq!(
+            super::cobs_encode(&raw).expect("full run and zero"),
+            expected
+        );
+        assert_eq!(super::cobs_decode(&expected).expect("complete blocks"), raw);
+    }
+
+    #[test]
+    fn cobs_rejects_zero_codes_and_every_truncation_of_a_full_block() {
+        for bytes in [&[0][..], &[1, 0], &[2, 42, 0]] {
+            let error = super::cobs_decode(bytes).expect_err("zero code");
+            assert!(error.to_string().contains("zero code"));
+        }
+        let mut block = vec![0xff];
+        block.extend_from_slice(&[0x41; 254]);
+        for end in 1..block.len() {
+            let error = super::cobs_decode(&block[..end]).expect_err("truncated block");
+            assert!(error.to_string().contains("past the end"));
+        }
+        assert_eq!(super::cobs_decode(&block).expect("full block"), [0x41; 254]);
+    }
+
     /// A capacity dropped from the body leaves a client using the number it was
     /// compiled with, at a controller that enforces a different one — which is
     /// quiet rather than loud, and reads as *the site is busy* all afternoon.
     #[test]
     fn a_hello_that_omits_a_reported_capacity_sends_a_client_back_to_its_guess() {
-        let body = Builder::new().hello_body();
+        let body = Builder::new()
+            .expect("valid vector fixture")
+            .hello_body()
+            .expect("valid vector fixture");
         // Twenty-nine pairs is past twenty-three, so the map header is two
         // bytes: `b8 1d` and not a single `bN`.
         assert_eq!(
@@ -2818,8 +2958,8 @@ mod tests {
     /// symptom is a proof that will not verify.
     #[test]
     fn a_discover_without_the_epoch_leaves_a_client_deriving_under_a_dead_one() {
-        let b = Builder::new();
-        let body = b.discover_body();
+        let b = Builder::new().expect("valid vector fixture");
+        let body = b.discover_body().expect("valid vector fixture");
         assert_eq!(body.first().copied(), Some(0xA8));
         let epoch = u8::try_from(b.epoch).expect("the fixture epoch fits in a byte");
         assert_eq!(
@@ -2841,10 +2981,13 @@ mod tests {
     /// a value it has already been told was accepted.
     #[test]
     fn a_reported_counter_at_the_next_request_makes_that_request_a_replay() {
-        let b = Builder::new();
+        let b = Builder::new().expect("valid vector fixture");
         let reported = b.counter.saturating_sub(1);
         assert!(reported < b.counter);
-        assert_eq!(hex(&cbor(&Cb::U(reported))), "1841");
+        assert_eq!(
+            hex(&cbor(&Cb::U(reported)).expect("valid vector fixture")),
+            "1841"
+        );
     }
 
     /// Both bodies announce the same version the `Hello 0x01` proof covers. Two
@@ -2852,11 +2995,14 @@ mod tests {
     /// itself, and the proof is what would have caught it on the wire.
     #[test]
     fn the_two_bodies_and_the_hello_proof_cannot_announce_different_versions() {
-        let b = Builder::new();
+        let b = Builder::new().expect("valid vector fixture");
         let major = u8::try_from(PROTOCOL_MAJOR).expect("the fixture major fits in a byte");
-        assert_eq!(b.discover_body().get(..3), Some(&[0xA8, 0x01, major][..]));
         assert_eq!(
-            b.hello_body().get(..4),
+            b.discover_body().expect("valid vector fixture").get(..3),
+            Some(&[0xA8, 0x01, major][..])
+        );
+        assert_eq!(
+            b.hello_body().expect("valid vector fixture").get(..4),
             Some(&[0xB8, 0x1D, 0x01, major][..])
         );
     }
