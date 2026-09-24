@@ -117,6 +117,19 @@ also carries the shared envelope budget and BLE transport limits.
 | `BLE_TIMEOUT_MS` | `5000` |
 | `BLE_TX_CAPACITY` | `1` |
 
+## WebSocket discovery
+
+Where a client reaches the WebSocket transport on the site network; see
+PROTOCOL.md's WebSocket section, P-223 to P-225. The service type is declared
+in the iOS app's `NSBonjourServices`, so renaming it strands every installed app.
+
+| Name | Value |
+|---|---|
+| `WS_PORT` | `80` |
+| `WS_PATH` | `/km43` |
+| `DNSSD_SERVICE` | `_km43._tcp` |
+| `DNSSD_TXT_DEVICE_ID` | `id` |
+
 ## Message types — `u8`
 
 The high bit means *response to a request*. `Event` is the only unsolicited

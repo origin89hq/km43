@@ -654,6 +654,58 @@ drops bytes in the field and it looks like a protocol bug.
 **P-034** — One protocol message per binary WebSocket frame. Already framed,
 already ordered: no COBS, no CRC. Text frames MUST be rejected.
 
+A client that set a controller up over BLE has to find it again on the site
+network, and the only address it has learned is `WifiStatus` key 5, read over
+BLE and stale as soon as the lease changes. The port, the path, the service
+type and the TXT key below are allocated in `crates/km43/protocol.toml` and
+published in [REGISTRY.md](protocol/REGISTRY.md#websocket-discovery) and both
+bindings as `WS_PORT`, `WS_PATH`, `DNSSD_SERVICE` and `DNSSD_TXT_DEVICE_ID`.
+
+**P-223** — The comms processor MUST accept the RFC 6455 opening handshake on
+TCP port `WS_PORT` (80) with the request-target `WS_PATH` (`/km43`), and MUST
+answer any other request-target with HTTP 404 and no upgrade. A client MUST
+request `WS_PATH`. Neither `Sec-WebSocket-Protocol` nor `Origin` gates the
+upgrade: the session authenticates itself, so neither would add a check.
+
+A server that upgrades on any path lets every client pick its own, and they
+agree only until a firmware serves something else at `/`. Refusing the others
+turns that into a 404 on the first run.
+
+**P-224** — While the station holds an IPv4 address, the comms processor MUST
+answer multicast DNS (RFC 6762) for `<hostname>.local`, where `hostname` is the
+network section's, with the address `WifiStatus` key 5 reports, and MUST
+advertise exactly one DNS-SD (RFC 6763) instance of type `DNSSD_SERVICE`
+(`_km43._tcp`) in `local.`. Its instance name is `hostname`, its SRV record
+names that host and `WS_PORT`, and its TXT record carries `DNSSD_TXT_DEVICE_ID`
+(`id`) holding the `device_id` rendered as P-038 renders it. It MUST probe and
+resolve name conflicts as RFC 6762 section 9 requires, and MUST send goodbye
+records (TTL 0) for all of these when the station loses its address or the
+network it joined changes.
+
+`device_id` on the LAN is a broadcast where `Discover` was an answer: every
+host on the network sees it without connecting. It is not a secret. It is
+etched, printed on the label, sent to anyone who asks in `Discover`, and part
+of the MQTT topic (P-038); the KDF's secret is `printed_secret`. Without it, a
+client on a site with several controllers has to connect to each and spend a
+connection row and a challenge on every one that is not its own before it
+finds the right one.
+
+Two controllers given the same hostname collide, and probing renames one of
+them. That is why the instance name identifies nothing.
+
+**P-225** — A client MUST run `Discover` on every candidate address before
+using it, whether a discovered instance or a remembered `WifiStatus` address,
+and MUST apply P-222 to the answer. mDNS is unauthenticated and any host on the
+LAN can answer for any name or `id`, so a candidate is never an identity; the
+`Hello` proof is what decides. A client MAY pass over a discovered instance
+whose `id` differs from the `device_id` it kept, and MUST ignore TXT keys it
+does not know. When discovery finds nothing, a client MAY connect to the last address
+`WifiStatus` key 5 reported, on `WS_PORT` with `WS_PATH`.
+
+The remembered address stays because a network that filters multicast hides
+the advertisement while unicast to port 80 still gets through. It is as
+unauthenticated as the advertisement, and P-222 treats both the same way.
+
 ### USB CDC
 
 **P-035** — As UART, including COBS and the CRC, without the flow-control
@@ -929,8 +981,11 @@ buys it, and it is free only until the first unit is paired.
 its `client_key` with the `device_id`, `epoch` and `client_id` it was derived
 under, and MUST NOT keep `printed_secret` once `Pair` succeeds. Before sending
 `Hello` under a kept key it MUST compare the kept `device_id` and `epoch` with
-the `Discover 0x80` it has just received, and on either differing it MUST pair
-again rather than send `Hello`.
+the `Discover 0x80` it has just received, and on either differing it MUST NOT
+send `Hello`. A differing `device_id` is another controller: the client moves
+on to its next candidate address (P-225) and pairs only if a person chose this
+controller. A differing `epoch` is the same controller reset, and the client
+MUST pair again.
 
 Without somewhere to keep the key, a relaunched app can only pair again, and
 that needs a person at the controller (P-066). The shortcut is to keep the

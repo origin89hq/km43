@@ -198,6 +198,24 @@ pub const REQUIREMENTS: &[Requirement] = &[
         statement: "One protocol message per binary WebSocket frame.",
     },
     Requirement {
+        id: "P-223",
+        document: "docs/PROTOCOL.md",
+        section: "WebSocket",
+        statement: "The comms processor MUST accept the RFC 6455 opening handshake on TCP port `WS_PORT` (80) with the request-target `WS_PATH` (`/km43`), and MUST answer any other request-target with HTTP 404 and no upgrade.",
+    },
+    Requirement {
+        id: "P-224",
+        document: "docs/PROTOCOL.md",
+        section: "WebSocket",
+        statement: "While the station holds an IPv4 address, the comms processor MUST answer multicast DNS (RFC 6762) for `<hostname>.local`, where `hostname` is the network section's, with the address `WifiStatus` key 5 reports, and MUST advertise exactly one DNS-SD (RFC 6763) instance of type `DNSSD_SERVICE` (`_km43._tcp`) in `local.`.",
+    },
+    Requirement {
+        id: "P-225",
+        document: "docs/PROTOCOL.md",
+        section: "WebSocket",
+        statement: "A client MUST run `Discover` on every candidate address before using it, whether a discovered instance or a remembered `WifiStatus` address, and MUST apply P-222 to the answer.",
+    },
+    Requirement {
         id: "P-035",
         document: "docs/PROTOCOL.md",
         section: "USB CDC",

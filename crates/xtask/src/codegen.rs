@@ -144,10 +144,20 @@ impl Codegen {
         for limit in self.registry.transport_limits() {
             let _ = writeln!(ble, "| `{}` | `{}` |", limit.name, limit.value);
         }
+        let ws = &self.registry.websocket;
+        let (port_name, port, _) = ws.port();
+        let mut websocket = format!("| Name | Value |\n|---|---|\n| `{port_name}` | `{port}` |\n");
+        for (name, text, _) in ws.texts() {
+            let _ = writeln!(websocket, "| `{name}` | `{text}` |");
+        }
         let mut out = vec![
             Section {
                 heading: "## BLE GATT identifiers".to_owned(),
                 table: ble,
+            },
+            Section {
+                heading: "## WebSocket discovery".to_owned(),
+                table: websocket,
             },
             Section {
                 heading: "## Message types".to_owned(),
