@@ -21,9 +21,17 @@ repository.workspace = true
 # is a fixed function with no restriction of ours to enforce, unlike the CBOR
 # subset.
 hkdf.workspace = true
-sha2.workspace = true
 hmac.workspace = true
 subtle.workspace = true
+# `zeroize` clears the SHA-256 state and block buffer on drop, which is also
+# what an HMAC is made of. Without it the buffer still holds the printed secret
+# after the key derived from it has been cleared, because HKDF's extract feeds
+# that secret through it as ordinary input. `mac.rs` fails the build without it.
+sha2 = { workspace = true, features = ["zeroize"] }
+
+# The key types clear their bytes on drop, so a client that clears its own copy
+# of the printed secret is not left with ours in freed memory.
+zeroize.workspace = true
 
 # Off by default. A consumer logging with `defmt` derives `Format` on a struct
 # holding a `ClientId` and gets E0277 with nothing to do about it but a
