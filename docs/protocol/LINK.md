@@ -871,9 +871,9 @@ reports some larger number and gets overwritten anyway, because those credential
 belong to somebody else's site and a version comparison is not a claim about who
 is right. Comparing for newer is what turns a board swap into a drive.
 
-When the versions differ and the master section has never been written (P-108),
-the controller MUST
-send `op = clear`, `version = 0`, with keys 3 through 6 omitted. This unwritten
+When the versions differ and the master section has never been written or is
+unreadable (P-108), the controller MUST send `op = clear`, `version = 0`, with
+keys 3 through 6 omitted. This unwritten
 clear MUST erase cached credentials, country, and hostname, stop Wi-Fi station
 association and any Wi-Fi access point, and keep Wi-Fi transmission disabled
 until a subsequent valid nonzero `NetConfig` supplies radio metadata. It MUST
