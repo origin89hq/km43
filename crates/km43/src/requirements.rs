@@ -783,7 +783,7 @@ pub const REQUIREMENTS: &[Requirement] = &[
         id: "P-108",
         document: "docs/PROTOCOL.md",
         section: "Configuration",
-        statement: "A section that has never been written MUST be answered with `version` 0 and no key 3, and a written one MUST carry key 3, so a client MUST refuse a `Config` in which the two disagree.",
+        statement: "A section that has never been written or that the controller holds but cannot read MUST be answered with `version` 0 and no key 3, and a readable written section MUST carry a nonzero `version` and key 3, so a client MUST refuse a `Config` in which the two disagree.",
     },
     Requirement {
         id: "P-101",
