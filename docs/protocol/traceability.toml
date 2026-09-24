@@ -1058,7 +1058,12 @@
 # is origin89hq/firmware#138.
 # 138 -> 139: P-108 now includes unreadable-record recovery in the controller;
 # the codec test covers only the version/body shape, not firmware recovery.
-uncovered = 139
+# 139 -> 140: P-222 is new (origin89hq/km43#115). `kdf/stored.rs` covers what
+# this crate can: the stored form carries the one key and no printed-secret
+# byte, and a restore against another controller or another epoch is refused.
+# A client keeping no printed secret after `Pair` is the app's behaviour, which
+# no test here can reach; it is origin89hq/apps#8.
+uncovered = 140
 
 # P-045 is the shape this file is for. Nothing can drive an implementation into
 # transmitting a key it does not have, so the thing that stands behind it reads
@@ -1435,3 +1440,9 @@ reason = "The encoder refuses a joining record. When a record is due, and the te
 id = "P-108"
 each = ["version_0_and_an_absent_body_come_together_or_not_at_all", "unreadable_section_answers_unwritten_and_write_replaces_record"]
 reason = "The codec checks that version 0 and an absent body travel together. A never-written or unreadable section must produce that same answer, and an accepted write against expected_version 0 must replace what the controller holds. Detecting and repairing a damaged record belongs to origin89hq/firmware; the codec test does not prove that recovery."
+
+
+[[clauses]]
+id = "P-222"
+each = ["carry_no_printed_secret", "another_controller_is_refused", "earlier_epoch_is_refused", "app_keeps_no_printed_secret"]
+reason = "The stored encoding holds only the issued key and a restore checks the device and epoch. Discarding the scanned printed secret once Pair succeeds is the app's, owed by origin89hq/apps#8."

@@ -28,6 +28,9 @@ use zeroize::Zeroize as _;
 use crate::envelope::SessionId;
 use crate::mac::{ClientKey, PairKey, SessionKey};
 
+mod stored;
+pub use stored::*;
+
 /// P-044's entropy, decoded from the QR code's 64 characters.
 const PRINTED_SECRET_BYTES: usize = 32;
 
@@ -313,6 +316,8 @@ impl DeviceSecret {
     #[must_use]
     pub fn enrolment(&self, epoch: Epoch, client_id: ClientId) -> Enrolment {
         Enrolment {
+            device_id: self.device_id,
+            epoch,
             client_id,
             key: self
                 .prk()
@@ -330,13 +335,18 @@ impl DeviceSecret {
     }
 }
 
-/// One enrolled client's long-term secret and the slot it was derived at.
+/// One enrolled client's long-term secret and the controller, epoch and slot
+/// it was derived at.
 ///
 /// The `client_id` rides along because the `Hello` proof names it inside the
 /// body it authenticates (P-057): taken from the enrolment that holds the key,
-/// the field and the key cannot end up naming two different clients. The key is
-/// cleared on drop; the `client_id` is on the wire in every `Hello`.
+/// the field and the key cannot end up naming two different clients. The
+/// `device_id` and `epoch` ride along so a [`StoredEnrolment`] can say which
+/// controller and which reset the key belongs to (P-222). The key is cleared on
+/// drop; the other three are on the wire in every `Discover` or `Hello`.
 pub struct Enrolment {
+    device_id: DeviceId,
+    epoch: Epoch,
     client_id: ClientId,
     key: [u8; DERIVED_KEY_BYTES],
 }
@@ -967,7 +977,10 @@ mod tests {
 
     const_assert!(size_of::<PrintedSecret>() == PRINTED_SECRET_BYTES);
     const_assert!(size_of::<DeviceSecret>() == DEVICE_ID_BYTES + PRINTED_SECRET_BYTES);
-    const_assert!(size_of::<Enrolment>() == size_of::<u32>() + DERIVED_KEY_BYTES);
+    const_assert!(
+        size_of::<Enrolment>()
+            == DEVICE_ID_BYTES + size_of::<u32>() + size_of::<u32>() + DERIVED_KEY_BYTES
+    );
     const_assert!(size_of::<Prk>() == DIGEST_BYTES);
 
     /// The bug this closes: a client that scanned the QR code clears its own
@@ -998,10 +1011,11 @@ mod tests {
     }
 
     /// An enrolment is where a client's long-term key lives between a pairing
-    /// and every later `Hello`. Only the `client_id`'s one non-zero byte may
-    /// survive; a key cleared halfway leaves more.
+    /// and every later `Hello`. Only the `device_id`, the epoch's one non-zero
+    /// byte and the `client_id`'s may survive; a key cleared halfway leaves
+    /// more.
     #[test]
-    fn a_dropped_enrolment_keeps_its_client_id_and_loses_its_key() {
+    fn a_dropped_enrolment_keeps_its_coordinates_and_loses_its_key() {
         let device = DeviceSecret::new(DeviceId::new([0xAB; 16]), PrintedSecret::new([0xCD; 32]));
         let client_id = ClientId::new(7).expect("seven is a slot");
         let enrolment = device.enrolment(Epoch::FIRST, client_id);
@@ -1009,12 +1023,18 @@ mod tests {
             enrolment.key.iter().filter(|&&b| b != 0).count() > 1,
             "the fixture's key has to be distinguishable from a cleared one"
         );
-        let residue: [u8; 36] = crate::residue::after_drop(enrolment);
-        let mut survivors = residue.iter().filter(|&&b| b != 0);
-        assert_eq!(
-            survivors.next(),
-            Some(&7),
+        let residue: [u8; 56] = crate::residue::after_drop(enrolment);
+        assert!(
+            residue.windows(16).any(|window| window == [0xAB; 16]),
             "not the value's memory: {residue:02x?}"
+        );
+        // The compiler chooses the field order, so the epoch's 1 and the
+        // `client_id`'s 7 are looked for in either order.
+        let mut survivors = residue.iter().filter(|&&b| b != 0 && b != 0xAB);
+        let pair = (survivors.next(), survivors.next());
+        assert!(
+            pair == (Some(&1), Some(&7)) || pair == (Some(&7), Some(&1)),
+            "not the epoch and the client_id: {residue:02x?}"
         );
         assert_eq!(survivors.next(), None, "key bytes survived: {residue:02x?}");
     }
