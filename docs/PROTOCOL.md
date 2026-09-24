@@ -89,6 +89,7 @@ negotiated. They are the same on every device, forever.
 | `MAX_OPERATION` | 960 bytes | Error 5 |
 | `MAX_LOG_PAGE_ENTRIES` | 64 entries | Page truncated, `complete = false` |
 | `MAX_LOG_PAGE_BYTES` | 896 bytes | Page truncated, `complete = false` |
+| `MAX_SCAN_APS` | 16 access points | The strongest are listed, the rest counted in `unlisted` |
 | `MAX_STRING` | 64 bytes, UTF-8 | Error 1 |
 | `MAX_DEPTH` | 8 | Error 1 |
 
@@ -1078,8 +1079,8 @@ threshold fires on refusals the controller reached without doing any work.
 
 | Messages | Label |
 |---|---|
-| Requests `0x03`, `0x05`, `0x06`, `0x0C`, `0x0D`, `0x0E` | `km43/v1/wrq` |
-| Responses `0x81`, `0x83`, `0x85`, `0x86`, `0x87`, `0x88`, `0x89`, `0x8A`, `0x8C`, `0x8D`, `0x8E`, and `0xFF` in its wrapped form (P-142) | `km43/v1/rsp` |
+| Requests `0x03`, `0x05`, `0x06`, `0x0C`, `0x0D`, `0x0E`, `0x11`, `0x12` | `km43/v1/wrq` |
+| Responses `0x81`, `0x83`, `0x85`, `0x86`, `0x87`, `0x88`, `0x89`, `0x8A`, `0x8C`, `0x8D`, `0x8E`, `0x91`, `0x92`, and `0xFF` in its wrapped form (P-142) | `km43/v1/rsp` |
 | Event `0x04` | `km43/v1/evt` |
 
 The read-only requests need their own label because they carry no counter and so
@@ -3228,6 +3229,166 @@ what lets a person change the hostname without retyping a passphrase nobody can
 show them. It is never a passphrase following a network it was not given for:
 the controller would join the neighbour's access point with the cabin's
 credential, and the site would drop off the air with nothing to point at.
+
+---
+
+## Wi-Fi
+
+A person setting up a controller has to choose the network it joins and then
+find out whether it joined. The phone in their hand cannot help with either:
+iOS gives an app no list of nearby networks, and a `SetConfigAck` says the
+section was stored, not that anything came of it. A wrong passphrase, a
+mistyped SSID and a network the radio cannot hear all read as success until
+somebody notices the unit is not online. These two messages answer both
+questions from the radio that has to do the joining. The comms processor scans
+and reports; the controller holds the latest of each and answers from it
+([LINK.md](protocol/LINK.md) *Wi-Fi scan and join state*).
+
+```text
+WifiScan  0x11          wrapper
+  1: refresh      bool     true asks for a new scan
+
+WifiScan  0x91          wrapper
+  1: scan         u8       scan_state, the most recent scan:
+                           1 none · 2 running · 3 complete · 4 failed
+  2: refused      u8       optional; scan_refusal, why this request's refresh
+                           started nothing: 1 too_soon · 2 radio_off
+                           · 3 link_down · 4 unauthorised
+  3: age_ms       u32      optional; since the list below arrived, on P-004's
+                           tick, saturating
+  4: aps          [ Ap ]   present exactly when key 3 is; 0 to MAX_SCAN_APS
+                           rows, strongest first
+  5: unlisted     u16      present exactly when key 3 is; access points heard
+                           and not listed, saturating
+
+Ap
+  1: ssid         text     1 to 32 bytes
+  2: rssi         i8       dBm, as the radio measured it
+  3: security     u8       wifi_security: 1 open · 2 wpa2_personal
+                           · 3 wpa3_personal · 4 other
+  4: band         u8       wifi_band: 1 ghz_2_4 · 2 ghz_5 · 3 ghz_6
+  5: channel      u8       1 to 233, within that band
+
+WifiStatus  0x12        wrapper
+  (an empty map)
+
+WifiStatus  0x92        wrapper
+  1: section      u32      the network section's version on the controller;
+                           0 when never written (P-108)
+  2: version      u32      optional; the section version the radio is acting on
+  3: state        u8       present exactly when key 2 is; wifi_state:
+                           1 off · 2 joining · 3 joined · 4 failed
+  4: reason       u8       present exactly when key 3 is failed; wifi_failure:
+                           1 auth_failed · 2 not_found · 3 no_ip · 4 lost · 5 other
+  5: ipv4         bstr4    present exactly when key 3 is joined
+
+WifiStatusChanged  0x0806   wifi status changed, class A, in Event 0x04 key 4
+  1: section      u32      as in WifiStatus 0x92
+  2: version      u32      required here
+  3: state        u8       required here
+  4: reason       u8       present exactly when key 3 is failed
+  5: ipv4         bstr4    present exactly when key 3 is joined
+```
+
+**P-216** — A controller MUST set capability bit 8 in `Hello 0x81` exactly
+when it answers both `WifiScan` and `WifiStatus`, and a client MUST NOT send
+either to a controller that does not set it. A controller without the bit is
+set up by typing the SSID, which is what every client did before these
+messages existed.
+
+The bit is how a client learns this before it asks. The alternative is sending
+`WifiScan` and reading error 2 as *not supported*, and P-055 forbids concluding
+anything from an unauthenticated error: the comms processor can forge that one
+and hide scanning from every client it relays for.
+
+**P-217** — The controller MUST hold at most one list, the one from the most
+recent scan that completed, and MUST answer every `WifiScan` from it. Keys 3, 4
+and 5 MUST be present together exactly when a list is held, and a client MUST
+refuse a response in which they are not. A failed scan MUST NOT replace or
+clear the list held before it; `scan` says it failed and `age_ms` says how old
+the list still on offer is.
+
+A list that disappeared when a refresh failed would leave a person who had just
+picked a network looking at an empty screen, and an empty list is a real answer:
+the radio heard nothing. So *no list*, *the radio heard nothing* and *the
+refresh failed* are three different bodies.
+
+**P-218** — A `WifiScan` with `refresh` true that meets a running scan joins
+it and carries no key 2. Otherwise it MUST start a scan, unless one of these
+holds, and then it MUST carry key 2 naming the first that does:
+`4 unauthorised` when the client's mask lacks bit 1 (P-105); `2 radio_off` when
+the network section has never been written; `3 link_down` when the comms link
+is not up; `1 too_soon` when the controller started a scan less than
+`SCAN_INTERVAL_MS` (10 000 ms) before, on P-004's tick. Key 2 MUST be absent
+when `refresh` is false. A scan the comms processor refuses, fails or never
+answers MUST end as `4 failed`.
+
+**A scan takes the radio off the channel it is working on.** The ESP32-C6 has
+one 2.4 GHz radio for Wi-Fi and BLE, and a scan dwells on each channel in turn,
+so a phone connected over BLE loses throughput for the second or two it takes.
+The interval is what makes that a cost the controller chooses rather than one
+any client can impose: eight clients asking every second get one scan every ten
+seconds between them, and each reads the same list.
+
+*Radio off* is the unwritten section. A comms processor that holds no country
+may not transmit (L-133), and a scan transmits. The setup order follows: write
+the network section with `country` and `hostname` and no `ssid`, which pushes
+radio metadata and no network, then scan, then write the `ssid` and `psk`. A
+client needs the country for the second write anyway.
+
+*Unauthorised* borrows bit 1 rather than allocating a bit of its own, because
+the scan exists to choose a network to write. The cloud client cannot write
+one, and a client reachable from the internet has no business moving the site's
+radio off channel on demand. It still reads the list that is held.
+
+`WifiScan` is not a signed request, although a refresh starts something. It
+changes nothing a later request reads except the list itself, the interval
+bounds it, and signing it would spend a FRAM counter write on every scan.
+Nothing it does reaches the site.
+
+**P-219** — `WifiStatus 0x92` MUST carry key 1, and MUST carry keys 2 and 3
+exactly when the controller holds a report from the comms processor's current
+boot. It MUST drop the report when the link goes down and when the comms
+processor's `boot_id` changes (L-041). Key 4 MUST be present exactly when
+`state` is `4 failed` and key 5 exactly when it is `3 joined`. A client MUST
+refuse a body or a `0x0806` record that breaks any of these.
+
+Key 1 and key 2 are two versions on purpose. A client that wrote the section
+holds the version its `SetConfigAck` returned; when key 2 equals it, the state
+is about that write, and when it differs the comms processor has not taken it
+yet or failed to store it (L-137). Without the pair, `failed auth_failed` from
+the previous network reads as the verdict on the passphrase just typed.
+
+A report from a comms boot that has ended is not a report. The radio that joined
+is gone, and the one that replaced it has not said anything yet, so absence is
+the honest answer and the client waits for the next one.
+
+**P-220** — The controller MUST write a `0x0806` record when the version, state
+and reason it holds differ from those it last announced, and MUST NOT write one
+for `2 joining`. A record whose version differs from the last announced MUST be
+written at once. Any other MUST wait until `WIFI_RECORD_INTERVAL_MS` (600 000 ms)
+after the previous `0x0806`, on P-004's tick, and then carry the state held at
+that moment, or nothing if it no longer differs.
+
+The first answer after every write arrives at once, which is the one a person
+at the panel is waiting for. A marginal access point is the case the interval
+exists for: it drops and rejoins every few seconds, every transition is class A,
+and one record each would push a month of history out of the log in a day. Ten
+minutes bounds that at six an hour, and a client that wants the state now reads
+`WifiStatus`. Losing Wi-Fi also takes the cloud client's route to the log with
+it, so a delayed record costs the clients still able to read it very little.
+`Joining` is left out because it is what every write starts with. The write
+already told the client that much, and announcing it would spend the immediate
+record on the one state nobody needed to hear.
+
+**P-221** — A client MUST present the list and the status as the comms
+processor's report, and no decision on the controller or a client that grants
+anything MAY rest on them. The controller's MAC says it relayed them, not that
+they are true: a hostile comms processor can list a network that is not there
+and report `joined` from a board that is not. This is `fw_comms`'s rule
+(L-032) for the same reason. None of it gains that processor anything: the
+passphrase a person types for the network it listed reaches it through
+`NetConfig` regardless.
 
 ---
 

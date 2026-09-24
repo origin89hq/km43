@@ -124,7 +124,9 @@ impl Direction {
             | MessageType::Subscribe
             | MessageType::ReadLog
             | MessageType::GetConfig
-            | MessageType::Goodbye => Ok(Self::Request),
+            | MessageType::Goodbye
+            | MessageType::WifiScan
+            | MessageType::WifiStatus => Ok(Self::Request),
             MessageType::HelloResponse
             | MessageType::InventoryResponse
             | MessageType::ReadingsResponse
@@ -138,6 +140,8 @@ impl Direction {
             | MessageType::FirmwareResponse
             | MessageType::TimeResponse
             | MessageType::GoodbyeResponse
+            | MessageType::WifiScanResponse
+            | MessageType::WifiStatusResponse
             | MessageType::ErrorResponse => Ok(Self::Response),
             // The `evt` preimage puts four zero bytes where a `req_id` goes
             // (P-023), so the envelope's own `req_id` is the one field of an

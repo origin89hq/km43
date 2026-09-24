@@ -92,7 +92,10 @@ has to be remembered.
 | CommsRelease | `0x67` | `0xE7` | controller → comms |
 | EnterDownload | `0x68` | `0xE8` | controller → comms |
 | PairingWindow | `0x69` | `0xE9` | controller → comms |
-| *reserved* | `0x6A`–`0x7E` | `0xEA`–`0xFE` | — |
+| WifiScan | `0x6A` | `0xEA` | controller → comms |
+| WifiScanResult | `0x6B` | `0xEB` | comms → controller |
+| WifiState | `0x6C` | `0xEC` | comms → controller |
+| *reserved* | `0x6D`–`0x7E` | `0xED`–`0xFE` | — |
 
 **L-001** — A receiver MUST refuse a link-local message arriving from the side
 the direction column does not permit, with code 256 — the same code as an opcode
@@ -218,9 +221,11 @@ Nothing in this range is cryptographic, so its vectors in
 [vectors/v1.json](vectors/v1.json) are wire bytes only, and they are a subset
 of the allocated opcodes: `LinkUp`, `ClientConnected` and its acknowledgement,
 `TimeOffer` and its refusal, `NetConfigAck`, and `EnterDownload` and its
-refusal, plus `PairingWindow` open, closed and acknowledgement, chosen for the
-bodies with the most keys and, for `TimeOffer` and `EnterDownload`, the refusal
-rather than the acceptance. They exist because the
+refusal, plus `PairingWindow` open, closed and acknowledgement, and the Wi-Fi
+scan request, its refusal, a complete and a failed result, its acknowledgement,
+and a joined and a failed state report, chosen for the bodies with the most keys
+and, for `TimeOffer`, `EnterDownload` and `WifiScan`, the refusal rather than
+the acceptance. They exist because the
 two ends of this link are two codebases, and bytes two implementations agree on
 with nothing else checking them are how a format drifts.
 
@@ -923,6 +928,128 @@ erase cannot promise durable removal.
 
 ---
 
+## Wi-Fi scan and join state
+
+`NetConfigAck` says the credentials were stored, and nothing on this link said
+what the radio did with them or what it could hear. The client protocol's
+`WifiScan` and `WifiStatus` ([PROTOCOL.md](../PROTOCOL.md) P-216 to P-221) are
+answered from what these three messages carry. `Ap` is PROTOCOL.md's row, key
+for key, so the controller relays a list without translating it.
+
+```text
+WifiScan  0x6A
+  1: scan         u32     non-zero; numbered by the controller from 1 in each boot
+
+WifiScanAck  0xEA
+  1: outcome      u8      1 started · 2 refused_busy · 3 refused_radio_off
+
+WifiScanResult  0x6B
+  1: scan         u32     the WifiScan this answers
+  2: outcome      u8      1 complete · 2 failed
+  3: aps          [ Ap ]  present exactly when outcome = complete;
+                          0 to MAX_SCAN_APS rows, strongest first
+  4: unlisted     u16     present exactly when outcome = complete; saturating
+
+WifiScanResultAck  0xEB
+  1: scan         u32     echoes the result's
+
+WifiState  0x6C
+  1: version      u32     the NetConfig version the radio is acting on
+  2: state        u8      wifi_state: 1 off · 2 joining · 3 joined · 4 failed
+  3: reason       u8      present exactly when state = failed; wifi_failure:
+                          1 auth_failed · 2 not_found · 3 no_ip · 4 lost · 5 other
+  4: ipv4         bstr4   present exactly when state = joined
+
+WifiStateAck  0xEC
+  (an empty map)
+```
+
+**L-200** — The controller MUST have at most one `WifiScan` outstanding, and
+MUST number them from 1 within each boot, never 0. The comms processor MUST
+answer `started` and scan, or `refused_busy` while a scan it started has no
+acknowledged or given-up result, or `refused_radio_off` while it holds no radio
+metadata. It MUST NOT scan in that last state, passively included: L-133 keeps
+Wi-Fi transmission off until a `NetConfig` supplies a country, and a scan on no
+regulatory domain is the illegal transmitter L-134 exists to prevent.
+
+The number is what ties a result to its request. `req_id` ends with the
+acknowledgement (L-013), and the result arrives seconds later as the comms
+processor's own request, so without it a late result from a scan the controller
+gave up on would be read as the answer to the next.
+
+**L-201** — For each `WifiScan` answered `started`, the comms processor MUST
+send exactly one `WifiScanResult` carrying its number, retried under L-015. A
+`complete` result MUST carry keys 3 and 4 and a `failed` one neither, and a
+receiver MUST refuse one that breaks this under L-010. `failed` is a radio that
+could not scan. A scan that heard nothing is `complete` with no rows, and the
+difference is whether a person should try again or move the unit.
+
+**L-202** — The list MUST hold one row per SSID, for the strongest access point
+heard with it, ordered strongest first, at most `MAX_SCAN_APS`. An access point
+with an empty SSID, or one whose SSID is not UTF-8, MUST NOT be listed.
+`unlisted` MUST count the access points heard and left out for those reasons
+or for want of room, and MUST NOT count those merged into a row for their SSID.
+
+One row per SSID because a network is chosen by name: the section holds one
+(L-136), and the radio picks the access point when it joins. A mesh with six
+nodes would otherwise spend six rows on one choice and push the neighbour's
+network off the list. A hidden network has no name to pick, and the person types
+it, which is the fallback anyway. A name that is not UTF-8 cannot be written
+into the section, whose `ssid` is text, and a lossy conversion would list a
+name that matches no network on the air. Counting them keeps *the radio heard
+three networks you cannot pick* different from *the radio heard nothing*.
+
+**L-203** — The controller MUST treat a scan as failed when its `WifiScanAck`
+is not `started`, when the request is given up under L-015, when no result
+arrives within `SCAN_TIMEOUT_MS` (15 000 ms) of the `started`, and when the link
+goes down or the comms `boot_id` changes first. It MUST acknowledge and discard
+a result carrying any other number.
+
+An active scan of the thirteen 2.4 GHz channels takes under two seconds on
+the ESP32-C6, and channels a country allows only passively take longer. Fifteen
+seconds covers both with room, and without a timeout a comms processor that
+answered `started` and never finished would leave every client reading
+`running` for as long as the link stays up.
+
+**L-204** — The comms processor MUST send `WifiState` once its own `LinkUp` has
+been answered (L-033) and again whenever what it would report changes. `off`
+means it holds no network or no radio metadata and is not trying. `joining`
+means it is trying and has had no outcome for this version since it booted.
+`joined` means it is associated and holds an IPv4 address. `failed` means it is
+not joined, `reason` is the most recent failure, and it is still trying; once a
+version has had an outcome, a dropped association or a failed retry is `failed`
+and never `joining` again.
+
+`joining` is a state the comms processor passes through once per version per
+boot. A radio that retries every few seconds and reported `joining` between
+failures would put a report on the link each time, and P-220's records would
+count retries rather than changes. A retry that fails the same way changes
+nothing and is not reported.
+
+**L-205** — `version` MUST be the version of the credentials the radio is
+using. After an NVS write fails (L-137) that is the version it was given, not
+the one it persisted; after an unwritten clear, or from an empty NVS, it is 0.
+The question a client asks is whether the radio is acting on its write, and the
+radio acts on what is in RAM.
+
+**L-206** — The comms processor MUST NOT have more than one `WifiState`
+outstanding. A change while one is outstanding replaces whatever is waiting to
+be sent, retries of the outstanding one carry its own body (L-015), and the
+newest state goes once that one is answered or given up. Two outstanding would
+let a retry of the older arrive after the newer, and the controller would hold
+a state the radio has already left. One at a time makes the order on the cable
+the order of the states.
+
+**L-207** — The controller MUST NOT act on a `WifiScanResult` or a `WifiState`
+beyond holding, answering and recording it. In particular it MUST NOT push
+`NetConfig` because of a reported state: L-133 decides a push on `LinkUp`'s
+`net_version` alone. A comms processor that reported `failed` for ever would
+otherwise have the controller put the passphrase on the link at its own pace,
+and the report is the untrusted chip's account of itself, diagnostic in exactly
+the sense `fw_comms` is (L-032).
+
+---
+
 ## Time offers
 
 The clock is settable by a client and by NTP through the comms processor, and the
@@ -1402,6 +1529,9 @@ them evicts:
 | Sessions shed for backpressure | 3 per hour | The first one is recorded; the third means the link carries no traffic whatever the heartbeats say, and the ladder runs from its first rung (L-022, L-023) |
 | Outstanding link-local requests, per side | 4 | The sender does not issue a fifth; a peer that does gets code 262 (L-014) |
 | Cached Wi-Fi network | 1 | A `set` replaces — a value, not a table (L-136) |
+| Wi-Fi scans outstanding | 1 | The controller does not send a second; the comms processor answers `refused_busy` (L-200) |
+| Access points in a scan result | `MAX_SCAN_APS`, 16 | The strongest are listed, the rest counted in `unlisted` (L-202) |
+| Wi-Fi state reports outstanding | 1 | A newer state replaces the one waiting to be sent (L-206) |
 | Authorised comms release | 1 | A new `authorise` replaces the previous one; both are logged (L-174) |
 | ESP32 power cycles | 3 per hour | No cycling for 15 minutes, rail off, or on where the board cannot switch it back on after that long; comms unrecoverable (`0x0803`) raised (L-112) |
 

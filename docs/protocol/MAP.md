@@ -67,6 +67,8 @@ flowchart TD
     Readings["Readings<br/>0x0E wrq → 0x8E rsp"]
     Concerns["Concerns<br/>0x0F wrq → 0x8F rsp"]
     History["History<br/>0x10 wrq → 0x90 rsp"]
+    WifiScan["WifiScan<br/>0x11 wrq → 0x91 rsp"]
+    WifiStatus["WifiStatus<br/>0x12 wrq → 0x92 rsp"]
     Error["Error<br/>unsolicited · 0xFF rsp_or_bare"]
   end
   subgraph TheinternalUART["The internal UART"]
@@ -80,6 +82,9 @@ flowchart TD
     CommsRelease["CommsRelease<br/>0x67 → 0xE7 · controller → comms"]
     EnterDownload["EnterDownload<br/>0x68 → 0xE8 · controller → comms"]
     PairingWindow["PairingWindow<br/>0x69 → 0xE9 · controller → comms"]
+    WifiScan["WifiScan<br/>0x6A → 0xEA · controller → comms"]
+    WifiScanResult["WifiScanResult<br/>0x6B → 0xEB · comms → controller"]
+    WifiState["WifiState<br/>0x6C → 0xEC · comms → controller"]
   end
   Beforeanykeyexists --> Enrolmentprintedsecretandsomebodyatthepanel
   Enrolmentprintedsecretandsomebodyatthepanel --> Handshakeprovingaclientkey
@@ -91,21 +96,21 @@ flowchart TD
 A table of allocated numbers cannot show a gap, and a gap is the only thing somebody allocating the next number needs to see.
 
 ```text
-client requests — 0x00 to 0x5F, 16 allocated, 80 free
-  0x00  ####.### ######## #....... ........
+client requests — 0x00 to 0x5F, 18 allocated, 78 free
+  0x00  ####.### ######## ###..... ........
   0x20  ........ ........ ........ ........
   0x40  ........ ........ ........ ........
 
-link-local requests — 0x60 to 0x7E, 10 allocated, 21 free
-  0x60  ######## ##...... ........ .......
+link-local requests — 0x60 to 0x7E, 13 allocated, 18 free
+  0x60  ######## #####... ........ .......
 
-client responses — 0x80 to 0xDF, 16 allocated, 80 free
-  0x80  ####.### ######## #....... ........
+client responses — 0x80 to 0xDF, 18 allocated, 78 free
+  0x80  ####.### ######## ###..... ........
   0xA0  ........ ........ ........ ........
   0xC0  ........ ........ ........ ........
 
-link-local responses — 0xE0 to 0xFE, 10 allocated, 21 free
-  0xE0  ######## ##...... ........ .......
+link-local responses — 0xE0 to 0xFE, 13 allocated, 18 free
+  0xE0  ######## #####... ........ .......
 
 client errors —    1 to   32, 18 allocated, 14 free
      1  ######## ######## ##...... ........
@@ -141,7 +146,7 @@ flowchart LR
   events --> e5["0x05xx · 2 allocated · 2 class A"]
   events --> e6["0x06xx · 4 allocated · 4 class A"]
   events --> e7["0x07xx · 2 allocated · 2 class A"]
-  events --> e8["0x08xx · 5 allocated · 5 class A"]
+  events --> e8["0x08xx · 6 allocated · 6 class A"]
   events --> e9["0x09xx · 2 allocated · 2 class A"]
 ```
 

@@ -158,6 +158,8 @@ value.
 | `0x0E` | `0x8E` | Readings | `wrq` | `rsp` | 1.0 | live |
 | `0x0F` | `0x8F` | Concerns | `wrq` | `rsp` | 1.0 | live |
 | `0x10` | `0x90` | History | `wrq` | `rsp` | 1.0 | reserved |
+| `0x11` | `0x91` | WifiScan | `wrq` | `rsp` | 1.0 | live |
+| `0x12` | `0x92` | WifiStatus | `wrq` | `rsp` | 1.0 | live |
 | `0x60`–`0x7E` | `0xE0`–`0xFE` | *link-local, see [LINK.md](LINK.md)* | — | — | 1.0 | live |
 | — | `0xFF` | Error | — | `rsp_or_bare` | 1.0 | live |
 
@@ -494,6 +496,7 @@ argument for leaving the numbers overlapping is at the head of the metric table.
 | `0x0803` | comms unrecoverable | A | live |
 | `0x0804` | sessions shed for backpressure | A | live |
 | `0x0805` | comms boot noise | A | live |
+| `0x0806` | wifi status changed | A | live |
 | `0x0901` | topology changed | A | live |
 | `0x0902` | device presence changed | A | live |
 
@@ -776,6 +779,94 @@ is the opposite. The point of recording a source at all is to tell a drifted RTC
 from a lying uplink, so a number copied straight across inverts the one thing the
 field exists to say.
 
+## Scan states — `u8`
+
+`WifiScan 0x91` key 1: what became of the most recent scan (P-217).
+
+| Value | Name | Meaning |
+|---|---|---|
+| 1 | none | No scan has completed since the controller booted, and none is running |
+| 2 | running | The controller has asked the comms processor for a scan and holds no answer yet |
+| 3 | complete | The most recent scan completed; its list is the one held |
+| 4 | failed | The most recent scan was refused, failed or timed out. A list held from before it stays |
+
+`failed` does not clear the list. A person who has just picked a network and
+presses refresh again should still see it, with the age saying how old it is.
+
+## Scan refusals — `u8`
+
+`WifiScan 0x91` key 2: why a refresh started nothing, checked in this order
+(P-218).
+
+| Value | Name | Meaning |
+|---|---|---|
+| 1 | too_soon | A scan started less than `SCAN_INTERVAL_MS` ago (P-218) |
+| 2 | radio_off | The network section has never been written, so the radio has no country and may not scan |
+| 3 | link_down | The comms link is not up |
+| 4 | unauthorised | This client's capability mask lacks bit 1 (P-105) |
+
+`radio_off` has a remedy a client can offer: write the network section's
+`country` and `hostname` first. `too_soon` has none but waiting, and the list
+it answers with is at most ten seconds old.
+
+## Wi-Fi security — `u8`
+
+`Ap` key 3, as the comms processor classified the access point's beacon.
+
+| Value | Name | Meaning |
+|---|---|---|
+| 1 | open | No passphrase. The network section cannot join it |
+| 2 | wpa2_personal | WPA2 with a passphrase, including WPA/WPA2 mixed mode |
+| 3 | wpa3_personal | WPA3 SAE with a passphrase, including WPA2/WPA3 transition mode |
+| 4 | other | Anything a WPA passphrase does not join: WEP, WPA alone, enterprise, OWE |
+
+The four are what a client does with a row, not every mode a beacon can
+advertise: `2` and `3` take a passphrase and the network section can join
+them, `1` and `4` it cannot. A closed space refuses an unknown value (P-014),
+so `other` is where a mode nobody listed goes rather than a reason to reject
+the whole list.
+
+## Wi-Fi bands — `u8`
+
+`Ap` key 4. The channel in key 5 is numbered within the band, and 2.4 GHz and
+6 GHz both have a channel 1.
+
+| Value | Name | Meaning |
+|---|---|---|
+| 1 | ghz_2_4 | 2.4 GHz |
+| 2 | ghz_5 | 5 GHz |
+| 3 | ghz_6 | 6 GHz |
+
+## Wi-Fi states — `u8`
+
+`WifiStatus 0x92` key 3, `0x0806` key 3 and LINK.md's `WifiState` key 2. One
+space for all three, because the controller relays the comms processor's value
+and a second numbering would be a translation somebody gets wrong.
+
+| Value | Name | Meaning |
+|---|---|---|
+| 1 | off | The radio holds no network or no radio metadata and is not trying |
+| 2 | joining | Trying, with no outcome yet for this version since the comms processor booted |
+| 3 | joined | Associated and holding an IPv4 address |
+| 4 | failed | Not joined; `reason` is the most recent failure, and the radio is still trying |
+
+## Wi-Fi failures — `u8`
+
+The reason beside `failed`, in the same three places.
+
+| Value | Name | Meaning |
+|---|---|---|
+| 1 | auth_failed | The access point refused the passphrase, or the handshake did not complete |
+| 2 | not_found | No access point with this SSID was heard on a channel the radio may use |
+| 3 | no_ip | Associated, and no address was assigned |
+| 4 | lost | Was joined, and the association dropped |
+| 5 | other | A failure the radio could not place in the four above |
+
+`auth_failed` is almost always the passphrase, and `not_found` is a mistyped
+SSID, an access point out of range, or a 5 GHz-only network the ESP32-C6
+cannot hear. Those are the three a person setting up a unit can fix from where
+they stand, which is why they are named rather than folded into `other`.
+
 ## Firmware outcomes — `u8`
 
 How a `Firmware 0x89` answered. **Reserved** — see [DEFERRED.md](DEFERRED.md).
@@ -839,7 +930,7 @@ picking `0x0503` and worse in its consequences.
 | Bit | The client may | app | browser | cloud | cli |
 |---|---|---|---|---|---|
 | 0 | write configuration at all | yes | yes | yes | yes |
-| 1 | write the **network** (`0x0020`) and **cloud** (`0x0021`) sections | yes | yes | **no** | yes |
+| 1 | write the **network** (`0x0020`) and **cloud** (`0x0021`) sections, and refresh a `WifiScan` | yes | yes | **no** | yes |
 | 2 | send `Command 0x08` | yes | yes | yes | yes |
 | 3 | set the clock with `Time 0x0A` | yes | yes | **no** | yes |
 | 4 | push firmware with `Firmware 0x09` | yes | yes | **no** | yes |
@@ -927,7 +1018,12 @@ a client must not assume an unset bit is a failure, only an absence.
 | 5 | counted state of charge available | live |
 | 6 | AC metering on the generator | live |
 | 7 | any behaviour is in shadow mode | live |
-| 8–31 | unallocated | — |
+| 8 | wifi scan and join status | live |
+| 9–31 | unallocated | — |
+
+Bit 8 says the controller answers `WifiScan 0x11` and `WifiStatus 0x12`
+(P-216). A client that does not see it offers manual SSID entry and nothing
+else.
 
 Bit 7 is deliberately coarse. A client that wants to know *which* behaviour is
 shadowed reads the config sections; the bit exists so an app can put a banner up

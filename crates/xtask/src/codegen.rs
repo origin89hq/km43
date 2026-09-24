@@ -538,6 +538,12 @@ pub fn heading_for(key: &str) -> String {
         "enum_space" => "## Enum spaces",
         "measurement_point" => "## Measurement points",
         "vendor_namespace" => "## Vendor namespaces",
+        "scan_state" => "## Scan states",
+        "scan_refusal" => "## Scan refusals",
+        "wifi_security" => "## Wi-Fi security",
+        "wifi_band" => "## Wi-Fi bands",
+        "wifi_state" => "## Wi-Fi states",
+        "wifi_failure" => "## Wi-Fi failures",
         _ => return format!("## no heading is allocated for the `{key}` space"),
     };
     known.to_owned()

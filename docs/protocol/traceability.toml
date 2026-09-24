@@ -1044,7 +1044,19 @@
 # L-133 and L-135 remain uncovered as whole rules: unwritten_network.rs covers
 # their wire shapes, while the clauses below retain the missing firmware push,
 # persistence, radio and reset evidence.
-uncovered = 124
+# 124 -> 138: the specification gained fourteen rules for Wi-Fi scan and join
+# status (origin89hq/km43#110), P-216 to P-221 and L-200 to L-207. `wifi.rs`
+# and the published vectors cover the wire half of six of them: which keys
+# travel together, a zero scan number, a list present exactly when a scan
+# completed, one row per SSID strongest first, and which state owns a reason
+# or an address. The other half of each is the firmware keeping a list, dropping
+# a report, refusing on radio-off, sending one result per scan, filtering hidden
+# networks and reporting on change. Each takes a `[[clauses]]` entry below so
+# the codec test does not read as the whole rule. The remaining eight (P-216,
+# P-218, P-220, L-203, L-205, L-206, L-207, and P-221, a client presentation
+# rule) are behaviour of the two firmwares and of a client. The firmware work
+# is origin89hq/firmware#138.
+uncovered = 138
 
 # P-045 is the shape this file is for. Nothing can drive an implementation into
 # transmitting a key it does not have, so the thing that stands behind it reads
@@ -1380,3 +1392,34 @@ on a later boot that reads the valid empty table, and exclusion of \
 boards with a pushbutton. Pair still needs the printed-secret proof. The \
 controller also owes L-193 through L-195 reports, including a delayed link's \
 remaining time. Codec and closed-window refusal tests do not prove that lifecycle."""
+
+
+[[clauses]]
+id = "P-217"
+each = ["keys_travel_together", "failed_scan_keeps_the_list"]
+reason = "The codec refuses a list without its age or count. Holding one list and keeping it across a failed scan is the controller's state, owed by origin89hq/firmware#138."
+
+[[clauses]]
+id = "P-219"
+each = ["keys_present_exactly", "dropped_on_link_loss"]
+reason = "The codec refuses a body whose keys disagree with its state. Dropping the report on link loss or a new comms boot is the controller's, owed by origin89hq/firmware#138."
+
+[[clauses]]
+id = "L-200"
+each = ["scan_number_is_never_zero", "refused_without_radio_metadata"]
+reason = "The codec refuses scan 0. One scan outstanding and no scan without a country are the two firmwares' behaviour, owed by origin89hq/firmware#138."
+
+[[clauses]]
+id = "L-201"
+each = ["list_exactly_when_complete", "one_result_per_started_scan"]
+reason = "The codec refuses a result whose rows disagree with its outcome. Sending exactly one result per started scan is the comms processor's, owed by origin89hq/firmware#138."
+
+[[clauses]]
+id = "L-202"
+each = ["one_row_per_ssid_strongest_first", "hidden_and_non_utf8_counted_not_listed"]
+reason = "The codec refuses repeated, unordered or oversized lists. Leaving out hidden and non-UTF-8 networks and counting them is the comms processor's scan filter, owed by origin89hq/firmware#138."
+
+[[clauses]]
+id = "L-204"
+each = ["reason_and_address_belong_to_their_state", "sent_once_linked_and_on_change"]
+reason = "The codec refuses a reason or address the state does not own. When the comms processor reports, and that joining appears once per version, are its own, owed by origin89hq/firmware#138."
