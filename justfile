@@ -16,12 +16,11 @@ fmt-check:
     cargo fmt --all --check
     pnpm run format:check
 
-# The second pass builds the crate's tests with `defmt` on. Without it
-# `tests/defmt.rs` is compiled by nothing, because the plain pass leaves the
-# feature off and the cross-compile builds only the library.
+# The second pass also checks feature-gated logging tests and the public
+# vector API; the default pass and target builds do not compile those paths.
 lint:
     cargo clippy --locked --workspace --all-targets -- -D warnings
-    cargo clippy --locked -p km43 --all-targets --features defmt -- -D warnings
+    cargo clippy --locked -p km43 --all-targets --features defmt,vectors -- -D warnings
     pnpm run lint
 
 typecheck:
@@ -35,6 +34,7 @@ test-fast:
 
 test:
     cargo test --locked --workspace
+    cargo test --locked -p km43 --features vectors --test vectors
     pnpm run test
 
 build:
@@ -48,7 +48,7 @@ build:
 # runs from the workspace root on TypeScript 6, because TypeDoc has no release
 # for the TypeScript 7 the package builds with.
 doc:
-    RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --no-deps
+    RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --all-features --no-deps
     pnpm run docs
 
 # The specification gate: vectors, registry, bindings, traceability, and the
@@ -75,6 +75,6 @@ vocabulary *args:
 # compiler lints differently: 1.88 reported seven dead constants that 1.98 did
 # not, and a plain `check` stayed green over them.
 msrv-check:
-    RUSTFLAGS="-D warnings" cargo +{{msrv}} check --locked --workspace
+    RUSTFLAGS="-D warnings" cargo +{{msrv}} check --locked --workspace --all-features
 
 check: fmt-check lint typecheck test build doc spec

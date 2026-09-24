@@ -9,10 +9,8 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-# The vectors live in `docs/`, outside what a crate tarball can carry, so the
-# test that reads them cannot compile from crates.io. The license texts are
-# symlinks to the repository root; `cargo package` ships the files they point at.
-exclude = ["tests/vectors.rs"]
+# Cargo packages the targets of these symlinks: the root licenses and the
+# canonical docs/protocol/vectors/v1.json, without a second generated copy.
 
 [dependencies]
 # The same audited primitives the generator uses. Sharing them means the
@@ -37,9 +35,11 @@ defmt = { workspace = true, optional = true }
 # Derives `defmt::Format` on the identifier, counter, enum, verdict and error
 # types. Never on a key or a tag: those have no `Debug` for the same reason.
 defmt = ["dep:defmt"]
+# Published test inputs as static JSON, with no parser or allocator dependency.
+vectors = []
 
 [package.metadata.docs.rs]
-features = ["defmt"]
+features = ["defmt", "vectors"]
 
 # `clippy::pedantic` minus the one lint that contradicts a house rule.
 #
