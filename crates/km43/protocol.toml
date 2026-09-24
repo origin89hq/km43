@@ -34,6 +34,15 @@ max_value = 512
 timeout_ms = 5000
 tx_capacity = 1
 
+# Where a client reaches the WebSocket transport on the site network (P-034,
+# P-223 to P-225). The service type is declared in the iOS app's
+# NSBonjourServices, so it is frozen by the first app release that ships it.
+[websocket]
+port = 80
+path = "/km43"
+service = "_km43._tcp"
+txt_device_id = "id"
+
 [[messages]]
 request = 0x00
 response = 0x80

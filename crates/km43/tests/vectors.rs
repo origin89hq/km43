@@ -883,7 +883,7 @@ fn every_published_link_frame_is_the_one_this_crate_frames_and_checksums() {
     let envelopes = strings_of(link, "envelope_cbor");
     let frames = strings_of(link, "encoded_with_delimiter");
     let crcs = strings_of(link, "crc16_ccitt_false");
-    assert_eq!(envelopes.len(), 21, "the link block changed shape");
+    assert_eq!(envelopes.len(), 22, "the link block changed shape");
     assert_eq!(frames.len(), envelopes.len());
     assert_eq!(crcs.len(), envelopes.len());
 
@@ -1773,7 +1773,7 @@ fn every_published_link_frame_is_one_this_crate_decodes() {
     let frames = link_envelopes();
     assert_eq!(
         frames.len(),
-        21,
+        22,
         "the published link section changed shape; this test walks it by count \
          so a vector that stops being published cannot go unnoticed"
     );
@@ -1799,6 +1799,10 @@ fn every_published_link_frame_is_one_this_crate_decodes() {
             // is refused above, and this is where that would show.
             LinkMessageType::LinkUp => {
                 a_published_link_up_reads(envelope);
+                seen += 1;
+            }
+            LinkMessageType::LinkUpAck => {
+                l_035_the_published_controller_link_up_carries_the_published_device_id(envelope);
                 seen += 1;
             }
             LinkMessageType::ClientConnected => {
@@ -1893,6 +1897,26 @@ fn a_published_link_up_reads(envelope: km43::LinkEnvelope<'_>) {
         up.net_version,
         Some(0),
         "a board holding nothing reports 0, and 0 is a value"
+    );
+}
+
+/// L-035: the `device_id` the comms processor advertises is the one `Discover`
+/// carries. Two different ones would teach an implementation to advertise a
+/// controller no client's kept enrolment names.
+fn l_035_the_published_controller_link_up_carries_the_published_device_id(
+    envelope: km43::LinkEnvelope<'_>,
+) {
+    let up = km43::LinkUp::decode(envelope).expect("the published controller LinkUp reads");
+    assert_eq!(up.role, km43::Side::Controller);
+    assert_eq!(up.net_version, None, "only comms sends net_version");
+    let published = blobs("device_id")
+        .into_iter()
+        .next()
+        .expect("the inputs block publishes a device_id");
+    assert_eq!(
+        up.device_id.map(Vec::from),
+        Some(published),
+        "the controller LinkUp and Discover disagree about which controller this is"
     );
 }
 
@@ -2248,8 +2272,9 @@ fn a_published_release_frame_reads(kind: km43::LinkMessageType, envelope: km43::
 fn receiving(opcode: u8) -> km43::Side {
     use km43::Side::{Comms, Controller};
 
-    const AT: [(u8, km43::Side); 18] = [
+    const AT: [(u8, km43::Side); 19] = [
         (0x60, Controller), // LinkUp, either way; the STM32 receives this one
+        (0xe0, Comms),      // LinkUpAck, the controller's answer to it
         (0x62, Controller), // ClientConnected, comms → controller
         (0x66, Controller), // TimeOffer, comms → controller
         (0xe2, Comms),      // ClientConnectedAck, back to the comms processor

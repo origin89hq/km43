@@ -838,6 +838,7 @@ enum ErrorCode {
 #[derive(Clone, Copy)]
 enum Link {
     Up,
+    UpAck,
     ClientConnected,
     ClientConnectedAck,
     TimeOffer,
@@ -863,6 +864,7 @@ impl Link {
     fn opcode(self, registry: &crate::registry::Registry) -> Result<u8> {
         let (name, response) = match self {
             Self::Up => ("LinkUp", false),
+            Self::UpAck => ("LinkUp", true),
             Self::ClientConnected => ("ClientConnected", false),
             Self::ClientConnectedAck => ("ClientConnected", true),
             Self::TimeOffer => ("TimeOffer", false),
@@ -2116,15 +2118,11 @@ impl Builder {
         Ok(obj(out))
     }
 
-    /// The link bodies, one per published frame.
-    fn link_cases(registry: &crate::registry::Registry) -> Result<Vec<LinkCase>> {
-        let clear = registry
-            .link_enums
-            .get("net_config_op")
-            .and_then(|entries| entries.iter().find(|entry| entry.name == "clear"))
-            .ok_or_else(|| anyhow::anyhow!("missing clear allocation"))?
-            .value;
-        let mut cases = vec![
+    /// Both ends of the first exchange on the link: the comms processor's
+    /// statement and the controller's answer, which alone carries `device_id`
+    /// (L-035).
+    fn link_up_cases() -> Result<[LinkCase; 2]> {
+        Ok([
             LinkCase {
                 name: "link_up_0x60",
                 kind: Link::Up,
@@ -2142,6 +2140,36 @@ impl Builder {
                 readable: "{1:protocol_major=1, 2:protocol_minor=0, 3:role=comms, 4:fw, 5:boot_id, 6:hw, 7:net_version=0}"
                     .into(),
             },
+            LinkCase {
+                name: "link_up_0xe0_controller",
+                kind: Link::UpAck,
+                session: 0,
+                req_id: 1,
+                body: cmap! {
+                    1 => Cb::U(1),
+                    2 => Cb::U(0),
+                    3 => Cb::U(1),
+                    4 => Cb::T(SelfReport::new().fw_controller.into()),
+                    5 => Cb::U(0x0b0e_7001),
+                    6 => Cb::T("controller-a rev A".into()),
+                    8 => Cb::B(Builder::new()?.device_id),
+                },
+                readable: "{1:protocol_major=1, 2:protocol_minor=0, 3:role=controller, 4:fw, 5:boot_id, 6:hw, 8:device_id}"
+                    .into(),
+            },
+        ])
+    }
+
+    /// The link bodies, one per published frame.
+    fn link_cases(registry: &crate::registry::Registry) -> Result<Vec<LinkCase>> {
+        let clear = registry
+            .link_enums
+            .get("net_config_op")
+            .and_then(|entries| entries.iter().find(|entry| entry.name == "clear"))
+            .ok_or_else(|| anyhow::anyhow!("missing clear allocation"))?
+            .value;
+        let mut cases = Vec::from(Self::link_up_cases()?);
+        cases.extend([
             LinkCase {
                 name: "client_connected_0x62",
                 kind: Link::ClientConnected,
@@ -2213,7 +2241,7 @@ impl Builder {
                 body: cmap! {1 => Cb::U(2)},
                 readable: "{1:outcome=refused_outside_window}".into(),
             },
-        ];
+        ]);
         cases.push(LinkCase {
             name: "net_config_clear_unwritten",
             kind: Link::NetConfig,

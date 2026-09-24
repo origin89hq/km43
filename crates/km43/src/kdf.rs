@@ -35,7 +35,7 @@ pub use stored::*;
 const PRINTED_SECRET_BYTES: usize = 32;
 
 /// P-038's `device_id`, as the 16 bytes and never their hex rendering.
-const DEVICE_ID_BYTES: usize = 16;
+pub(crate) const DEVICE_ID_BYTES: usize = 16;
 
 /// A `challenge` and a `client_nonce` are both `bstr16`.
 const NONCE_BYTES: usize = 16;

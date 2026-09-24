@@ -1063,7 +1063,19 @@
 # byte, and a restore against another controller or another epoch is refused.
 # A client keeping no printed secret after `Pair` is the app's behaviour, which
 # no test here can reach; it is origin89hq/apps#8.
-uncovered = 140
+# 140 -> 144: P-223 to P-225 and L-035 are new (origin89hq/km43#119): the WebSocket
+# path, the mDNS advertisement and a client's use of what it finds. The
+# registry tests in xtask refuse a malformed port, path, service type or TXT
+# key, which is the allocation and not the rule. Serving one path and
+# advertising and withdrawing the service are the comms processor's, owed by
+# origin89hq/firmware#146; running Discover on every candidate is the app's,
+# owed by origin89hq/apps#19. P-222 changed without moving the count: a
+# differing device_id now sends the client to its next candidate instead of to
+# pairing, and `stored.rs` renders that error without "pair again". L-035
+# puts the controller's device_id in LinkUp so the comms processor has an `id`
+# to advertise. The codec and the published controller LinkUp cover the wire
+# half; advertising only the latest one is firmware#146, so it stays counted.
+uncovered = 144
 
 # P-045 is the shape this file is for. Nothing can drive an implementation into
 # transmitting a key it does not have, so the thing that stands behind it reads
@@ -1444,5 +1456,10 @@ reason = "The codec checks that version 0 and an absent body travel together. A 
 
 [[clauses]]
 id = "P-222"
-each = ["carry_no_printed_secret", "another_controller_is_refused", "earlier_epoch_is_refused", "app_keeps_no_printed_secret"]
-reason = "The stored encoding holds only the issued key and a restore checks the device and epoch. Discarding the scanned printed secret once Pair succeeds is the app's, owed by origin89hq/apps#8."
+each = ["carry_no_printed_secret", "another_controller_is_refused", "earlier_epoch_is_refused", "app_keeps_no_printed_secret", "app_moves_on_from_another_controller"]
+reason = "The stored encoding holds only the issued key and a restore checks the device and epoch. Discarding the scanned printed secret once Pair succeeds is the app's, owed by origin89hq/apps#8. Trying the next candidate rather than pairing when another controller answers is the app's, owed by origin89hq/apps#19."
+
+[[clauses]]
+id = "L-035"
+each = ["controller_link_up_carries_device_id", "comms_advertises_only_the_latest"]
+reason = "The codec requires key 8 from the controller, refuses it from comms or at another length, and the published controller LinkUp carries Discover's device_id. Using it only as the TXT id, from the latest controller LinkUp, is the comms processor's, owed by origin89hq/firmware#146."

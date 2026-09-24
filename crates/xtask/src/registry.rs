@@ -298,6 +298,108 @@ impl Ble {
     }
 }
 
+/// Where the WebSocket transport is found, rendered into both client bindings.
+///
+/// The firmware advertises these and the app browses for them; a service type
+/// typed separately into each would agree only until one of them was edited.
+#[derive(Clone, Deserialize)]
+pub struct WebSocket {
+    /// TCP port of the opening handshake, and of the SRV record.
+    pub port: u16,
+    /// Request-target of the opening handshake.
+    pub path: String,
+    /// DNS-SD service type, `_name._tcp`.
+    pub service: String,
+    /// TXT key carrying the `device_id`.
+    pub txt_device_id: String,
+}
+
+impl WebSocket {
+    /// Longest service name RFC 6335 section 5.1 allows between `_` and `._tcp`.
+    const MAX_SERVICE_NAME: usize = 15;
+    /// Longest TXT key RFC 6763 section 6.4 recommends.
+    const MAX_TXT_KEY: usize = 9;
+
+    /// Text constants shared by both generated languages.
+    pub fn texts(&self) -> [(&str, &str, &str); 3] {
+        [
+            (
+                "WS_PATH",
+                &self.path,
+                "Request this path in the opening handshake; the controller refuses any other before upgrading.",
+            ),
+            (
+                "DNSSD_SERVICE",
+                &self.service,
+                "Browse for this DNS-SD type in `local.`; a result is an address to try, not the controller's identity.",
+            ),
+            (
+                "DNSSD_TXT_DEVICE_ID",
+                &self.txt_device_id,
+                "TXT key holding the `device_id` as 32 lowercase hex characters; unauthenticated, so Discover and Hello still decide.",
+            ),
+        ]
+    }
+
+    /// The port, with the one thing a caller needs to know about it.
+    pub fn port(&self) -> (&'static str, u16, &'static str) {
+        (
+            "WS_PORT",
+            self.port,
+            "Listen here and advertise it in SRV; a client reaching a remembered address uses it directly.",
+        )
+    }
+
+    fn validate(&self) -> Result<()> {
+        if self.port == 0 {
+            bail!("WS_PORT must be a TCP port, not 0");
+        }
+        let path_ok = self.path.len() > 1
+            && self.path.starts_with('/')
+            && self.path.bytes().all(|b| {
+                b.is_ascii_alphanumeric() || matches!(b, b'/' | b'-' | b'.' | b'_' | b'~')
+            });
+        if !path_ok {
+            bail!(
+                "WS_PATH must be an absolute path of unreserved characters, not {:?}",
+                self.path
+            );
+        }
+        let name = self
+            .service
+            .strip_prefix('_')
+            .and_then(|s| s.strip_suffix("._tcp"))
+            .unwrap_or_default();
+        let name_ok = (1..=Self::MAX_SERVICE_NAME).contains(&name.len())
+            && name
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+            && name.bytes().any(|b| b.is_ascii_lowercase())
+            && !name.starts_with('-')
+            && !name.ends_with('-')
+            && !name.contains("--");
+        if !name_ok {
+            bail!(
+                "DNSSD_SERVICE must be `_name._tcp` with an RFC 6335 service name, not {:?}",
+                self.service
+            );
+        }
+        let key_ok = (1..=Self::MAX_TXT_KEY).contains(&self.txt_device_id.len())
+            && self
+                .txt_device_id
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_');
+        if !key_ok {
+            bail!(
+                "DNSSD_TXT_DEVICE_ID must be 1 to {} lowercase letters, digits or underscores, not {:?}",
+                Self::MAX_TXT_KEY,
+                self.txt_device_id
+            );
+        }
+        Ok(())
+    }
+}
+
 /// Bounds shared by each transport rather than allocated again in client code.
 #[derive(Clone, Deserialize)]
 pub struct Limits {
@@ -323,6 +425,8 @@ pub struct Registry {
     pub limits: Limits,
     /// The client-visible BLE transport allocation.
     pub ble: Ble,
+    /// Where a client finds the WebSocket transport.
+    pub websocket: WebSocket,
     pub meta: Meta,
     pub messages: Vec<Message>,
     #[serde(default)]
@@ -1108,6 +1212,7 @@ impl Registry {
     /// deserialize, naming the line.
     fn validate(&self) -> Result<()> {
         self.ble.validate()?;
+        self.websocket.validate()?;
         let mut seen = BTreeSet::new();
         for m in &self.messages {
             for op in [m.request, m.response].into_iter().flatten() {
@@ -1681,6 +1786,76 @@ mod ble_tests {
             ble.last_flag = flag;
             ble.index_mask = mask;
             assert!(ble.validate().is_err());
+        }
+    }
+}
+
+#[cfg(test)]
+mod websocket_tests {
+    use super::{Registry, WebSocket};
+
+    fn allocated() -> WebSocket {
+        let root = crate::check::repo_root().expect("repository");
+        Registry::load(&root).expect("valid registry").websocket
+    }
+
+    #[test]
+    fn the_allocated_websocket_discovery_contract_is_accepted() {
+        let ws = allocated();
+        ws.validate().expect("the registry's own allocation");
+        assert_eq!(ws.port().1, ws.port);
+        assert_eq!(
+            ws.texts().map(|(name, ..)| name),
+            ["WS_PATH", "DNSSD_SERVICE", "DNSSD_TXT_DEVICE_ID"]
+        );
+    }
+
+    /// Each of these is a string the firmware would advertise and the app would
+    /// browse for: iOS refuses a malformed type in `NSBonjourServices` at build
+    /// time, or worse, browses for it and finds nothing.
+    #[test]
+    fn a_service_type_that_is_not_an_rfc_6335_name_is_refused() {
+        for bad in [
+            "",
+            "km43._tcp",
+            "_km43",
+            "_km43._udp",
+            "_._tcp",
+            "_KM43._tcp",
+            "_km43-._tcp",
+            "_-km43._tcp",
+            "_km--43._tcp",
+            "_4343._tcp",
+            "_abcdefghijklmnop._tcp",
+        ] {
+            let mut ws = allocated();
+            ws.service = bad.to_owned();
+            assert!(ws.validate().is_err(), "{bad:?}");
+        }
+        let mut ws = allocated();
+        ws.service = "_abcdefghijklmno._tcp".to_owned();
+        ws.validate()
+            .expect("fifteen characters is the RFC 6335 limit, not over it");
+    }
+
+    #[test]
+    fn a_path_or_port_that_cannot_open_a_handshake_is_refused() {
+        for bad in ["", "/", "km43", "/km43?x", "/km 43", "/km43#"] {
+            let mut ws = allocated();
+            ws.path = bad.to_owned();
+            assert!(ws.validate().is_err(), "{bad:?}");
+        }
+        let mut ws = allocated();
+        ws.port = 0;
+        assert!(ws.validate().is_err());
+    }
+
+    #[test]
+    fn a_txt_key_a_browser_would_misread_is_refused() {
+        for bad in ["", "ID", "device=id", "device_id_x", "i d"] {
+            let mut ws = allocated();
+            ws.txt_device_id = bad.to_owned();
+            assert!(ws.validate().is_err(), "{bad:?}");
         }
     }
 }

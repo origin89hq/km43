@@ -83,18 +83,19 @@ impl Bindings {
         self.registry.meta.skip_unknown.iter().any(|s| s == space)
     }
 
-    fn rust(&self) -> String {
-        let mut o = String::new();
-        for line in HEADER.lines() {
-            let _ = writeln!(o, "// {line}");
-        }
-        let _ = writeln!(o, "{}{}\n", Self::DIGEST_MARKER, self.registry.digest);
-
+    /// The transport constants: BLE identifiers, where the WebSocket is found,
+    /// and the limits both share.
+    fn rust_transport(&self, o: &mut String) {
         for (name, uuid, doc) in self.registry.ble.uuids() {
             let _ = writeln!(o, "/// {doc}\npub const {name}: &str = {uuid:?};\n");
         }
         for (name, value, doc) in self.registry.ble.flags() {
             let _ = writeln!(o, "/// {doc}\npub const {name}: u8 = {value};\n");
+        }
+        let (name, port, doc) = self.registry.websocket.port();
+        let _ = writeln!(o, "/// {doc}\npub const {name}: u16 = {port};\n");
+        for (name, text, doc) in self.registry.websocket.texts() {
+            let _ = writeln!(o, "/// {doc}\npub const {name}: &str = {text:?};\n");
         }
 
         for limit in self.registry.transport_limits() {
@@ -104,6 +105,16 @@ impl Bindings {
                 limit.doc, limit.name, limit.rust_type, limit.value
             );
         }
+    }
+
+    fn rust(&self) -> String {
+        let mut o = String::new();
+        for line in HEADER.lines() {
+            let _ = writeln!(o, "// {line}");
+        }
+        let _ = writeln!(o, "{}{}\n", Self::DIGEST_MARKER, self.registry.digest);
+
+        self.rust_transport(&mut o);
 
         closed_enum(
             &mut o,
@@ -712,6 +723,11 @@ impl Bindings {
         }
         for (name, value, doc) in self.registry.ble.flags() {
             let _ = writeln!(o, "/** {doc} */\nexport const {name} = {value};\n");
+        }
+        let (name, port, doc) = self.registry.websocket.port();
+        let _ = writeln!(o, "/** {doc} */\nexport const {name} = {port};\n");
+        for (name, text, doc) in self.registry.websocket.texts() {
+            let _ = writeln!(o, "/** {doc} */\nexport const {name} = {text:?};\n");
         }
 
         for limit in self.registry.transport_limits() {

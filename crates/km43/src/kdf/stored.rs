@@ -123,7 +123,9 @@ impl StoredEnrolment {
     ///
     /// `Discover` carries no MAC (P-054), so this guards against the wrong
     /// controller or a factory reset, not against a relay: the `Hello` proof is
-    /// what the controller checks. Either error means pair again.
+    /// what the controller checks. `OtherController` means this address is
+    /// not the enrolled controller, so try the next one; `OtherEpoch` means
+    /// pair again.
     pub fn restore(&self, discovery: &Discovery<'_>) -> Result<Enrolment, StoredEnrolmentError> {
         if DeviceId::new(discovery.device_id) != self.device_id {
             return Err(StoredEnrolmentError::OtherController);
@@ -143,8 +145,10 @@ impl StoredEnrolment {
     }
 }
 
-/// Why a stored enrolment could not be read or used. Every variant ends the
-/// same way for the client, which is pairing again.
+/// Why a stored enrolment could not be read or used. Every variant but
+/// `OtherController` ends in pairing again; that one ends in trying the next
+/// address, because on a network with several controllers it is the ordinary
+/// answer from the wrong one (P-225).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum StoredEnrolmentError {
@@ -186,7 +190,7 @@ impl fmt::Display for StoredEnrolmentError {
             Self::ZeroEpoch => out.write_str("stored enrolment has epoch 0; pair again"),
             Self::ZeroClientId => out.write_str("stored enrolment has client_id 0; pair again"),
             Self::OtherController => {
-                out.write_str("stored enrolment is for another controller; pair again")
+                out.write_str("stored enrolment is for another controller; try another address")
             }
             Self::OtherEpoch { stored, current } => write!(
                 out,
@@ -403,22 +407,22 @@ mod tests {
         );
     }
 
-    /// Every error says to pair again, which is the one thing the app does
-    /// with any of them.
+    /// Every error but one says to pair again. The exception is the answer
+    /// from the wrong controller on a network with several: told to pair, an
+    /// app would ask a person to walk to a controller that is not theirs.
     #[test]
-    fn every_error_tells_the_client_to_pair_again() {
-        let errors = [
+    fn only_another_controller_is_not_told_to_pair_again() {
+        let pair_again = [
             StoredEnrolmentError::WrongLength(3),
             StoredEnrolmentError::UnknownFormat(9),
             StoredEnrolmentError::ZeroEpoch,
             StoredEnrolmentError::ZeroClientId,
-            StoredEnrolmentError::OtherController,
             StoredEnrolmentError::OtherEpoch {
                 stored: epoch(3),
                 current: epoch(4),
             },
         ];
-        for error in errors {
+        for error in pair_again {
             let mut text = Text::default();
             fmt::write(&mut text, format_args!("{error}")).expect("fits");
             assert!(
@@ -427,6 +431,18 @@ mod tests {
                 text.as_str()
             );
         }
+        let mut text = Text::default();
+        fmt::write(
+            &mut text,
+            format_args!("{}", StoredEnrolmentError::OtherController),
+        )
+        .expect("fits");
+        assert!(
+            text.as_str().ends_with("; try another address"),
+            "{:?}",
+            text.as_str()
+        );
+        assert!(!text.as_str().contains("pair"), "{:?}", text.as_str());
     }
 
     /// A fixed buffer for `Display`, since there is no allocator here.
