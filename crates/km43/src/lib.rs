@@ -6,11 +6,14 @@
 //! than by a rule somebody remembers. Nothing here names a peripheral either —
 //! a caller hands it bytes.
 //!
-//! One feature, `defmt`, off by default: it derives `defmt::Format` on the
+//! The `defmt` feature, off by default: it derives `defmt::Format` on the
 //! identifiers, counters, enums, verdicts and errors, so a consumer logging on
 //! the target can derive it on a row that holds a [`ClientId`] instead of
 //! writing the impl by hand. Never on a key or a tag, which have no `Debug`
 //! for the same reason.
+//!
+//! The `vectors` feature exposes the canonical published JSON as `VECTORS_JSON`
+//! for consumer tests. It adds no parser or allocator dependency.
 
 #![no_std]
 #![deny(unsafe_code)]
@@ -98,3 +101,9 @@ pub use signed::*;
 pub use subscribe::*;
 pub use time::*;
 pub use wrapper::*;
+
+/// Published protocol vectors, including BLE traces, pinned to this crate version.
+/// Enable `vectors` in a dev-dependency and read this JSON in consumer tests;
+/// the crate provides the text without parsing it or allocating.
+#[cfg(feature = "vectors")]
+pub const VECTORS_JSON: &str = include_str!("../vectors.json");

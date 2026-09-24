@@ -27,7 +27,10 @@ use km43::{
     VendorNamespace, Version, Wrapped, Wrapper,
 };
 
-const VECTORS: &str = include_str!("../../../docs/protocol/vectors/v1.json");
+#[cfg(feature = "vectors")]
+const VECTORS: &str = km43::VECTORS_JSON;
+#[cfg(not(feature = "vectors"))]
+const VECTORS: &str = include_str!("../vectors.json");
 
 /// The hex blobs under a given key, without a JSON parser.
 ///

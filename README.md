@@ -59,6 +59,17 @@ identifier, counter, enum and error types; keys and tags never get it. The contr
 origin89 still builds from its own copy of the crate until it is rewritten
 against this one.
 
+Consumer tests can enable `vectors` to read `km43::VECTORS_JSON`, the complete
+canonical JSON (including BLE traces) shipped with the pinned crate version.
+The feature adds no parser or allocator dependency; tests choose how to read it.
+The packaged file comes from `docs/protocol/vectors/v1.json` through a symlink,
+so `just vectors` remains the only writer.
+
+```toml
+[dev-dependencies]
+km43 = { version = "0.6", features = ["vectors"] }
+```
+
 ## License
 
 Code is licensed under either [MIT](LICENSE-MIT) or
