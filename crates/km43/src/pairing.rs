@@ -1434,6 +1434,61 @@ mod tests {
         );
     }
 
+    /// P-064: a phone that scanned the wrong label is refused under a key it
+    /// does not hold, so the `bad_proof` it earned fails its MAC like a forgery.
+    ///
+    /// The apps bench found this: "repeat with a wrong secret" could only ever
+    /// report a protocol error. The converse is what makes the rule worth
+    /// writing: a `bad_proof` that does verify says the code was right and the
+    /// fields were changed on the way, so the phone must not send anybody back
+    /// to rescan a label that was never the problem.
+    #[test]
+    fn p_064_a_wrong_secret_cannot_authenticate_the_bad_proof_it_earns() {
+        let mut misread = PRINTED_SECRET;
+        if let Some(byte) = misread.first_mut() {
+            *byte ^= 0x01;
+        }
+        let phone = DeviceSecret::new(DeviceId::new(DEVICE_ID), PrintedSecret::new(misread));
+        let mut bytes = [0u8; SCRATCH];
+        let len = request()
+            .write(
+                &phone.pair_key(),
+                &attempt(),
+                header(MessageType::Pair),
+                &mut bytes,
+            )
+            .expect("the phone proves under the key it derived");
+        assert_eq!(
+            Frame::of(len, bytes)
+                .claimed()
+                .expect("the request parses")
+                .verify(&device().pair_key(), &attempt())
+                .err(),
+            Some(BadProof),
+            "a proof under the wrong printed secret passed"
+        );
+
+        let refusal = answered(&answer(Outcome::BadProof), &attempt());
+        assert_eq!(
+            refusal
+                .acked()
+                .expect("the refusal decodes")
+                .verify(&phone.pair_key(), &attempt(), Epoch::FIRST)
+                .err(),
+            Some(PairError::Mac(MacError::Mismatch)),
+            "the phone read a refusal it cannot authenticate"
+        );
+        assert_eq!(
+            refusal
+                .acked()
+                .expect("the refusal decodes")
+                .verify(&device().pair_key(), &attempt(), Epoch::FIRST)
+                .map(|response| response.outcome),
+            Ok(Outcome::BadProof),
+            "a phone holding the right code could not verify its bad_proof"
+        );
+    }
+
     /// The other half of the same preimage: `client_kind` is attested, so a
     /// relay cannot promote a phone to a cloud enrolment on its way past.
     ///

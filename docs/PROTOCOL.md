@@ -1308,6 +1308,25 @@ cannot be derived until `client_id` has been read out of this very message. The
 earlier draft left it authenticated by nothing, which let the comms processor
 choose a client's identity and its replay baseline.
 
+**A wrong printed secret earns a refusal its client cannot check.** The
+controller MACs outcome 3 under the real `pair_key` (P-051), and a client that
+scanned the wrong label derives a different one, so the `bad_proof` it earned
+fails the MAC exactly as a forged reply does. It cannot tell the two apart.
+The client MUST treat a pairing response that fails the MAC as a failed attempt
+that may mean a wrong code: it MUST NOT enrol, MUST NOT prove a retry against
+that response's `next_challenge`, and starts any retry from `Discover` (P-060).
+It MAY tell the person the code may be wrong and offer to rescan. It MUST NOT
+say the code *is* wrong or that the controller refused: the response is
+unauthenticated, and P-055 applies. Every retry is one more proof the
+controller counts against `MAX_AUTH_FAILURES` (P-051).
+
+The converse is a statement the client can make. A `bad_proof` that **verifies**
+was MAC'd under the `pair_key` the client holds, so the code was right and the
+controller received fields that do not match the proof: a `label` or
+`client_kind` rewritten in flight (P-069), or a client computing its own proof
+wrong. Telling that person to rescan sends them back to a label that was
+never the problem.
+
 **P-065** — A newly enrolled client's counter MUST start at **0**, and the
 response MUST NOT carry a starting counter. A counter supplied by the network is
 a counter an attacker can set to `2^64 − 1`, after which every write that client
