@@ -55,6 +55,8 @@ mod readlog;
 mod render;
 mod requirement;
 mod requirements;
+#[cfg(test)]
+mod residue;
 mod routing;
 mod signed;
 mod subscribe;

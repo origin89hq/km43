@@ -29,6 +29,7 @@ use core::fmt;
 use hmac::{KeyInit as _, Mac as _};
 use sha2::{Digest as _, Sha256};
 use subtle::ConstantTimeEq as _;
+use zeroize::{Zeroize as _, Zeroizing};
 
 /// Holds the `subtle` import down.
 ///
@@ -45,6 +46,19 @@ use crate::envelope::{ReqId, SessionId};
 use crate::generated::{ClientKind, MessageType, Pair};
 
 type HmacSha256 = hmac::Hmac<Sha256>;
+
+/// Holds `sha2`'s `zeroize` feature down.
+///
+/// An HMAC's state is two SHA-256 cores keyed from its key and a block buffer,
+/// and HKDF's extract passes the printed secret through that buffer as input.
+/// With the feature off, a dropped HMAC leaves both behind after every key built
+/// from them has been cleared, and no test can see the difference. `hmac` does
+/// not declare the marker on its own type, so this asks it of `Sha256`, whose
+/// marker needs both the core and the buffer to clear themselves.
+const _: () = {
+    const fn clears_on_drop<T: zeroize::ZeroizeOnDrop>() {}
+    clears_on_drop::<Sha256>();
+};
 
 /// Every key on this wire is an HKDF output asked for `L = 32`.
 const KEY_BYTES: usize = 32;
@@ -198,8 +212,15 @@ impl core::error::Error for MacError {}
 ///
 /// No `Debug`, here or on the two keys below. A key with one is a key in a bench
 /// log the day somebody adds `?key` to a span, and a compile error is a better
-/// answer than a redaction somebody can undo.
+/// answer than a redaction somebody can undo. All three clear their bytes on
+/// drop.
 pub struct PairKey([u8; KEY_BYTES]);
+
+impl Drop for PairKey {
+    fn drop(&mut self) {
+        self.0.zeroize();
+    }
+}
 
 impl PairKey {
     /// The 32 bytes HKDF produced under `km43/v1/pair-key`.
@@ -248,6 +269,12 @@ impl PairKey {
 /// A client's long-term key, derived per `epoch` and per `client_id`.
 pub struct ClientKey([u8; KEY_BYTES]);
 
+impl Drop for ClientKey {
+    fn drop(&mut self) {
+        self.0.zeroize();
+    }
+}
+
 impl ClientKey {
     /// The 32 bytes HKDF produced under `km43/v1/client-key`.
     #[must_use]
@@ -270,6 +297,12 @@ impl ClientKey {
 
 /// The key one session's traffic is authenticated under, in both directions.
 pub struct SessionKey([u8; KEY_BYTES]);
+
+impl Drop for SessionKey {
+    fn drop(&mut self) {
+        self.0.zeroize();
+    }
+}
 
 impl SessionKey {
     /// The 32 bytes HKDF produced under `km43/v1/session-key`.
@@ -493,8 +526,11 @@ impl Preimage {
 struct Hmac256(HmacSha256);
 
 impl Hmac256 {
+    /// The padded key is borrowed into the HMAC rather than converted by value,
+    /// so it is not copied again on the way in and this copy is cleared.
     fn keyed(key: &[u8]) -> Self {
-        Self(HmacSha256::new(&block_key(key).into()))
+        let block = Zeroizing::new(block_key(key));
+        Self(HmacSha256::new((&*block).into()))
     }
 
     fn feed(mut self, data: &[u8]) -> Self {
@@ -1125,6 +1161,41 @@ mod tests {
         assert_eq!(
             Rendering::<64>::displayed(&Domain::HelloProof).bytes(),
             b"km43/v1/hello-proof"
+        );
+    }
+
+    impl crate::residue::Unpadded for PairKey {}
+    impl crate::residue::Unpadded for ClientKey {}
+    impl crate::residue::Unpadded for SessionKey {}
+
+    const_assert!(size_of::<PairKey>() == KEY_BYTES);
+    const_assert!(size_of::<ClientKey>() == KEY_BYTES);
+    const_assert!(size_of::<SessionKey>() == KEY_BYTES);
+
+    /// All three derived keys outlive the call that made them, held by a client
+    /// or a session table, and each is freed with its bytes still in it unless
+    /// its own `Drop` clears them. Nothing else fails without that `Drop`: the
+    /// tags come out the same either way.
+    #[test]
+    fn a_dropped_key_leaves_only_zeros() {
+        let pair: [u8; KEY_BYTES] = crate::residue::after_drop(PairKey::new([0x5A; KEY_BYTES]));
+        let client: [u8; KEY_BYTES] = crate::residue::after_drop(ClientKey::new([0x5A; KEY_BYTES]));
+        let session: [u8; KEY_BYTES] =
+            crate::residue::after_drop(SessionKey::new([0x5A; KEY_BYTES]));
+        assert_eq!(pair, [0; KEY_BYTES], "PairKey");
+        assert_eq!(client, [0; KEY_BYTES], "ClientKey");
+        assert_eq!(session, [0; KEY_BYTES], "SessionKey");
+    }
+
+    /// Clearing the padded key after keying must not clear it before: the HMAC
+    /// has to have taken its pads from the real key, or every tag here is an
+    /// HMAC under zeros and still self-consistent.
+    #[test]
+    fn keying_an_hmac_clears_the_padded_key_only_after_it_is_used() {
+        let key = [0x5A; KEY_BYTES];
+        assert_ne!(
+            Hmac256::keyed(&key).feed(b"x").full(),
+            Hmac256::keyed(&[0; KEY_BYTES]).feed(b"x").full()
         );
     }
 }

@@ -23,6 +23,7 @@ use core::num::NonZeroU32;
 
 use hkdf::HkdfExtract;
 use sha2::Sha256;
+use zeroize::Zeroize as _;
 
 use crate::envelope::SessionId;
 use crate::mac::{ClientKey, PairKey, SessionKey};
@@ -109,7 +110,8 @@ impl fmt::Display for Derivation {
 ///
 /// No `Debug`, for the reason the keys in `mac.rs` have none: the one secret on
 /// this device that can never be rotated should not be one `?secret` away from
-/// a bench log.
+/// a bench log. Cleared on drop, so a client that clears its own copy is not
+/// left with this one in freed memory.
 pub struct PrintedSecret([u8; PRINTED_SECRET_BYTES]);
 
 impl PrintedSecret {
@@ -117,6 +119,12 @@ impl PrintedSecret {
     #[must_use]
     pub const fn new(bytes: [u8; PRINTED_SECRET_BYTES]) -> Self {
         Self(bytes)
+    }
+}
+
+impl Drop for PrintedSecret {
+    fn drop(&mut self) {
+        self.0.zeroize();
     }
 }
 
@@ -246,7 +254,8 @@ impl Handshake {
 /// They are held together because every key on the device descends from this
 /// pair and from nothing else, and because they are the `salt` and the `IKM` of
 /// both device-level derivations — one struct is one place for them to be the
-/// right way round.
+/// right way round. Dropping it clears the printed secret; the `device_id` is
+/// printed on the label and left alone.
 pub struct DeviceSecret {
     device_id: DeviceId,
     printed_secret: PrintedSecret,
@@ -325,10 +334,17 @@ impl DeviceSecret {
 ///
 /// The `client_id` rides along because the `Hello` proof names it inside the
 /// body it authenticates (P-057): taken from the enrolment that holds the key,
-/// the field and the key cannot end up naming two different clients.
+/// the field and the key cannot end up naming two different clients. The key is
+/// cleared on drop; the `client_id` is on the wire in every `Hello`.
 pub struct Enrolment {
     client_id: ClientId,
     key: [u8; DERIVED_KEY_BYTES],
+}
+
+impl Drop for Enrolment {
+    fn drop(&mut self) {
+        self.key.zeroize();
+    }
 }
 
 impl Enrolment {
@@ -372,7 +388,16 @@ struct Ikm<'a>(&'a [u8]);
 
 /// The pseudorandom key of RFC 5869 §2.2 — `HMAC(salt, IKM)` — and the one
 /// place the two arguments meet.
+///
+/// Cleared on drop like the keys it produces: a device-level PRK derives every
+/// key on the unit, so it is worth as much as the printed secret it came from.
 struct Prk([u8; DIGEST_BYTES]);
+
+impl Drop for Prk {
+    fn drop(&mut self) {
+        self.0.zeroize();
+    }
+}
 
 impl Prk {
     fn of(salt: Salt<'_>, ikm: Ikm<'_>) -> Self {
@@ -933,5 +958,78 @@ mod tests {
             }
             Ok(())
         }
+    }
+
+    impl crate::residue::Unpadded for PrintedSecret {}
+    impl crate::residue::Unpadded for DeviceSecret {}
+    impl crate::residue::Unpadded for Enrolment {}
+    impl crate::residue::Unpadded for Prk {}
+
+    const_assert!(size_of::<PrintedSecret>() == PRINTED_SECRET_BYTES);
+    const_assert!(size_of::<DeviceSecret>() == DEVICE_ID_BYTES + PRINTED_SECRET_BYTES);
+    const_assert!(size_of::<Enrolment>() == size_of::<u32>() + DERIVED_KEY_BYTES);
+    const_assert!(size_of::<Prk>() == DIGEST_BYTES);
+
+    /// The bug this closes: a client that scanned the QR code clears its own
+    /// copy of the printed secret, and ours stays in freed memory until
+    /// something happens to reuse it.
+    #[test]
+    fn a_dropped_printed_secret_leaves_only_zeros() {
+        let residue: [u8; 32] = crate::residue::after_drop(PrintedSecret::new([0xCD; 32]));
+        assert_eq!(residue, [0; 32]);
+    }
+
+    /// The printed secret is cleared through the struct that holds it, with no
+    /// `Drop` of the holder's own. The `device_id` surviving is the check that
+    /// the bytes read back are the value's: a read of the wrong memory would
+    /// find no `0xCD` either.
+    #[test]
+    fn dropping_a_device_secret_clears_the_printed_secret_inside_it() {
+        let device = DeviceSecret::new(DeviceId::new([0xAB; 16]), PrintedSecret::new([0xCD; 32]));
+        let residue: [u8; 48] = crate::residue::after_drop(device);
+        assert!(
+            !residue.contains(&0xCD),
+            "printed secret survived: {residue:02x?}"
+        );
+        assert!(
+            residue.windows(16).any(|window| window == [0xAB; 16]),
+            "not the value's memory: {residue:02x?}"
+        );
+    }
+
+    /// An enrolment is where a client's long-term key lives between a pairing
+    /// and every later `Hello`. Only the `client_id`'s one non-zero byte may
+    /// survive; a key cleared halfway leaves more.
+    #[test]
+    fn a_dropped_enrolment_keeps_its_client_id_and_loses_its_key() {
+        let device = DeviceSecret::new(DeviceId::new([0xAB; 16]), PrintedSecret::new([0xCD; 32]));
+        let client_id = ClientId::new(7).expect("seven is a slot");
+        let enrolment = device.enrolment(Epoch::FIRST, client_id);
+        assert!(
+            enrolment.key.iter().filter(|&&b| b != 0).count() > 1,
+            "the fixture's key has to be distinguishable from a cleared one"
+        );
+        let residue: [u8; 36] = crate::residue::after_drop(enrolment);
+        let mut survivors = residue.iter().filter(|&&b| b != 0);
+        assert_eq!(
+            survivors.next(),
+            Some(&7),
+            "not the value's memory: {residue:02x?}"
+        );
+        assert_eq!(survivors.next(), None, "key bytes survived: {residue:02x?}");
+    }
+
+    /// The PRK is the extract of the printed secret, and every key on the unit
+    /// expands from it. It lives only for the length of one derivation, which is
+    /// long enough to leave it on the stack of every call that made one.
+    #[test]
+    fn a_dropped_prk_leaves_only_zeros() {
+        let prk = Prk::of(Salt(&[0xAB; 16]), Ikm(&[0xCD; 32]));
+        assert_ne!(
+            prk.0, [0; 32],
+            "the fixture has to be distinguishable from a cleared one"
+        );
+        let residue: [u8; 32] = crate::residue::after_drop(prk);
+        assert_eq!(residue, [0; 32]);
     }
 }
