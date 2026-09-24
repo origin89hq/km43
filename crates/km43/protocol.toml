@@ -185,6 +185,24 @@ auth_response = "rsp"
 status = "reserved"
 since = "1.0"
 
+[[messages]]
+request = 0x11
+response = 0x91
+name = "WifiScan"
+auth_request = "wrq"
+auth_response = "rsp"
+status = "live"
+since = "1.0"
+
+[[messages]]
+request = 0x12
+response = 0x92
+name = "WifiStatus"
+auth_request = "wrq"
+auth_response = "rsp"
+status = "live"
+since = "1.0"
+
 [[message_ranges]]
 request_lo = 0x60
 request_hi = 0x7E
@@ -1624,7 +1642,7 @@ status = "live"
 [[client_capability]]
 bit = 1
 name = "write_network_and_cloud"
-may = "write the **network** (`0x0020`) and **cloud** (`0x0021`) sections"
+may = "write the **network** (`0x0020`) and **cloud** (`0x0021`) sections, and refresh a `WifiScan`"
 granted_to = ["app", "browser", "cli"]
 status = "live"
 
@@ -2230,6 +2248,12 @@ class = "A"
 status = "live"
 
 [[events]]
+kind = 2054
+name = "wifi status changed"
+class = "A"
+status = "live"
+
+[[events]]
 kind = 2305
 name = "topology changed"
 class = "A"
@@ -2375,7 +2399,12 @@ name = "any behaviour is in shadow mode"
 status = "live"
 
 [[codes.capability_bit]]
-range = "8–31"
+number = 8
+name = "wifi scan and join status"
+status = "live"
+
+[[codes.capability_bit]]
+range = "9–31"
 name = "unallocated"
 
 
@@ -2403,6 +2432,127 @@ meaning = "Was measured, is no longer current: older than its channel's maximum 
 value = 5
 name = "absent"
 meaning = "No reading. **The value key is omitted entirely**"
+
+
+[[enums.scan_state]]
+value = 1
+name = "none"
+meaning = "No scan has completed since the controller booted, and none is running"
+
+[[enums.scan_state]]
+value = 2
+name = "running"
+meaning = "The controller has asked the comms processor for a scan and holds no answer yet"
+
+[[enums.scan_state]]
+value = 3
+name = "complete"
+meaning = "The most recent scan completed; its list is the one held"
+
+[[enums.scan_state]]
+value = 4
+name = "failed"
+meaning = "The most recent scan was refused, failed or timed out. A list held from before it stays"
+
+[[enums.scan_refusal]]
+value = 1
+name = "too_soon"
+meaning = "A scan started less than `SCAN_INTERVAL_MS` ago (P-218)"
+
+[[enums.scan_refusal]]
+value = 2
+name = "radio_off"
+meaning = "The network section has never been written, so the radio has no country and may not scan"
+
+[[enums.scan_refusal]]
+value = 3
+name = "link_down"
+meaning = "The comms link is not up"
+
+[[enums.scan_refusal]]
+value = 4
+name = "unauthorised"
+meaning = "This client's capability mask lacks bit 1 (P-105)"
+
+[[enums.wifi_security]]
+value = 1
+name = "open"
+meaning = "No passphrase. The network section cannot join it"
+
+[[enums.wifi_security]]
+value = 2
+name = "wpa2_personal"
+meaning = "WPA2 with a passphrase, including WPA/WPA2 mixed mode"
+
+[[enums.wifi_security]]
+value = 3
+name = "wpa3_personal"
+meaning = "WPA3 SAE with a passphrase, including WPA2/WPA3 transition mode"
+
+[[enums.wifi_security]]
+value = 4
+name = "other"
+meaning = "Anything a WPA passphrase does not join: WEP, WPA alone, enterprise, OWE"
+
+[[enums.wifi_band]]
+value = 1
+name = "ghz_2_4"
+meaning = "2.4 GHz"
+
+[[enums.wifi_band]]
+value = 2
+name = "ghz_5"
+meaning = "5 GHz"
+
+[[enums.wifi_band]]
+value = 3
+name = "ghz_6"
+meaning = "6 GHz"
+
+[[enums.wifi_state]]
+value = 1
+name = "off"
+meaning = "The radio holds no network or no radio metadata and is not trying"
+
+[[enums.wifi_state]]
+value = 2
+name = "joining"
+meaning = "Trying, with no outcome yet for this version since the comms processor booted"
+
+[[enums.wifi_state]]
+value = 3
+name = "joined"
+meaning = "Associated and holding an IPv4 address"
+
+[[enums.wifi_state]]
+value = 4
+name = "failed"
+meaning = "Not joined; `reason` is the most recent failure, and the radio is still trying"
+
+[[enums.wifi_failure]]
+value = 1
+name = "auth_failed"
+meaning = "The access point refused the passphrase, or the handshake did not complete"
+
+[[enums.wifi_failure]]
+value = 2
+name = "not_found"
+meaning = "No access point with this SSID was heard on a channel the radio may use"
+
+[[enums.wifi_failure]]
+value = 3
+name = "no_ip"
+meaning = "Associated, and no address was assigned"
+
+[[enums.wifi_failure]]
+value = 4
+name = "lost"
+meaning = "Was joined, and the association dropped"
+
+[[enums.wifi_failure]]
+value = 5
+name = "other"
+meaning = "A failure the radio could not place in the four above"
 
 
 [[enums.time_source]]
@@ -2660,6 +2810,31 @@ value = 7
 name = "rolled_back"
 status = "live"
 
+[[link_outcomes.wifi_scan]]
+value = 1
+name = "started"
+status = "live"
+
+[[link_outcomes.wifi_scan]]
+value = 2
+name = "refused_busy"
+status = "live"
+
+[[link_outcomes.wifi_scan]]
+value = 3
+name = "refused_radio_off"
+status = "live"
+
+[[link_outcomes.wifi_scan_result]]
+value = 1
+name = "complete"
+status = "live"
+
+[[link_outcomes.wifi_scan_result]]
+value = 2
+name = "failed"
+status = "live"
+
 [[link_enums.disconnect_reason]]
 value = 1
 name = "closed_by_client"
@@ -2841,6 +3016,27 @@ request = 0x69
 response = 0xE9
 name = "PairingWindow"
 direction = "controller-to-comms"
+
+# What the radio can hear and what it did with the credentials it holds. The
+# controller asks for a scan; the result and the join state are the comms
+# processor's reports, so they travel the other way.
+[[link_messages]]
+request = 0x6A
+response = 0xEA
+name = "WifiScan"
+direction = "controller-to-comms"
+
+[[link_messages]]
+request = 0x6B
+response = 0xEB
+name = "WifiScanResult"
+direction = "comms-to-controller"
+
+[[link_messages]]
+request = 0x6C
+response = 0xEC
+name = "WifiState"
+direction = "comms-to-controller"
 
 
 # ---------------------------------------------------------------------------

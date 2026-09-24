@@ -64,6 +64,7 @@ mod routing;
 mod signed;
 mod subscribe;
 mod time;
+mod wifi;
 mod wrapper;
 
 pub use admission::*;
@@ -102,6 +103,7 @@ pub use routing::*;
 pub use signed::*;
 pub use subscribe::*;
 pub use time::*;
+pub use wifi::*;
 pub use wrapper::*;
 
 /// Published protocol vectors, including BLE traces, pinned to this crate version.

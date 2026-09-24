@@ -30,15 +30,16 @@ use crate::generated::{ErrorCode, MessageType};
 pub struct EmptyBody;
 
 impl EmptyBody {
-    /// The two messages whose inner body has no keys, so a caller cannot
-    /// reach for this on a message that owes fields.
+    /// The messages whose inner body has no keys, so a caller cannot reach
+    /// for this on a message that owes fields.
     ///
     /// `Goodbye`'s two directions are both here: P-076 gives the response no
     /// work to report, because clearing a binding either happened or the frame
-    /// never arrived.
+    /// never arrived. `WifiStatus` asks for the one report there is, so its
+    /// request names nothing; its response does not wear one.
     const fn wears_one(kind: MessageType) -> bool {
         match kind {
-            MessageType::Goodbye | MessageType::GoodbyeResponse => true,
+            MessageType::Goodbye | MessageType::GoodbyeResponse | MessageType::WifiStatus => true,
             // Written out rather than `matches!`, which is a `_` arm wearing a
             // macro: a twenty-seventh type would land in neither list and this
             // file would compile, while `Direction::of` and `signs` — the two
@@ -55,6 +56,9 @@ impl EmptyBody {
             | MessageType::ConcernsResponse
             | MessageType::History
             | MessageType::HistoryResponse
+            | MessageType::WifiScan
+            | MessageType::WifiScanResponse
+            | MessageType::WifiStatusResponse
             | MessageType::Subscribe
             | MessageType::SubscribeResponse
             | MessageType::EventResponse

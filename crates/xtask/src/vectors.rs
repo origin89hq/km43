@@ -801,6 +801,7 @@ enum Msg {
     Command = 0x08,
     Time = 0x0A,
     Pair = 0x0B,
+    WifiScan = 0x11,
     Discover = 0x80,
     // `Hello` is the 0x81 *response*; the request 0x01 has no vector here.
     Hello = 0x81,
@@ -810,6 +811,8 @@ enum Msg {
     Ack = 0x88,
     TimeAck = 0x8A,
     PairAck = 0x8B,
+    WifiScanAnswer = 0x91,
+    WifiStatusAnswer = 0x92,
     Error = 0xFF,
 }
 
@@ -847,6 +850,11 @@ enum Link {
     EnterDownloadAck,
     PairingWindow,
     PairingWindowAck,
+    WifiScan,
+    WifiScanAck,
+    WifiScanResult,
+    WifiScanResultAck,
+    WifiState,
 }
 
 impl Link {
@@ -867,6 +875,11 @@ impl Link {
             Self::EnterDownloadAck => ("EnterDownload", true),
             Self::PairingWindow => ("PairingWindow", false),
             Self::PairingWindowAck => ("PairingWindow", true),
+            Self::WifiScan => ("WifiScan", false),
+            Self::WifiScanAck => ("WifiScan", true),
+            Self::WifiScanResult => ("WifiScanResult", false),
+            Self::WifiScanResultAck => ("WifiScanResult", true),
+            Self::WifiState => ("WifiState", false),
         };
         let entry = registry
             .link_messages
@@ -881,6 +894,11 @@ impl Link {
         Ok(u8::try_from(opcode.0)?)
     }
 }
+
+/// A published Wi-Fi body: its name, the message `type` it travels in or
+/// `None` for the event record, the authentication it travels under, the body,
+/// its keys in words, and its values in words.
+type WifiBody<'a> = (&'a str, Option<u8>, &'a str, Cb, Option<String>, &'a str);
 
 /// One published link frame before it is framed: the envelope's three header
 /// fields, the body, and the body in words for whoever reads the file without a
@@ -2206,7 +2224,175 @@ impl Builder {
         });
         cases.extend(Self::pairing_window_cases());
         cases.extend(Self::release_cases()?);
+        cases.extend(Self::wifi_cases());
         Ok(cases)
+    }
+
+    /// The access points both the link result and the client answer carry,
+    /// strongest first, one per SSID (L-202). The second SSID is the widest
+    /// the section allows and not ASCII, so a decoder that counts characters
+    /// instead of bytes, or refuses UTF-8, disagrees here.
+    fn wifi_rows() -> Cb {
+        Cb::A(vec![
+            cmap! {1 => Cb::T("cabin".into()), 2 => Cb::I(-48), 3 => Cb::U(3), 4 => Cb::U(1), 5 => Cb::U(6)},
+            cmap! {
+                1 => Cb::T("chalet-été-réseau-du-voisin-2".into()),
+                2 => Cb::I(-71),
+                3 => Cb::U(2),
+                4 => Cb::U(1),
+                5 => Cb::U(11),
+            },
+            cmap! {1 => Cb::T("shed guest".into()), 2 => Cb::I(-128), 3 => Cb::U(1), 4 => Cb::U(1), 5 => Cb::U(1)},
+        ])
+    }
+
+    const WIFI_ROWS_READABLE: &'static str = "[{1:ssid=\"cabin\", 2:rssi=-48, 3:security=wpa3_personal, 4:band=ghz_2_4, 5:channel=6}, {1:ssid=\"chalet-été-réseau-du-voisin-2\" (32 bytes), 2:rssi=-71, 3:security=wpa2_personal, 4:band=ghz_2_4, 5:channel=11}, {1:ssid=\"shed guest\", 2:rssi=-128, 3:security=open, 4:band=ghz_2_4, 5:channel=1}]";
+
+    /// The scan exchange and two join reports. The refusal rather than
+    /// `started`, because radio-off is the answer a unit out of its box gives
+    /// and the one a controller has to turn into a client's `radio_off`.
+    fn wifi_cases() -> Vec<LinkCase> {
+        vec![
+            LinkCase {
+                name: "wifi_scan_0x6a",
+                kind: Link::WifiScan,
+                session: 0,
+                req_id: 10,
+                body: cmap! {1 => Cb::U(1)},
+                readable: "{1:scan=1}".into(),
+            },
+            LinkCase {
+                name: "wifi_scan_ack_0xea",
+                kind: Link::WifiScanAck,
+                session: 0,
+                req_id: 10,
+                body: cmap! {1 => Cb::U(3)},
+                readable: "{1:outcome=refused_radio_off}".into(),
+            },
+            LinkCase {
+                name: "wifi_scan_result_0x6b",
+                kind: Link::WifiScanResult,
+                session: 0,
+                req_id: 11,
+                body: cmap! {1 => Cb::U(2), 2 => Cb::U(1), 3 => Self::wifi_rows(), 4 => Cb::U(4)},
+                readable: format!(
+                    "{{1:scan=2, 2:outcome=complete, 3:aps={}, 4:unlisted=4}}",
+                    Self::WIFI_ROWS_READABLE
+                ),
+            },
+            LinkCase {
+                name: "wifi_scan_result_failed_0x6b",
+                kind: Link::WifiScanResult,
+                session: 0,
+                req_id: 12,
+                body: cmap! {1 => Cb::U(3), 2 => Cb::U(2)},
+                readable: "{1:scan=3, 2:outcome=failed}; no rows and no count".into(),
+            },
+            LinkCase {
+                name: "wifi_scan_result_ack_0xeb",
+                kind: Link::WifiScanResultAck,
+                session: 0,
+                req_id: 12,
+                body: cmap! {1 => Cb::U(3)},
+                readable: "{1:scan=3}".into(),
+            },
+            LinkCase {
+                name: "wifi_state_joined_0x6c",
+                kind: Link::WifiState,
+                session: 0,
+                req_id: 13,
+                body: cmap! {1 => Cb::U(2), 2 => Cb::U(3), 4 => Cb::B(vec![192, 168, 1, 42])},
+                readable: "{1:version=2, 2:state=joined, 4:ipv4=192.168.1.42}".into(),
+            },
+            LinkCase {
+                name: "wifi_state_failed_0x6c",
+                kind: Link::WifiState,
+                session: 0,
+                req_id: 14,
+                body: cmap! {1 => Cb::U(2), 2 => Cb::U(4), 3 => Cb::U(1)},
+                readable: "{1:version=2, 2:state=failed, 3:reason=auth_failed}".into(),
+            },
+        ]
+    }
+
+    /// `WifiScan` and `WifiStatus` as a client reads them, and the record the
+    /// controller writes. The answer's rows are the link result's, byte for
+    /// byte, because the controller relays them (L-202).
+    fn wifi_entries() -> Result<Vec<(&'static str, Value)>> {
+        const REQUEST: &str = "this is the inner body; on the wire it is key 1 of the wrapper, whose key 2 is a MAC under session_key with the label 'km43/v1/wrq'";
+        const WRAPPED: &str = "this is the inner body; on the wire it is key 1 of the wrapper, whose key 2 is a MAC under session_key with the label 'km43/v1/rsp'";
+        const RECORD: &str = "this is an event body, kind 0x0806 wifi status changed, class A; on the wire it is key 4 of Event 0x04";
+        let bodies: Vec<WifiBody<'_>> = vec![
+            (
+                "wifiscan_0x11",
+                Some(Msg::WifiScan as u8),
+                REQUEST,
+                cmap! {1 => Cb::Bool(true)},
+                Some("{1:refresh}".into()),
+                "refresh true: scan unless one ran in the last ten seconds",
+            ),
+            (
+                "wifiscan_0x91",
+                Some(Msg::WifiScanAnswer as u8),
+                WRAPPED,
+                cmap! {1 => Cb::U(3), 3 => Cb::U(4200), 4 => Self::wifi_rows(), 5 => Cb::U(4)},
+                None,
+                "scan complete, age_ms 4200, unlisted 4, and no key 2; key 4 is wifi_scan_result_0x6b's key 3 byte for byte",
+            ),
+            (
+                "wifiscan_refused_0x91",
+                Some(Msg::WifiScanAnswer as u8),
+                WRAPPED,
+                cmap! {1 => Cb::U(1), 2 => Cb::U(2)},
+                None,
+                "scan none, refused radio_off: the network section was never written, so no list and no scan (P-218)",
+            ),
+            (
+                "wifistatus_0x92",
+                Some(Msg::WifiStatusAnswer as u8),
+                WRAPPED,
+                cmap! {1 => Cb::U(2), 2 => Cb::U(2), 3 => Cb::U(3), 5 => Cb::B(vec![192, 168, 1, 42])},
+                None,
+                "section 2, and the radio joined on version 2 at 192.168.1.42: the answer to the write that made version 2",
+            ),
+            (
+                "wifistatus_unknown_0x92",
+                Some(Msg::WifiStatusAnswer as u8),
+                WRAPPED,
+                cmap! {1 => Cb::U(2)},
+                None,
+                "section 2 and no report: the comms processor has not reported since it last booted (P-219)",
+            ),
+            (
+                "wifistatuschanged_0x0806",
+                None,
+                RECORD,
+                cmap! {1 => Cb::U(3), 2 => Cb::U(2), 3 => Cb::U(4), 4 => Cb::U(1)},
+                None,
+                "section 3 written while the radio still reports version 2 failed auth_failed: the verdict on the previous write, which key 2 says (P-219)",
+            ),
+        ];
+        bodies
+            .into_iter()
+            .map(|(name, kind, authentication, body, readable, meaning)| {
+                let bytes = cbor(&body)?;
+                let mut fields = Vec::new();
+                if let Some(kind) = kind {
+                    fields.push(("type", json!(kind)));
+                } else {
+                    fields.push(("kind", json!(0x0806)));
+                    fields.push(("class", json!("A")));
+                }
+                fields.extend([
+                    ("authentication", json!(authentication)),
+                    ("body_readable", json!(readable)),
+                    ("values_readable", json!(meaning)),
+                    ("body_cbor", json!(hex(&bytes))),
+                    ("body_len", json!(bytes.len())),
+                ]);
+                Ok((name, obj(fields)))
+            })
+            .collect()
     }
 
     /// Open, closed and acknowledgement bodies for the radio-availability report.
@@ -2301,6 +2487,7 @@ impl Builder {
         .chain(self.whole_envelope_entries()?)
         .chain([Self::readlog_entry()?, Self::logpage_entry()?])
         .chain(Self::time_entries()?)
+        .chain(Self::wifi_entries()?)
         .chain(Self::config_section_entries()?)
         .chain(Self::config_message_entries()?)
         .collect::<Vec<_>>()))

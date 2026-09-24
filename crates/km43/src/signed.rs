@@ -139,6 +139,10 @@ fn signs(header: Header) -> Result<(), SignedError> {
         | MessageType::ConcernsResponse
         | MessageType::History
         | MessageType::HistoryResponse
+        | MessageType::WifiScan
+        | MessageType::WifiScanResponse
+        | MessageType::WifiStatus
+        | MessageType::WifiStatusResponse
         | MessageType::Subscribe
         | MessageType::SubscribeResponse
         | MessageType::EventResponse

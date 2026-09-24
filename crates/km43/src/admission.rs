@@ -56,7 +56,9 @@ impl MessageType {
             | Self::Inventory
             | Self::Readings
             | Self::Concerns
-            | Self::History => Admits::OnlyWithSession,
+            | Self::History
+            | Self::WifiScan
+            | Self::WifiStatus => Admits::OnlyWithSession,
             Self::DiscoverResponse
             | Self::HelloResponse
             | Self::SubscribeResponse
@@ -73,6 +75,8 @@ impl MessageType {
             | Self::ReadingsResponse
             | Self::ConcernsResponse
             | Self::HistoryResponse
+            | Self::WifiScanResponse
+            | Self::WifiStatusResponse
             | Self::ErrorResponse => Admits::NotARequest,
         }
     }

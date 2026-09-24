@@ -78,7 +78,7 @@ fn every_published_body_is_one_this_reader_walks_to_the_end() {
             seen += 1;
         }
     }
-    assert_eq!(seen, 51, "the vector file grew or shrank a body");
+    assert_eq!(seen, 57, "the vector file grew or shrank a body");
 }
 
 /// The envelope the generator publishes must decode here to the same four
@@ -300,10 +300,11 @@ fn the_pairing_and_hello_tags_are_ones_this_crate_recomputes_too() {
 /// `Readings 0x8E`, the `Concerns 0x8F`, the six event bodies — the two
 /// concern records `0x0501` and `0x0502`, then `0x0102`, `0x0901` and `0x0902`,
 /// then the boot record `0x0601`, followed by nine controller-record examples —
-/// and the twenty read by name rather than by position: `Pair 0x0B`,
+/// and the twenty-six read by name rather than by position: `Pair 0x0B`,
 /// `Pair 0x8B`, the bare `Error 0xFF`, `ReadLog 0x05`, `LogPage 0x85`, the
-/// `Time 0x0A` operation, the two `TimeAck 0x8A`, the seven config section
-/// bodies, and the five configuration messages around them.
+/// `Time 0x0A` operation, the two `TimeAck 0x8A`, the six Wi-Fi bodies, the
+/// seven config section bodies, and the five configuration messages around
+/// them.
 ///
 /// Asserted rather than assumed, so a file that lost one does not hand the
 /// wrong bytes to whichever test still finds something at index 0. The count
@@ -312,7 +313,7 @@ fn the_pairing_and_hello_tags_are_ones_this_crate_recomputes_too() {
 /// after that message was retired.
 fn published_bodies() -> Vec<Vec<u8>> {
     let found = blobs("body_cbor");
-    assert_eq!(found.len(), 40, "the vector file grew or shrank a body");
+    assert_eq!(found.len(), 46, "the vector file grew or shrank a body");
     found
 }
 
@@ -882,7 +883,7 @@ fn every_published_link_frame_is_the_one_this_crate_frames_and_checksums() {
     let envelopes = strings_of(link, "envelope_cbor");
     let frames = strings_of(link, "encoded_with_delimiter");
     let crcs = strings_of(link, "crc16_ccitt_false");
-    assert_eq!(envelopes.len(), 14, "the link block changed shape");
+    assert_eq!(envelopes.len(), 21, "the link block changed shape");
     assert_eq!(frames.len(), envelopes.len());
     assert_eq!(crcs.len(), envelopes.len());
 
@@ -1766,13 +1767,13 @@ fn every_published_link_frame_is_one_this_crate_decodes() {
     use km43::{
         ClientConnected, ClientUp, ClientUpAck, ClockOffer, DownloadReason, DownloadRequest,
         DownloadVerdict, EnterDownload, Intake, LinkEnvelope, LinkMessageType, NetConfig,
-        NetVerdict, Side, TimeOffer, TimeVerdict, arriving,
+        NetVerdict, TimeOffer, TimeVerdict, arriving,
     };
 
     let frames = link_envelopes();
     assert_eq!(
         frames.len(),
-        14,
+        21,
         "the published link section changed shape; this test walks it by count \
          so a vector that stops being published cannot go unnoticed"
     );
@@ -1797,23 +1798,7 @@ fn every_published_link_frame_is_one_this_crate_decodes() {
             // carries no session because it carries no client; a frame with one
             // is refused above, and this is where that would show.
             LinkMessageType::LinkUp => {
-                let up = km43::LinkUp::decode(envelope).expect("the published LinkUp reads");
-                assert_eq!(up.role, Side::Comms);
-                assert_eq!(up.boot_id, 0x5eed_face, "the boot_id the generator wrote");
-                // L-031 makes this `fw` the `fw_comms` the controller reports,
-                // so the corpus has to publish one text in both places. Two
-                // different ones would teach a second implementation that a
-                // controller reports something other than what it was sent.
-                assert_eq!(
-                    up.fw,
-                    input_text("fw_comms"),
-                    "the published comms LinkUp and the published Hello disagree about fw_comms"
-                );
-                assert_eq!(
-                    up.net_version,
-                    Some(0),
-                    "a board holding nothing reports 0, and 0 is a value"
-                );
+                a_published_link_up_reads(envelope);
                 seen += 1;
             }
             LinkMessageType::ClientConnected => {
@@ -1877,10 +1862,38 @@ fn every_published_link_frame_is_one_this_crate_decodes() {
                 a_published_pairing_window_reads_and_writes(kind, envelope, bytes);
                 seen += 1;
             }
+            kind @ (LinkMessageType::WifiScan
+            | LinkMessageType::WifiScanAck
+            | LinkMessageType::WifiScanResult
+            | LinkMessageType::WifiScanResultAck
+            | LinkMessageType::WifiState) => {
+                a_published_wifi_frame_reads_and_writes(kind, envelope, bytes);
+                seen += 1;
+            }
             other => panic!("a published link frame this test does not cover: {other:?}"),
         }
     }
     assert_eq!(seen, frames.len(), "a published frame was walked past");
+}
+
+fn a_published_link_up_reads(envelope: km43::LinkEnvelope<'_>) {
+    let up = km43::LinkUp::decode(envelope).expect("the published LinkUp reads");
+    assert_eq!(up.role, km43::Side::Comms);
+    assert_eq!(up.boot_id, 0x5eed_face, "the boot_id the generator wrote");
+    // L-031 makes this `fw` the `fw_comms` the controller reports, so the
+    // corpus has to publish one text in both places. Two different ones would
+    // teach a second implementation that a controller reports something other
+    // than what it was sent.
+    assert_eq!(
+        up.fw,
+        input_text("fw_comms"),
+        "the published comms LinkUp and the published Hello disagree about fw_comms"
+    );
+    assert_eq!(
+        up.net_version,
+        Some(0),
+        "a board holding nothing reports 0, and 0 is a value"
+    );
 }
 
 fn a_published_unwritten_clear_reads_and_writes(envelope: km43::LinkEnvelope<'_>, bytes: &[u8]) {
@@ -1928,6 +1941,261 @@ fn a_published_pairing_window_reads_and_writes(
         ack.write(header, &mut written).expect("writes")
     };
     assert_eq!(&written[..len], bytes);
+}
+
+/// The published scan rows, as both the link result and the client answer
+/// carry them: strongest first, one per SSID, the second exactly as wide as an
+/// SSID may be and not ASCII.
+fn published_rows() -> [km43::AccessPoint<'static>; 3] {
+    use km43::{AccessPoint, WifiBand, WifiSecurity};
+    [
+        AccessPoint {
+            ssid: "cabin",
+            rssi: -48,
+            security: WifiSecurity::Wpa3Personal,
+            band: WifiBand::Ghz24,
+            channel: 6,
+        },
+        AccessPoint {
+            ssid: "chalet-été-réseau-du-voisin-2",
+            rssi: -71,
+            security: WifiSecurity::Wpa2Personal,
+            band: WifiBand::Ghz24,
+            channel: 11,
+        },
+        AccessPoint {
+            ssid: "shed guest",
+            rssi: -128,
+            security: WifiSecurity::Open,
+            band: WifiBand::Ghz24,
+            channel: 1,
+        },
+    ]
+}
+
+/// Each Wi-Fi link frame read into the value the generator describes, and
+/// written back to the committed bytes, so a field that moves in either the
+/// generator or the codec turns this red.
+fn a_published_wifi_frame_reads_and_writes(
+    kind: km43::LinkMessageType,
+    envelope: km43::LinkEnvelope<'_>,
+    bytes: &[u8],
+) {
+    use core::num::NonZeroU32;
+    use km43::{
+        LinkMessageType, Radio, RadioReport, ScanList, ScanOrder, ScanOrderVerdict, ScanResult,
+        ScanResultAck, WifiFailure, WifiScan,
+    };
+
+    let header = km43::LinkHeader {
+        kind,
+        session: km43::SessionId::None,
+        req_id: envelope.req_id(),
+    };
+    let scan = |n| NonZeroU32::new(n).expect("non-zero");
+    let rows = published_rows();
+    let mut written = [0; 512];
+    let len = match kind {
+        LinkMessageType::WifiScan => {
+            let order = ScanOrder::decode(envelope).expect("the published order");
+            assert_eq!(order, ScanOrder { scan: scan(1) });
+            order.write(header, &mut written)
+        }
+        LinkMessageType::WifiScanAck => {
+            let verdict = ScanOrderVerdict::decode(envelope).expect("the published refusal");
+            assert_eq!(verdict.outcome, WifiScan::RefusedRadioOff);
+            verdict.write(header, &mut written)
+        }
+        LinkMessageType::WifiScanResult => {
+            let result = ScanResult::decode(envelope).expect("the published result");
+            let want = match header.req_id {
+                km43::ReqId(11) => ScanResult {
+                    scan: scan(2),
+                    list: Some(ScanList::new(&rows, 4).expect("the published rows are ordered")),
+                },
+                km43::ReqId(12) => ScanResult {
+                    scan: scan(3),
+                    list: None,
+                },
+                other => panic!("unexpected scan result request id: {other:?}"),
+            };
+            assert_eq!(result, want);
+            want.write(header, &mut written)
+        }
+        LinkMessageType::WifiScanResultAck => {
+            let ack = ScanResultAck::decode(envelope).expect("the published ack");
+            assert_eq!(ack, ScanResultAck { scan: scan(3) });
+            ack.write(header, &mut written)
+        }
+        LinkMessageType::WifiState => {
+            let report = RadioReport::decode(envelope).expect("the published report");
+            let radio = match header.req_id {
+                km43::ReqId(13) => Radio::Joined {
+                    ipv4: [192, 168, 1, 42],
+                },
+                km43::ReqId(14) => Radio::Failed {
+                    reason: WifiFailure::AuthFailed,
+                },
+                other => panic!("unexpected state report request id: {other:?}"),
+            };
+            assert_eq!(report, RadioReport { version: 2, radio });
+            report.write(header, &mut written)
+        }
+        other => panic!("{other:?} is not a Wi-Fi frame"),
+    }
+    .expect("writes");
+    assert_eq!(written.get(..len), Some(bytes), "{kind:?}");
+}
+
+/// The client's scan answer, its status answers and the record, read from
+/// the committed witness and written back. The answer's rows must be the link
+/// result's key 3 byte for byte, because the controller relays them rather
+/// than writing a list of its own (L-202).
+#[test]
+fn p_219_published_wifi_bodies_decode_and_reencode_byte_for_byte() {
+    use km43::{
+        HeldList, Radio, RadioReport, ScanAnswer, ScanList, ScanRefusal, ScanRequest, ScanState,
+        WifiFailure, WifiStatus, WifiStatusChanged,
+    };
+
+    let rows = published_rows();
+    assert_eq!(rows[1].ssid.len(), 32, "the widest SSID the section allows");
+    let list = ScanList::new(&rows, 4).expect("ordered");
+    let mut dst = [0; 512];
+
+    let published = blob_under("wifiscan_0x11", "body_cbor");
+    let want = ScanRequest { refresh: true };
+    assert_eq!(ScanRequest::decode(&published), Ok(want));
+    let len = want.encode(&mut dst).expect("fits");
+    assert_eq!(dst.get(..len), Some(published.as_slice()));
+
+    for (name, want) in [
+        (
+            "wifiscan_0x91",
+            ScanAnswer::new(
+                ScanState::Complete,
+                None,
+                Some(HeldList { age_ms: 4200, list }),
+            ),
+        ),
+        (
+            "wifiscan_refused_0x91",
+            ScanAnswer::new(ScanState::None, Some(ScanRefusal::RadioOff), None),
+        ),
+    ] {
+        let want = want.expect("a valid answer");
+        let published = blob_under(name, "body_cbor");
+        assert_eq!(ScanAnswer::decode(&published), Ok(want), "{name}");
+        let len = want.encode(&mut dst).expect("fits");
+        assert_eq!(dst.get(..len), Some(published.as_slice()), "{name}");
+    }
+
+    // The relay: the link frame's key 3 appears inside the client answer.
+    let answer = blob_under("wifiscan_0x91", "body_cbor");
+    let frame = object("wifi_scan_result_0x6b");
+    let envelope = unhex(
+        strings_of(frame, "envelope_cbor")
+            .first()
+            .expect("the published result's envelope"),
+    );
+    let mut link = CborReader::new(&envelope);
+    assert_eq!(link.array(), Ok(4));
+    for _ in 0..3 {
+        link.skip().expect("an envelope header field");
+    }
+    assert_eq!(
+        rows_under(&mut link, 3),
+        rows_under(&mut CborReader::new(&answer), 4),
+        "the client answer does not carry the link result's rows byte for byte"
+    );
+
+    for (name, want) in [
+        (
+            "wifistatus_0x92",
+            WifiStatus {
+                section: 2,
+                report: Some(RadioReport {
+                    version: 2,
+                    radio: Radio::Joined {
+                        ipv4: [192, 168, 1, 42],
+                    },
+                }),
+            },
+        ),
+        (
+            "wifistatus_unknown_0x92",
+            WifiStatus {
+                section: 2,
+                report: None,
+            },
+        ),
+    ] {
+        let published = blob_under(name, "body_cbor");
+        assert_eq!(WifiStatus::decode(&published), Ok(want), "{name}");
+        let len = want.encode(&mut dst).expect("fits");
+        assert_eq!(dst.get(..len), Some(published.as_slice()), "{name}");
+    }
+
+    let published = blob_under("wifistatuschanged_0x0806", "body_cbor");
+    let want = WifiStatusChanged {
+        section: 3,
+        report: RadioReport {
+            version: 2,
+            radio: Radio::Failed {
+                reason: WifiFailure::AuthFailed,
+            },
+        },
+    };
+    assert_eq!(WifiStatusChanged::decode(&published), Ok(want));
+    let len = want.encode(&mut dst).expect("fits");
+    assert_eq!(dst.get(..len), Some(published.as_slice()));
+    assert_eq!(
+        number_in("wifistatuschanged_0x0806", "kind"),
+        usize::from(WifiStatusChanged::KIND.0)
+    );
+}
+
+/// The generator writes each opcode from its own list. These are compared to
+/// the registry here, so a Wi-Fi body published under another message's
+/// number turns red.
+#[test]
+fn the_published_wifi_bodies_carry_the_registry_opcodes() {
+    for (name, kind) in [
+        ("wifiscan_0x11", MessageType::WifiScan),
+        ("wifiscan_0x91", MessageType::WifiScanResponse),
+        ("wifiscan_refused_0x91", MessageType::WifiScanResponse),
+        ("wifistatus_0x92", MessageType::WifiStatusResponse),
+        ("wifistatus_unknown_0x92", MessageType::WifiStatusResponse),
+    ] {
+        assert_eq!(number_in(name, "type"), usize::from(kind as u8), "{name}");
+    }
+}
+
+/// A number under `key` in the published entry `name`.
+fn number_in(name: &str, key: &str) -> usize {
+    let entry = object(name);
+    let needle = format!("\"{key}\": ");
+    let from = entry.find(&needle).expect("the entry has the key") + needle.len();
+    let tail = entry.get(from..).expect("the tail of the entry");
+    let end = tail
+        .find(|c: char| !c.is_ascii_digit())
+        .expect("the number is followed by something");
+    tail.get(..end)
+        .expect("the digits")
+        .parse()
+        .expect("a number")
+}
+
+/// The raw item under `key` in the map the reader stands before.
+fn rows_under<'a>(map: &mut CborReader<'a>, key: i64) -> &'a [u8] {
+    let pairs = map.map().expect("a map");
+    for _ in 0..pairs {
+        if map.key().expect("a key") == key {
+            return map.raw().expect("the rows");
+        }
+        map.skip().expect("a value");
+    }
+    panic!("no key {key}");
 }
 
 /// The comms firmware release pair, read out of the published link section.
@@ -1980,7 +2248,7 @@ fn a_published_release_frame_reads(kind: km43::LinkMessageType, envelope: km43::
 fn receiving(opcode: u8) -> km43::Side {
     use km43::Side::{Comms, Controller};
 
-    const AT: [(u8, km43::Side); 13] = [
+    const AT: [(u8, km43::Side); 18] = [
         (0x60, Controller), // LinkUp, either way; the STM32 receives this one
         (0x62, Controller), // ClientConnected, comms → controller
         (0x66, Controller), // TimeOffer, comms → controller
@@ -1994,6 +2262,11 @@ fn receiving(opcode: u8) -> km43::Side {
         (km43::LinkMessageType::NetConfig as u8, Comms),
         (km43::LinkMessageType::PairingWindow as u8, Comms),
         (km43::LinkMessageType::PairingWindowAck as u8, Controller),
+        (0x6a, Comms),      // WifiScan, controller → comms
+        (0xea, Controller), // WifiScanAck, back to the controller
+        (0x6b, Controller), // WifiScanResult, comms → controller
+        (0xeb, Comms),      // WifiScanResultAck, back to the comms processor
+        (0x6c, Controller), // WifiState, comms → controller
     ];
 
     AT.into_iter()

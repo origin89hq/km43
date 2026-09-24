@@ -35,6 +35,7 @@ use crate::generated::{
 };
 use crate::handshake::Version;
 use crate::limits::MAX_LINK_TEXT;
+use crate::wifi::WifiError;
 
 impl LinkErrorCode {
     /// Whether this code may be put in front of a client.
@@ -334,6 +335,8 @@ pub enum LinkError {
     /// padded or cut: a digest of any other length matches no image, and an
     /// `authorise` built on one is a release nothing can ever install.
     DigestNotSha256(usize),
+    /// A Wi-Fi scan or state body that breaks L-200 to L-204.
+    Wifi(WifiError),
     /// Pairing-window revisions start at one within each controller boot.
     ZeroPairingRevision,
     /// A pairing report cannot grant more time than P-066.
@@ -345,6 +348,15 @@ pub enum LinkError {
 impl From<CborError> for LinkError {
     fn from(why: CborError) -> Self {
         Self::Cbor(why)
+    }
+}
+
+impl From<WifiError> for LinkError {
+    fn from(why: WifiError) -> Self {
+        match why {
+            WifiError::Cbor(why) => Self::Cbor(why),
+            other => Self::Wifi(other),
+        }
     }
 }
 
@@ -388,6 +400,7 @@ impl fmt::Display for LinkError {
             Self::DigestNotSha256(len) => {
                 write!(f, "a digest of {len} bytes is not a SHA-256")
             }
+            Self::Wifi(why) => write!(f, "{why}"),
             Self::ZeroPairingRevision => f.write_str("pairing-window revision is zero"),
             Self::PairingWindowTooLong(ms) => write!(f, "pairing window of {ms} ms exceeds 120000"),
             Self::Cbor(why) => write!(f, "{why}"),

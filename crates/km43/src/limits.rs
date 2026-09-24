@@ -342,6 +342,43 @@ const HISTORY_FIXED_BYTES: usize = 65;
 /// be a `const`.
 const HISTORY_POINT_EIGHTHS: usize = 65;
 
+/// Access points in one scan list, on the link and in `WifiScan 0x91` alike (L-202, P-217). A
+/// decoder sizes its array at this before it reads a row, which is why it is fixed on the wire.
+pub const MAX_SCAN_APS: usize = 16;
+
+/// How soon after the controller started a scan it may start another (P-218), on P-004's tick.
+pub const SCAN_INTERVAL_MS: u64 = 10_000;
+
+/// How long after `started` the controller waits for the result before calling the scan failed
+/// (L-203), on P-004's tick.
+pub const SCAN_TIMEOUT_MS: u64 = 15_000;
+
+/// The spacing between two `0x0806` records for one section version (P-220), on P-004's tick.
+pub const WIFI_RECORD_INTERVAL_MS: u64 = 600_000;
+
+/// An `Ap` at its widest: map header 1, `ssid` 35 at 32 bytes, `rssi` 3 at -128, `security` 2,
+/// `band` 2, `channel` 3 at 233.
+pub const AP_MAX_BYTES: usize = 46;
+
+/// A `WifiScan 0x91` before its first row: map header 1, `scan` 2, `refused` 2, `age_ms` 6, the
+/// array key and header 2, `unlisted` 4.
+pub const SCAN_ANSWER_HEADER_BYTES: usize = 17;
+
+/// A `WifiScanResult 0x6B` before its first row: the link envelope with its two-byte type, a
+/// `u32` `req_id` and the body's map header 10, `scan` 6, `outcome` 2, the array key and header 2,
+/// `unlisted` 4. It carries no wrapper, so its budget is the payload rather than the inner body.
+pub const SCAN_RESULT_HEADER_BYTES: usize = 24;
+
+/// A `WifiStatus 0x92` or `0x0806` body at its widest: map header 1, `section` 6, `version` 6,
+/// `state` 2, and `ipv4` 6, which is wider than the `reason` it excludes.
+pub const WIFI_STATUS_MAX_BYTES: usize = 21;
+
+/// The most widest-case rows a client answer could carry.
+pub const SCAN_ANSWER_CEILING: usize = (INNER_BODY_BYTES - SCAN_ANSWER_HEADER_BYTES) / AP_MAX_BYTES;
+
+/// The most widest-case rows the link result could carry.
+pub const SCAN_RESULT_CEILING: usize = (MAX_PAYLOAD - SCAN_RESULT_HEADER_BYTES) / AP_MAX_BYTES;
+
 /// The most scalar samples the byte budget could carry.
 pub const SAMPLE_CEILING: usize = (INNER_BODY_BYTES - READINGS_HEADER_BYTES) / SAMPLE_MAX_BYTES;
 
@@ -380,6 +417,11 @@ pub const CLASS_A_TICK_CEILING: usize = 1 + 1 + MAX_CONCERN_EVENTS_PER_TICK + 1;
 const_assert!(
     MAX_LABEL <= MAX_STRING && MAX_IDENT <= MAX_STRING && MAX_LINK_TEXT <= MAX_STRING,
     "a descriptor string longer than MAX_STRING is one the CBOR writer refuses, so the row cap would be a cap the encoder never reaches"
+);
+
+const_assert!(
+    MAX_SCAN_APS <= SCAN_ANSWER_CEILING && MAX_SCAN_APS <= SCAN_RESULT_CEILING,
+    "a scan cap above either ceiling is a list the comms processor sends and the controller cannot relay, or cannot receive"
 );
 
 const_assert!(
@@ -723,6 +765,16 @@ mod tests {
             MAX_CONCERN_PAGE_BYTES,
             MAX_HISTORY_POINTS,
             MAX_COMPONENT_CMDS,
+            MAX_SCAN_APS,
+            SCAN_INTERVAL_MS,
+            SCAN_TIMEOUT_MS,
+            WIFI_RECORD_INTERVAL_MS,
+            AP_MAX_BYTES,
+            SCAN_ANSWER_HEADER_BYTES,
+            SCAN_RESULT_HEADER_BYTES,
+            WIFI_STATUS_MAX_BYTES,
+            SCAN_ANSWER_CEILING,
+            SCAN_RESULT_CEILING,
             MAX_VALIDITY_SWEEP,
             MAX_PRESENCE_SWEEP,
             MAX_CONCERN_EVENTS_PER_TICK,

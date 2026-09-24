@@ -124,7 +124,9 @@ impl Direction {
             | MessageType::Subscribe
             | MessageType::ReadLog
             | MessageType::GetConfig
-            | MessageType::Goodbye => Ok(Self::Request),
+            | MessageType::Goodbye
+            | MessageType::WifiScan
+            | MessageType::WifiStatus => Ok(Self::Request),
             MessageType::HelloResponse
             | MessageType::InventoryResponse
             | MessageType::ReadingsResponse
@@ -138,6 +140,8 @@ impl Direction {
             | MessageType::FirmwareResponse
             | MessageType::TimeResponse
             | MessageType::GoodbyeResponse
+            | MessageType::WifiScanResponse
+            | MessageType::WifiStatusResponse
             | MessageType::ErrorResponse => Ok(Self::Response),
             // The `evt` preimage puts four zero bytes where a `req_id` goes
             // (P-023), so the envelope's own `req_id` is the one field of an
@@ -966,7 +970,7 @@ mod tests {
     /// read-only request re-enters the session as its own answer, MAC and all.
     #[test]
     fn each_message_type_verifies_only_under_the_label_p_052_names_for_it() {
-        const TABLE: [(MessageType, Option<Under>); 32] = [
+        const TABLE: [(MessageType, Option<Under>); 36] = [
             (MessageType::Subscribe, Some(Under::Request)),
             (MessageType::ReadLog, Some(Under::Request)),
             (MessageType::GetConfig, Some(Under::Request)),
@@ -975,6 +979,8 @@ mod tests {
             (MessageType::Readings, Some(Under::Request)),
             (MessageType::Concerns, Some(Under::Request)),
             (MessageType::History, Some(Under::Request)),
+            (MessageType::WifiScan, Some(Under::Request)),
+            (MessageType::WifiStatus, Some(Under::Request)),
             (MessageType::HelloResponse, Some(Under::Response)),
             (MessageType::SubscribeResponse, Some(Under::Response)),
             (MessageType::ReadLogResponse, Some(Under::Response)),
@@ -988,6 +994,8 @@ mod tests {
             (MessageType::ReadingsResponse, Some(Under::Response)),
             (MessageType::ConcernsResponse, Some(Under::Response)),
             (MessageType::HistoryResponse, Some(Under::Response)),
+            (MessageType::WifiScanResponse, Some(Under::Response)),
+            (MessageType::WifiStatusResponse, Some(Under::Response)),
             (MessageType::ErrorResponse, Some(Under::Response)),
             (MessageType::EventResponse, Some(Under::Event)),
             (MessageType::Discover, None),

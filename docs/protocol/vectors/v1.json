@@ -453,6 +453,55 @@
       "body_cbor": "a10102",
       "body_len": 3
     },
+    "wifiscan_0x11": {
+      "type": 17,
+      "authentication": "this is the inner body; on the wire it is key 1 of the wrapper, whose key 2 is a MAC under session_key with the label 'km43/v1/wrq'",
+      "body_readable": "{1:refresh}",
+      "values_readable": "refresh true: scan unless one ran in the last ten seconds",
+      "body_cbor": "a101f5",
+      "body_len": 3
+    },
+    "wifiscan_0x91": {
+      "type": 145,
+      "authentication": "this is the inner body; on the wire it is key 1 of the wrapper, whose key 2 is a MAC under session_key with the label 'km43/v1/rsp'",
+      "body_readable": null,
+      "values_readable": "scan complete, age_ms 4200, unlisted 4, and no key 2; key 4 is wifi_scan_result_0x6b's key 3 byte for byte",
+      "body_cbor": "a40103031910680483a50165636162696e02382f030304010506a50178206368616c65742dc3a974c3a92d72c3a9736561752d64752d766f6973696e2d3202384603020401050ba5016a7368656420677565737402387f0301040105010504",
+      "body_len": 95
+    },
+    "wifiscan_refused_0x91": {
+      "type": 145,
+      "authentication": "this is the inner body; on the wire it is key 1 of the wrapper, whose key 2 is a MAC under session_key with the label 'km43/v1/rsp'",
+      "body_readable": null,
+      "values_readable": "scan none, refused radio_off: the network section was never written, so no list and no scan (P-218)",
+      "body_cbor": "a201010202",
+      "body_len": 5
+    },
+    "wifistatus_0x92": {
+      "type": 146,
+      "authentication": "this is the inner body; on the wire it is key 1 of the wrapper, whose key 2 is a MAC under session_key with the label 'km43/v1/rsp'",
+      "body_readable": null,
+      "values_readable": "section 2, and the radio joined on version 2 at 192.168.1.42: the answer to the write that made version 2",
+      "body_cbor": "a40102020203030544c0a8012a",
+      "body_len": 13
+    },
+    "wifistatus_unknown_0x92": {
+      "type": 146,
+      "authentication": "this is the inner body; on the wire it is key 1 of the wrapper, whose key 2 is a MAC under session_key with the label 'km43/v1/rsp'",
+      "body_readable": null,
+      "values_readable": "section 2 and no report: the comms processor has not reported since it last booted (P-219)",
+      "body_cbor": "a10102",
+      "body_len": 3
+    },
+    "wifistatuschanged_0x0806": {
+      "kind": 2054,
+      "class": "A",
+      "authentication": "this is an event body, kind 0x0806 wifi status changed, class A; on the wire it is key 4 of Event 0x04",
+      "body_readable": null,
+      "values_readable": "section 3 written while the radio still reports version 2 failed auth_failed: the verdict on the previous write, which key 2 says (P-219)",
+      "body_cbor": "a40103020203040401",
+      "body_len": 9
+    },
     "identity_0x0001": {
       "section": 1,
       "authentication": "this is a section body; on the wire it is key 3 of Config 0x86 or of the SetConfig 0x07 operation, the same in both",
@@ -772,6 +821,83 @@
       "crc16_ccitt_false": "0x48db",
       "encoded_with_delimiter": "048418e71806a30104026f302e312e302b673966386537643663031a02080103db4800",
       "encoded_len": 35
+    },
+    "wifi_scan_0x6a": {
+      "type": 106,
+      "authentication": "none; this link is a cable inside one enclosure and carries no MAC (L-010)",
+      "session_id": 0,
+      "req_id": 10,
+      "body_readable": "{1:scan=1}",
+      "envelope_cbor": "84186a000aa10101",
+      "crc16_ccitt_false": "0x7f09",
+      "encoded_with_delimiter": "0484186a070aa10101097f00",
+      "encoded_len": 12
+    },
+    "wifi_scan_ack_0xea": {
+      "type": 234,
+      "authentication": "none; this link is a cable inside one enclosure and carries no MAC (L-010)",
+      "session_id": 0,
+      "req_id": 10,
+      "body_readable": "{1:outcome=refused_radio_off}",
+      "envelope_cbor": "8418ea000aa10103",
+      "crc16_ccitt_false": "0x8b6b",
+      "encoded_with_delimiter": "048418ea070aa101036b8b00",
+      "encoded_len": 12
+    },
+    "wifi_scan_result_0x6b": {
+      "type": 107,
+      "authentication": "none; this link is a cable inside one enclosure and carries no MAC (L-010)",
+      "session_id": 0,
+      "req_id": 11,
+      "body_readable": "{1:scan=2, 2:outcome=complete, 3:aps=[{1:ssid=\"cabin\", 2:rssi=-48, 3:security=wpa3_personal, 4:band=ghz_2_4, 5:channel=6}, {1:ssid=\"chalet-été-réseau-du-voisin-2\" (32 bytes), 2:rssi=-71, 3:security=wpa2_personal, 4:band=ghz_2_4, 5:channel=11}, {1:ssid=\"shed guest\", 2:rssi=-128, 3:security=open, 4:band=ghz_2_4, 5:channel=1}], 4:unlisted=4}",
+      "envelope_cbor": "84186b000ba4010202010383a50165636162696e02382f030304010506a50178206368616c65742dc3a974c3a92d72c3a9736561752d64752d766f6973696e2d3202384603020401050ba5016a7368656420677565737402387f0301040105010404",
+      "crc16_ccitt_false": "0x7144",
+      "encoded_with_delimiter": "0484186b610ba4010202010383a50165636162696e02382f030304010506a50178206368616c65742dc3a974c3a92d72c3a9736561752d64752d766f6973696e2d3202384603020401050ba5016a7368656420677565737402387f0301040105010404447100",
+      "encoded_len": 102
+    },
+    "wifi_scan_result_failed_0x6b": {
+      "type": 107,
+      "authentication": "none; this link is a cable inside one enclosure and carries no MAC (L-010)",
+      "session_id": 0,
+      "req_id": 12,
+      "body_readable": "{1:scan=3, 2:outcome=failed}; no rows and no count",
+      "envelope_cbor": "84186b000ca201030202",
+      "crc16_ccitt_false": "0x85ee",
+      "encoded_with_delimiter": "0484186b090ca201030202ee8500",
+      "encoded_len": 14
+    },
+    "wifi_scan_result_ack_0xeb": {
+      "type": 235,
+      "authentication": "none; this link is a cable inside one enclosure and carries no MAC (L-010)",
+      "session_id": 0,
+      "req_id": 12,
+      "body_readable": "{1:scan=3}",
+      "envelope_cbor": "8418eb000ca10103",
+      "crc16_ccitt_false": "0xe952",
+      "encoded_with_delimiter": "048418eb070ca1010352e900",
+      "encoded_len": 12
+    },
+    "wifi_state_joined_0x6c": {
+      "type": 108,
+      "authentication": "none; this link is a cable inside one enclosure and carries no MAC (L-010)",
+      "session_id": 0,
+      "req_id": 13,
+      "body_readable": "{1:version=2, 2:state=joined, 4:ipv4=192.168.1.42}",
+      "envelope_cbor": "84186c000da3010202030444c0a8012a",
+      "crc16_ccitt_false": "0x14b2",
+      "encoded_with_delimiter": "0484186c0f0da3010202030444c0a8012ab21400",
+      "encoded_len": 20
+    },
+    "wifi_state_failed_0x6c": {
+      "type": 108,
+      "authentication": "none; this link is a cable inside one enclosure and carries no MAC (L-010)",
+      "session_id": 0,
+      "req_id": 14,
+      "body_readable": "{1:version=2, 2:state=failed, 3:reason=auth_failed}",
+      "envelope_cbor": "84186c000ea3010202040301",
+      "crc16_ccitt_false": "0x8e33",
+      "encoded_with_delimiter": "0484186c0b0ea3010202040301338e00",
+      "encoded_len": 16
     }
   },
   "ble": [
