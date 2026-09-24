@@ -3141,16 +3141,21 @@ SetConfigAck  0x87      wrapper
 ```
 
 **P-100** — `expected_version` MUST be checked and a mismatch refused with
-`stale_version`. A phone and a browser editing the same setpoints is not
-hypothetical.
+`stale_version`. For a section that has never been written or that the
+controller cannot read, the version checked MUST be 0 (P-108). A client writes
+against `expected_version` 0 in either case, and an accepted write replaces
+what the controller holds. A phone and a browser editing the same setpoints
+is not hypothetical.
 
-**P-108** — A section that has never been written MUST be answered with
-`version` 0 and no key 3, and a written one MUST carry key 3, so a client MUST
-refuse a `Config` in which the two disagree. *Never written* is an answer a
-person needs — a unit out of its box has no network and no site name — and
-the alternative is a body of defaults, which reads exactly like a
-configuration somebody chose. A first write sends `expected_version` 0, which
-is how P-100 tells it from a write that lost a race.
+**P-108** — A section that has never been written or that the controller holds
+but cannot read MUST be answered with `version` 0 and no key 3, and a readable
+written section MUST carry a nonzero `version` and key 3, so a client MUST
+refuse a `Config` in which the two disagree. The client cannot distinguish
+*never written* from *unreadable* and does not need to: in both cases it writes
+against `expected_version` 0 (P-100), and an accepted write replaces what the
+controller holds. A damaged record can therefore be repaired through the
+ordinary read-then-write flow. Neither case is answered with a body of defaults,
+which would read exactly like a configuration somebody chose.
 
 **P-101** — Validation happens on the controller and rejection is loud. A
 configuration naming a channel that does not exist is refused, not stored, with
@@ -3290,7 +3295,7 @@ WifiStatus  0x12        wrapper
 
 WifiStatus  0x92        wrapper
   1: section      u32      the network section's version on the controller;
-                           0 when never written (P-108)
+                           0 when never written or unreadable (P-108)
   2: version      u32      optional; the section version the radio is acting on
   3: state        u8       present exactly when key 2 is; wifi_state:
                            1 off · 2 joining · 3 joined · 4 failed
@@ -4000,3 +4005,9 @@ MQTT has no transport vectors. Neither is conformance surface — see [DEFERRED.
 14. A session with an active subscription, fed events and answering nothing,
     expires on schedule (P-077). This is the test that fails if outbound traffic
     is allowed to refresh the timer, and it fails nowhere else.
+15. A section that has never been written and a damaged section the controller
+    cannot read both answer `GetConfig` with `version` 0 and no key 3 (P-108).
+    In each case, an otherwise valid `SetConfig` with `expected_version` 0
+    replaces what the controller holds; a subsequent read returns the written
+    body and its nonzero version (P-100). A mismatched expected version is
+    refused, and clients reject a `Config` whose version and body disagree.

@@ -480,6 +480,17 @@ on a part rated for far more than that.
 
 ---
 
+## An unreadable section must be repairable
+
+On a bench board on 2026-09-24, a damaged network section was refused on read.
+The paired phone could not learn the version it needed for `SetConfig`, so the
+unit could not be set up at all. P-108 answers an unreadable section just like
+one that has never been written: version 0 and no body. The client cannot tell
+the two apart and does not need to. It uses the ordinary read-then-write flow
+with `expected_version` 0 (P-100), and an accepted write replaces the damaged
+record. The controller in `origin89hq/firmware` owns detecting the unreadable
+record and replacing it; the protocol codec only enforces the answer's shape.
+
 ## Physical presence grants three different powers
 
 On a board with a pushbutton, that button gates three decisions: it opens a 120-second
