@@ -1340,11 +1340,14 @@ with the first-enrolment power-on exception below. No message opens the window.
 Knowing the printed secret is not by itself sufficient. The window is 120 seconds.
 
 On a controller board without a pushbutton, power-on MUST open the window once
-per boot, at boot, **only while the client table is empty**: no client has been
-enrolled since the last factory reset. This window lasts the same 120 seconds
+per boot, at boot, **only when it reads a valid empty client table**, whether
+empty after factory reset or after recovery of a lost or corrupt table. A boot
+that finds the table absent or unreadable and repairs it to a durable empty
+table MUST NOT open a power-on window; a later boot that reads that valid empty
+table is eligible. This window lasts the same 120 seconds
 and MUST close on the first successful `Pair`, as any window closes on successful
-enrolment under L-195; one opening admits one enrolment. Once any client is
-enrolled, power-on MUST NOT open a window: only the design's selector gesture,
+enrolment under L-195; one opening admits one enrolment. While the client table
+is non-empty, power-on MUST NOT open a window: only the design's selector gesture,
 or the pushbutton on a board that has one, opens it. A board **with a pushbutton
 MUST NOT use this exception**. `Pair` still requires the printed-secret proof
 (P-064, P-068); the window is an additional gate, never a replacement for that
@@ -3753,12 +3756,14 @@ or **fan out an event** — it holds no key, so it cannot produce a valid copy.
 ## Conformance
 
 An implementation is conforming when all of these pass. Controller pairing
-checks MUST include P-066's first-enrolment exception: an empty client table on
-a board without a pushbutton opens one 120-second window at boot; expiry does
+checks MUST include P-066's first-enrolment exception: a valid empty client table
+read at boot on a board without a pushbutton opens one 120-second window; expiry does
 not reopen it in that boot; a first successful `Pair` closes it; an enrolled
-unit's reboot opens nothing; factory reset restores eligibility on subsequent
-boots; and a board with a pushbutton never opens a window at power-on. A wrong
-printed-secret proof still fails inside the boot window. PairingWindow reports
+unit's reboot opens nothing while its table remains non-empty; factory reset
+restores eligibility on subsequent boots; a boot that finds an absent or
+unreadable table and repairs it opens nothing, but a later boot that reads the
+valid empty table is eligible; and a board with a pushbutton never opens a
+window at power-on. A wrong printed-secret proof still fails inside the boot window. PairingWindow reports
 MUST follow L-193 through L-195, including the remaining time after a delayed
 link and closure after enrolment. The selector gesture remains available on a
 board without a pushbutton, including after the boot window expires.

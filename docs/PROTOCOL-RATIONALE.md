@@ -256,9 +256,11 @@ recommendations:
   on a board without a pushbutton.
 
 The first-enrolment exception is deliberate for controller board A revision A,
-which has no pushbutton. Power-on opens one 120-second window at boot only while
-the client table is empty. Exposure is bounded to an unpaired unit and ends at
-its first successful enrolment; an attacker still needs the printed secret to
+which has no pushbutton. Power-on opens one 120-second window only when boot
+reads a valid empty client table. A boot that repairs a lost or corrupt table
+opens nothing; a later boot that reads the valid empty table is eligible.
+Exposure is bounded to an unpaired unit and ends at its first successful
+enrolment; an attacker still needs the printed secret to
 produce the Pair proof. The selector gesture remains available on revision A,
 including after the boot window expires and for later enrolments.
 
@@ -266,8 +268,12 @@ The cost is that power-on does not prove somebody is at the panel. A power cut
 at an unattended, unpaired site opens the window with nobody present. Someone
 who has photographed the QR and is in Bluetooth range at that moment can enrol
 first. After a factory reset the unit is exposed again at every boot until it
-is re-paired. This is a temporary acceptance of that risk, not a weaker Pair
-proof. Retire the exception when the board gains its pushbutton, as tracked in
+is re-paired. Losing the client table to corruption locks out every enrolled
+client anyway. Power-on eligibility returning from the next boot after recovery
+is how the owner re-pairs until the button exists; an attacker still needs the
+printed secret and presence in Bluetooth range during that window. This is a
+temporary acceptance of that risk, not a weaker Pair proof. Retire the exception
+when the board gains its pushbutton, as tracked in
 [firmware#60](https://github.com/origin89hq/firmware/issues/60); a board with a
 pushbutton must never use it. The controller firmware owns boot eligibility,
 window timing and closure. KM43 carries the window report and checks the proof;
