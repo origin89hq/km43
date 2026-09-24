@@ -411,7 +411,7 @@ pub const REQUIREMENTS: &[Requirement] = &[
         id: "P-066",
         document: "docs/PROTOCOL.md",
         section: "Pair — `0x0B` / `0x8B`",
-        statement: "A physical act at the controller MUST gate enrolment: the pushbutton on a board that has one, otherwise the selector gesture the controller's design defines under *Auto / off / manual* ([CONTROLLER-V1](https://github.com/origin89hq/origin89/blob/main/docs/CONTROLLER-V1.md)).",
+        statement: "A physical act at the controller MUST gate enrolment: the pushbutton on a board that has one, otherwise the selector gesture the controller's design defines under *Auto / off / manual* ([CONTROLLER-V1](https://github.com/origin89hq/origin89/blob/main/docs/CONTROLLER-V1.md)), with the first-enrolment power-on exception below.",
     },
     Requirement {
         id: "P-067",
@@ -861,7 +861,7 @@ pub const REQUIREMENTS: &[Requirement] = &[
         id: "P-117",
         document: "docs/PROTOCOL.md",
         section: "Time",
-        statement: "The floor override: 1. Is armed **only** by a press pattern at the panel distinguishable from P-066's enrolment press and from the factory-reset hold. A press that opened a pairing window MUST NOT arm an override. 2. Is **single-use**: it authorises exactly one accepted floor-crossing `Time 0x0A`, and MUST be cleared on use, on release of the button, and on a bounded timeout no longer than P-066's 120 seconds. 3. Is evaluated at the **instant the controller processes the operation**. It is not a window a client can be told about in advance and it is not P-066's 120-second window. 4. Does not lift P-118's rate limit. A `Time 0x0A` refused for the rate limit is refused with an override armed exactly as without one.",
+        statement: "The floor override: 1. Is armed **only** by a press pattern at the panel distinguishable from P-066's enrolment gesture and from the factory-reset hold. An enrolment gesture MUST NOT arm an override; P-066's first-enrolment power-on window MUST NOT arm one either. 2. Is **single-use**: it authorises exactly one accepted floor-crossing `Time 0x0A`, and MUST be cleared on use, on release of the button, and on a bounded timeout no longer than P-066's 120 seconds. 3. Is evaluated at the **instant the controller processes the operation**. It is not a window a client can be told about in advance and it is not P-066's 120-second window. 4. Does not lift P-118's rate limit. A `Time 0x0A` refused for the rate limit is refused with an override armed exactly as without one.",
     },
     Requirement {
         id: "P-118",

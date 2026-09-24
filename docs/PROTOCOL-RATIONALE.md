@@ -250,9 +250,28 @@ recommendations:
   one disagreement this file exists to stop. A six-digit PIN is brute-forceable
   offline from a single observed proof, and the observer is not hypothetical: it
   is the chip in the same enclosure.
-- **The physical button still gates enrolment.** Knowing the secret is not by
-  itself sufficient. The window is 120 seconds and it opens only when somebody
-  presses a button on the device.
+- **A physical act still gates enrolment.** Knowing the secret is not by
+  itself sufficient. P-066 opens a 120-second window with the pushbutton or
+  selector gesture, with a temporary power-on exception for first enrolment
+  on a board without a pushbutton.
+
+The first-enrolment exception is deliberate for controller board A revision A,
+which has no pushbutton. Power-on opens one 120-second window at boot only while
+the client table is empty. Exposure is bounded to an unpaired unit and ends at
+its first successful enrolment; an attacker still needs the printed secret to
+produce the Pair proof. The selector gesture remains available on revision A,
+including after the boot window expires and for later enrolments.
+
+The cost is that power-on does not prove somebody is at the panel. A power cut
+at an unattended, unpaired site opens the window with nobody present. Someone
+who has photographed the QR and is in Bluetooth range at that moment can enrol
+first. After a factory reset the unit is exposed again at every boot until it
+is re-paired. This is a temporary acceptance of that risk, not a weaker Pair
+proof. Retire the exception when the board gains its pushbutton, as tracked in
+[firmware#60](https://github.com/origin89hq/firmware/issues/60); a board with a
+pushbutton must never use it. The controller firmware owns boot eligibility,
+window timing and closure. KM43 carries the window report and checks the proof;
+its codecs cannot establish that a physical act occurred.
 
 **The limitation, stated rather than left to be discovered:** anyone who
 photographs the label can derive keys, permanently, and there is no forward
@@ -457,7 +476,7 @@ on a part rated for far more than that.
 
 ## Physical presence grants three different powers
 
-The panel has one button and it gates three decisions: it opens a 120-second
+On a board with a pushbutton, that button gates three decisions: it opens a 120-second
 enrolment window, it arms a single-use override of the clock's monotonic floor,
 and — held long enough — it factory-resets the device. For a long time the
 documents described these as one thing, and one sentence in particular said the
@@ -471,7 +490,8 @@ guess when somebody is at the panel; it can poll for it. And the press people
 are most often asked to make is the enrolment press, so the moment a technician
 adds a phone is the moment a banked *set the clock back eleven months* lands.
 
-They are the same **class** of evidence — a person at the site, making a
+Except for P-066's first-enrolment power-on window, they are the same **class**
+of evidence — a person at the site, making a
 decision that cannot be undone from four hours away — and that is the argument
 for gating any of them on a button at all. They are not the same gesture, and
 the protocol now says so: the override has its own press pattern, is consumed by
@@ -651,8 +671,8 @@ real benefit and the reason this was in an earlier draft.
 
 It also means a compromised client key can revoke every *other* client —
 including the one somebody would have used to notice. And it does not survive its
-own trust argument: enrolment requires a person standing at the device with a
-button held down, and de-enrolment is the stronger power. Granting the stronger
+own trust argument: adding a client to a non-empty table requires P-066's
+physical gesture at the device, and de-enrolment is the stronger power. Granting the stronger
 power on weaker evidence is backwards.
 
 So revocation is physical: the button, and factory reset. The cost is written

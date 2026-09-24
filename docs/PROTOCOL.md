@@ -1335,16 +1335,32 @@ ever makes fails as stale and recovery is a four-hour drive.
 
 **P-066** — A physical act at the controller MUST gate enrolment: the pushbutton
 on a board that has one, otherwise the selector gesture the controller's design
-defines under *Auto / off / manual* ([CONTROLLER-V1](https://github.com/origin89hq/origin89/blob/main/docs/CONTROLLER-V1.md)). No message opens the window. Knowing the printed
-secret is not by itself sufficient. The window is 120 seconds. The controller
-reports its open and closed state to
-the comms processor using [PairingWindow](protocol/LINK.md#pairing-reachability)
+defines under *Auto / off / manual* ([CONTROLLER-V1](https://github.com/origin89hq/origin89/blob/main/docs/CONTROLLER-V1.md)),
+with the first-enrolment power-on exception below. No message opens the window.
+Knowing the printed secret is not by itself sufficient. The window is 120 seconds.
+
+On a controller board without a pushbutton, power-on MUST open the window once
+per boot, at boot, **only while the client table is empty**: no client has been
+enrolled since the last factory reset. This window lasts the same 120 seconds
+and MUST close on the first successful `Pair`, as any window closes on successful
+enrolment under L-195; one opening admits one enrolment. Once any client is
+enrolled, power-on MUST NOT open a window: only the design's selector gesture,
+or the pushbutton on a board that has one, opens it. A board **with a pushbutton
+MUST NOT use this exception**. `Pair` still requires the printed-secret proof
+(P-064, P-068); the window is an additional gate, never a replacement for that
+proof. This temporary rule serves controller board A revision A and MUST be
+retired when the pushbutton is present ([firmware#60](https://github.com/origin89hq/firmware/issues/60)).
+
+The controller reports every window's open and closed state, including a
+power-on window, to the comms processor using
+[PairingWindow](protocol/LINK.md#pairing-reachability) (L-193 through L-195)
 so a phone can reach it without the house network; that report grants no
-enrolment permission. A `Pair`
-arriving with no window open MUST be answered with `Pair 0x8B` outcome 2
-`window_closed` and `client_id = 0`, carrying the MAC above — not with an
-unauthenticated error. A refusal the comms processor can forge is a refusal
-that sends somebody back to the panel to press a button that was never needed.
+enrolment permission. The deadline starts at boot for a power-on window, not
+when the link becomes ready. A `Pair` arriving with no window open MUST be
+answered with `Pair 0x8B` outcome 2 `window_closed` and `client_id = 0`, carrying
+the MAC above — not with an unauthenticated error. A refusal the comms processor
+can forge is a refusal that sends somebody back to the panel to perform an act
+that was never needed.
 
 **P-067** — A full client table MUST refuse with outcome 4, **unless P-078's
 reclaim matched first**. It MUST NOT evict. `table_full` therefore means eight
@@ -1444,7 +1460,7 @@ outright gap, because it reads as implemented to everybody who greps for it.
 `client_kind` is a sound input and LINK.md's `transport` (L-072) is not, and the
 difference is provenance: `client_kind` is inside the pair-proof preimage — its
 last two fields are `client_kind:u8 | label` — so it is attested under `pair_key`
-by somebody standing at the panel inside the 120-second window P-066 opens, while
+by a holder of the printed secret inside the 120-second window P-066 opens, while
 `transport` is written by the comms processor, which lifts any rule keyed on it
 for free.
 
@@ -1457,8 +1473,8 @@ the proof P-078 just verified, so a row's permissions never outlive the enrolmen
 that set them.
 
 **The mask is only as good as the enrolment, said out loud.** Whoever holds the
-printed secret with the button pressed chooses `client_kind`, and can therefore
-enrol a cloud relay as `1 app`. That person already has the label and the button,
+printed secret inside an open P-066 window chooses `client_kind`, and can therefore
+enrol a cloud relay as `1 app`. That person already has the label and an open window,
 which is the whole of the authority in this design. The mask defends against a
 client that turns hostile later, not against the person who enrolled it.
 
@@ -3370,8 +3386,9 @@ it is refused under P-114 exactly as before, as `TimeAck 0x8A` outcome 4
 **P-117** — The floor override:
 
 1. Is armed **only** by a press pattern at the panel distinguishable from
-   P-066's enrolment press and from the factory-reset hold. A press that opened a
-   pairing window MUST NOT arm an override.
+   P-066's enrolment gesture and from the factory-reset hold. An enrolment
+   gesture MUST NOT arm an override; P-066's first-enrolment power-on window
+   MUST NOT arm one either.
 2. Is **single-use**: it authorises exactly one accepted floor-crossing
    `Time 0x0A`, and MUST be cleared on use, on release of the button, and on a
    bounded timeout no longer than P-066's 120 seconds.
@@ -3414,7 +3431,8 @@ one refusal later, on a MAC'd response, at a rate P-118 bounds.
 
 **The enrolment window and the floor override are separate states and either may
 be true without the other.** The enrolment window is 120 seconds long, opened by
-a press, and reported as `pairing_open` in `Discover 0x80` key 6. The override is
+P-066's physical act (including its first-enrolment power-on exception),
+and reported as `pairing_open` in `Discover 0x80` key 6. The override is
 armed by a different gesture, consumed by one write, and reported nowhere. An
 open pairing window is **not** the P-116 gate and MUST NOT be read as one. The
 factory-reset hold is a product-local behaviour outside KM43 because it changes
@@ -3734,7 +3752,16 @@ or **fan out an event** — it holds no key, so it cannot produce a valid copy.
 
 ## Conformance
 
-An implementation is conforming when all of these pass.
+An implementation is conforming when all of these pass. Controller pairing
+checks MUST include P-066's first-enrolment exception: an empty client table on
+a board without a pushbutton opens one 120-second window at boot; expiry does
+not reopen it in that boot; a first successful `Pair` closes it; an enrolled
+unit's reboot opens nothing; factory reset restores eligibility on subsequent
+boots; and a board with a pushbutton never opens a window at power-on. A wrong
+printed-secret proof still fails inside the boot window. PairingWindow reports
+MUST follow L-193 through L-195, including the remaining time after a delayed
+link and closure after enrolment. The selector gesture remains available on a
+board without a pushbutton, including after the boot window expires.
 
 An implementation claiming conformance is claiming it for **UART, USB CDC and
 WebSocket**. BLE has host transport vectors but no phone/board qualification;

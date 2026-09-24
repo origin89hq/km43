@@ -171,7 +171,7 @@ pub enum DiscoverKey {
     Model,
     /// Key 5, true once at least one client is enrolled.
     Provisioned,
-    /// Key 6, true while the physical button has opened a window (P-066).
+    /// Key 6, true while a physical act has opened a window (P-066).
     PairingOpen,
     /// Key 7, this connection's live challenge (P-060).
     Challenge,
