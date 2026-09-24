@@ -3388,12 +3388,21 @@ the honest answer and the client waits for the next one.
 **P-220** — The controller MUST write a `0x0806` record when the version, state
 and reason it holds differ from those it last announced, and MUST NOT write one
 for `2 joining`. A record whose version differs from the last announced MUST be
-written at once. Any other MUST wait until `WIFI_RECORD_INTERVAL_MS` (600 000 ms)
-after the previous `0x0806`, on P-004's tick, and then carry the state held at
-that moment, or nothing if it no longer differs.
+written at once. So MUST a `3 joined` record when the last announced was
+`4 failed` for the same version and no `joined` has been announced for that
+version since the controller booted. Any other MUST wait until
+`WIFI_RECORD_INTERVAL_MS` (600 000 ms) after the previous `0x0806`, on P-004's
+tick, and then carry the state held at that moment, or nothing if it no longer
+differs.
 
 The first answer after every write arrives at once, which is the one a person
-at the panel is waiting for. A marginal access point is the case the interval
+at the panel is waiting for. That answer is not always the verdict: `failed`
+says the radio is still trying, and a DHCP server that loses a request or
+answers slowly gives `no_ip` seconds before the lease. Held for the interval,
+that join left a log reading as a radio that never came up. The first join for
+a version is written at once for that reason, and only the first, so an access
+point that flaps costs one extra record per boot and every later transition
+waits as before. A marginal access point is the case the interval
 exists for: it drops and rejoins every few seconds, every transition is class A,
 and one record each would push a month of history out of the log in a day. Ten
 minutes bounds that at six an hour, and a client that wants the state now reads

@@ -1433,8 +1433,8 @@ reason = "The codec refuses a reason or address the state does not own. When the
 
 [[clauses]]
 id = "P-220"
-each = ["joining_is_never_recorded", "spaced_per_version"]
-reason = "The encoder refuses a joining record. When a record is due, and the ten-minute spacing per version, are the controller's, owed by origin89hq/firmware#138."
+each = ["joining_is_never_recorded", "spaced_per_version", "first_join_after_failure_is_immediate"]
+reason = "The encoder refuses a joining record. When a record is due, and the ten-minute spacing per version, are the controller's, owed by origin89hq/firmware#138. Writing a version's first joined after a failed at once is the controller's too, owed by origin89hq/firmware#149."
 
 [[clauses]]
 id = "P-108"
