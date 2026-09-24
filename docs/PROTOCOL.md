@@ -925,6 +925,22 @@ RFC 5869 §3.1 and NIST SP 800-108 both say the same thing: derive a
 purpose-specific key, do not MAC under the master. One extra HKDF at enrolment
 buys it, and it is free only until the first unit is paired.
 
+**P-222** — A client that keeps its enrolment across a restart MUST keep only
+its `client_key` with the `device_id`, `epoch` and `client_id` it was derived
+under, and MUST NOT keep `printed_secret` once `Pair` succeeds. Before sending
+`Hello` under a kept key it MUST compare the kept `device_id` and `epoch` with
+the `Discover 0x80` it has just received, and on either differing it MUST pair
+again rather than send `Hello`.
+
+Without somewhere to keep the key, a relaunched app can only pair again, and
+that needs a person at the controller (P-066). The shortcut is to keep the
+label's secret and re-derive, and that is the failure this rule names: the
+printed secret derives a key for every slot at every epoch, so a phone holding it
+survives the factory reset P-085 relies on to lock it out. The kept key dies with
+its epoch. `Discover` carries no MAC (P-054), so the comparison guards against
+the wrong controller and a reset, not against a relay; the `Hello` proof is what
+the controller checks.
+
 **P-044** — `printed_secret` MUST be exactly **32 bytes of entropy**, carried in
 the QR code as 64 lowercase hexadecimal characters. The KDF consumes the
 **decoded 32 bytes**, never the printed text. A six-digit PIN is brute-forceable

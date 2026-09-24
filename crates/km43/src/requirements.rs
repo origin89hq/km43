@@ -276,6 +276,12 @@ pub const REQUIREMENTS: &[Requirement] = &[
         statement: "`printed_secret` MUST NOT be used directly as an HMAC key.",
     },
     Requirement {
+        id: "P-222",
+        document: "docs/PROTOCOL.md",
+        section: "Key derivation",
+        statement: "A client that keeps its enrolment across a restart MUST keep only its `client_key` with the `device_id`, `epoch` and `client_id` it was derived under, and MUST NOT keep `printed_secret` once `Pair` succeeds.",
+    },
+    Requirement {
         id: "P-044",
         document: "docs/PROTOCOL.md",
         section: "Key derivation",

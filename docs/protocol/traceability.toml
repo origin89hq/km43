@@ -1056,7 +1056,12 @@
 # P-218, P-220, L-203, L-205, L-206, L-207, and P-221, a client presentation
 # rule) are behaviour of the two firmwares and of a client. The firmware work
 # is origin89hq/firmware#138.
-uncovered = 138
+# 138 -> 139: P-222 is new (origin89hq/km43#115). `kdf/stored.rs` covers what
+# this crate can: the stored form carries the one key and no printed-secret
+# byte, and a restore against another controller or another epoch is refused.
+# A client keeping no printed secret after `Pair` is the app's behaviour, which
+# no test here can reach; it is origin89hq/apps#8.
+uncovered = 139
 
 # P-045 is the shape this file is for. Nothing can drive an implementation into
 # transmitting a key it does not have, so the thing that stands behind it reads
@@ -1428,3 +1433,9 @@ reason = "The codec refuses a reason or address the state does not own. When the
 id = "P-220"
 each = ["joining_is_never_recorded", "spaced_per_version"]
 reason = "The encoder refuses a joining record. When a record is due, and the ten-minute spacing per version, are the controller's, owed by origin89hq/firmware#138."
+
+
+[[clauses]]
+id = "P-222"
+each = ["carry_no_printed_secret", "another_controller_is_refused", "earlier_epoch_is_refused", "app_keeps_no_printed_secret"]
+reason = "The stored encoding holds only the issued key and a restore checks the device and epoch. Discarding the scanned printed secret once Pair succeeds is the app's, owed by origin89hq/apps#8."
