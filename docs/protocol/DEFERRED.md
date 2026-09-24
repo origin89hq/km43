@@ -418,7 +418,8 @@ So:
   of evidence that gates enrolment and factory reset, though a distinct gesture
   from either, as P-117 now requires of every use of that button. It is the same
   class of decision: re-opening a hole that was closed, on a unit somebody is
-  standing at.
+  standing at. P-066's first-enrolment power-on exception grants no downgrade
+  permission.
 
 The comms image gets the same treatment, enforced where its signature is enforced
 — by the ESP32's own secure boot at every boot, not by the controller's

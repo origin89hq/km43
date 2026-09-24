@@ -1365,3 +1365,18 @@ reason = "The codec proves the unwritten master is representable without radio m
 id = "L-135"
 each = ["written_operations_cannot_use_zero_version", "factory_reset_increments_and_pushes_clear"]
 reason = "The codec preserves the nonzero written-clear contract. Performing the reset and sending the incremented version remain firmware#88's integration evidence."
+
+
+[[clauses]]
+id = "P-066"
+each = ["closed_window", "first_enrolment_power_on_without_pushbutton"]
+reason = """
+The caller supplies the window state; KM43 does not decide when a controller \
+opens it. Firmware must prove that boot reads a valid empty client table, \
+once-per-boot opening at boot, 120-second expiry, first-Pair closure, no opening \
+with a non-empty table, renewed eligibility after factory reset or recovery, \
+no opening on the boot that repairs an absent or unreadable table, eligibility \
+on a later boot that reads the valid empty table, and exclusion of \
+boards with a pushbutton. Pair still needs the printed-secret proof. The \
+controller also owes L-193 through L-195 reports, including a delayed link's \
+remaining time. Codec and closed-window refusal tests do not prove that lifecycle."""
