@@ -1014,14 +1014,24 @@ answered `started` and never finished would leave every client reading
 **L-204** — The comms processor MUST send `WifiState` once its own `LinkUp` has
 been answered (L-033) and again whenever what it would report changes. `off`
 means it holds no network or no radio metadata and is not trying. `joining`
-means it is trying and has had no outcome for this version since it booted.
-`joined` means it is associated and holds an IPv4 address. `failed` means it is
-not joined, `reason` is the most recent failure, and it is still trying; once a
-version has had an outcome, a dropped association or a failed retry is `failed`
+means it is trying and the credentials installed in RAM have had no outcome
+since they were installed. `joined` means it is associated and holds an IPv4
+address. `failed` means it is not joined, `reason` is the most recent failure,
+and it is still trying; once the installed credentials have had an outcome, a
+dropped association, a failed retry or a restarted radio session is `failed`
 and never `joining` again.
 
-`joining` is a state the comms processor passes through once per version per
-boot. A radio that retries every few seconds and reported `joining` between
+`joining` is a state the comms processor passes through once per installation.
+Credentials are installed at boot and whenever an accepted `NetConfig` puts a
+different version in RAM, lower as well as higher: L-133 pushes whatever
+differs, so a resynchronised controller can send a version below the one the
+radio holds, or one it already held earlier in the same boot. Every change of
+installed version starts again at no outcome. The outcome belongs to the
+installed credentials alone, so the comms processor keeps no history of
+earlier versions and one returning to a number it has seen is `joining` like
+any other. A `NetConfig` that leaves the version unchanged does not reinstall.
+
+A radio that retries every few seconds and reported `joining` between
 failures would put a report on the link each time, and P-220's records would
 count retries rather than changes. A retry that fails the same way changes
 nothing and is not reported.
