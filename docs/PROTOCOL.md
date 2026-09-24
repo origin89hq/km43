@@ -1317,8 +1317,9 @@ that may mean a wrong code: it MUST NOT enrol, MUST NOT prove a retry against
 that response's `next_challenge`, and starts any retry from `Discover` (P-060).
 It MAY tell the person the code may be wrong and offer to rescan. It MUST NOT
 say the code *is* wrong or that the controller refused: the response is
-unauthenticated, and P-055 applies. Every retry is one more proof the
-controller counts against `MAX_AUTH_FAILURES` (P-051).
+unauthenticated, and P-055 applies. A retry whose proof the controller checks
+and rejects counts against `MAX_AUTH_FAILURES` (P-051), so a phone still holding
+the wrong code sheds its own connection after eight tries.
 
 The converse is a statement the client can make. A `bad_proof` that **verifies**
 was MAC'd under the `pair_key` the client holds, so the code was right and the
