@@ -1079,13 +1079,13 @@ threshold fires on refusals the controller reached without doing any work.
 
 | Messages | Label |
 |---|---|
-| Requests `0x03`, `0x05`, `0x06`, `0x0C`, `0x0D`, `0x0E`, `0x11`, `0x12` | `km43/v1/wrq` |
-| Responses `0x81`, `0x83`, `0x85`, `0x86`, `0x87`, `0x88`, `0x89`, `0x8A`, `0x8C`, `0x8D`, `0x8E`, `0x91`, `0x92`, and `0xFF` in its wrapped form (P-142) | `km43/v1/rsp` |
+| Requests `0x03`, `0x05`, `0x06`, `0x0C`, `0x0D`, `0x0E`, `0x0F`, `0x10`, `0x11`, `0x12` | `km43/v1/wrq` |
+| Responses `0x81`, `0x83`, `0x85`, `0x86`, `0x87`, `0x88`, `0x89`, `0x8A`, `0x8C`, `0x8D`, `0x8E`, `0x8F`, `0x90`, `0x91`, `0x92`, and `0xFF` in its wrapped form (P-142) | `km43/v1/rsp` |
 | Event `0x04` | `km43/v1/evt` |
 
 The read-only requests need their own label because they carry no counter and so
 cannot use the signed-request preimage. Without one they would have no preimage
-at all, which is five request types that cannot be authenticated.
+at all, and every request type in the first row could not be authenticated.
 
 **P-053** — Signed requests (`0x07`, `0x08`, `0x09`, `0x0A`) use the signed body
 in the next section instead, because they carry a counter the wrapper has no room
@@ -3303,8 +3303,9 @@ and hide scanning from every client it relays for.
 
 **P-217** — The controller MUST hold at most one list, the one from the most
 recent scan that completed, and MUST answer every `WifiScan` from it. Keys 3, 4
-and 5 MUST be present together exactly when a list is held, and a client MUST
-refuse a response in which they are not. A failed scan MUST NOT replace or
+and 5 MUST be present together exactly when a list is held, `scan` MUST NOT be
+`3 complete` without them or `1 none` with them, and a client MUST refuse a
+response that breaks either. A failed scan MUST NOT replace or
 clear the list held before it; `scan` says it failed and `age_ms` says how old
 the list still on offer is.
 

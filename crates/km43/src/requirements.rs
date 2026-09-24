@@ -327,7 +327,7 @@ pub const REQUIREMENTS: &[Requirement] = &[
         id: "P-052",
         document: "docs/PROTOCOL.md",
         section: "Authenticated bodies",
-        statement: "The following are authenticated by the wrapper above under `session_key`, each with the label its direction requires: | Messages | Label | |---|---| | Requests `0x03`, `0x05`, `0x06`, `0x0C`, `0x0D`, `0x0E`, `0x11`, `0x12` | `km43/v1/wrq` | | Responses `0x81`, `0x83`, `0x85`, `0x86`, `0x87`, `0x88`, `0x89`, `0x8A`, `0x8C`, `0x8D`, `0x8E`, `0x91`, `0x92`, and `0xFF` in its wrapped form (P-142) | `km43/v1/rsp` | | Event `0x04` | `km43/v1/evt` | The read-only requests need their own label because they carry no counter and so cannot use the signed-request preimage.",
+        statement: "The following are authenticated by the wrapper above under `session_key`, each with the label its direction requires: | Messages | Label | |---|---| | Requests `0x03`, `0x05`, `0x06`, `0x0C`, `0x0D`, `0x0E`, `0x0F`, `0x10`, `0x11`, `0x12` | `km43/v1/wrq` | | Responses `0x81`, `0x83`, `0x85`, `0x86`, `0x87`, `0x88`, `0x89`, `0x8A`, `0x8C`, `0x8D`, `0x8E`, `0x8F`, `0x90`, `0x91`, `0x92`, and `0xFF` in its wrapped form (P-142) | `km43/v1/rsp` | | Event `0x04` | `km43/v1/evt` | The read-only requests need their own label because they carry no counter and so cannot use the signed-request preimage.",
     },
     Requirement {
         id: "P-053",

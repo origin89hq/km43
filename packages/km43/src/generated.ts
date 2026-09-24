@@ -950,8 +950,9 @@ export enum Quality {
 }
 
 /**
- * `WifiScan 0x91` key 2: why a refresh started nothing, checked in this order
- * (P-218).
+ * `WifiScan 0x91` key 2: why a refresh started nothing. P-218 checks them as
+ * `unauthorised`, `radio_off`, `link_down`, `too_soon`, which is not the order
+ * of the values.
  */
 export enum ScanRefusal {
   /** A scan started less than `SCAN_INTERVAL_MS` ago (P-218). */
@@ -967,7 +968,10 @@ export enum ScanRefusal {
   Unauthorised = 0x4,
 }
 
-/** `WifiScan 0x91` key 1: what became of the most recent scan (P-217). */
+/**
+ * `WifiScan 0x91` key 1: what became of the most recent scan. `complete` always
+ * has a list beside it and `none` never does (P-217).
+ */
 export enum ScanState {
   /** No scan has completed since the controller booted, and none is running. */
   None = 0x1,

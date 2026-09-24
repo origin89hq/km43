@@ -1423,3 +1423,8 @@ reason = "The codec refuses repeated, unordered or oversized lists. Leaving out 
 id = "L-204"
 each = ["reason_and_address_belong_to_their_state", "sent_once_linked_and_on_change"]
 reason = "The codec refuses a reason or address the state does not own. When the comms processor reports, and that joining appears once per version, are its own, owed by origin89hq/firmware#138."
+
+[[clauses]]
+id = "P-220"
+each = ["joining_is_never_recorded", "spaced_per_version"]
+reason = "The encoder refuses a joining record. When a record is due, and the ten-minute spacing per version, are the controller's, owed by origin89hq/firmware#138."

@@ -781,7 +781,8 @@ field exists to say.
 
 ## Scan states — `u8`
 
-`WifiScan 0x91` key 1: what became of the most recent scan (P-217).
+`WifiScan 0x91` key 1: what became of the most recent scan. `complete` always
+has a list beside it and `none` never does (P-217).
 
 | Value | Name | Meaning |
 |---|---|---|
@@ -795,8 +796,9 @@ presses refresh again should still see it, with the age saying how old it is.
 
 ## Scan refusals — `u8`
 
-`WifiScan 0x91` key 2: why a refresh started nothing, checked in this order
-(P-218).
+`WifiScan 0x91` key 2: why a refresh started nothing. P-218 checks them as
+`unauthorised`, `radio_off`, `link_down`, `too_soon`, which is not the order of
+the values.
 
 | Value | Name | Meaning |
 |---|---|---|

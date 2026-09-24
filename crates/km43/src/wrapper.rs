@@ -970,7 +970,7 @@ mod tests {
     /// read-only request re-enters the session as its own answer, MAC and all.
     #[test]
     fn each_message_type_verifies_only_under_the_label_p_052_names_for_it() {
-        const TABLE: [(MessageType, Option<Under>); 32] = [
+        const TABLE: [(MessageType, Option<Under>); 36] = [
             (MessageType::Subscribe, Some(Under::Request)),
             (MessageType::ReadLog, Some(Under::Request)),
             (MessageType::GetConfig, Some(Under::Request)),
@@ -979,6 +979,8 @@ mod tests {
             (MessageType::Readings, Some(Under::Request)),
             (MessageType::Concerns, Some(Under::Request)),
             (MessageType::History, Some(Under::Request)),
+            (MessageType::WifiScan, Some(Under::Request)),
+            (MessageType::WifiStatus, Some(Under::Request)),
             (MessageType::HelloResponse, Some(Under::Response)),
             (MessageType::SubscribeResponse, Some(Under::Response)),
             (MessageType::ReadLogResponse, Some(Under::Response)),
@@ -992,6 +994,8 @@ mod tests {
             (MessageType::ReadingsResponse, Some(Under::Response)),
             (MessageType::ConcernsResponse, Some(Under::Response)),
             (MessageType::HistoryResponse, Some(Under::Response)),
+            (MessageType::WifiScanResponse, Some(Under::Response)),
+            (MessageType::WifiStatusResponse, Some(Under::Response)),
             (MessageType::ErrorResponse, Some(Under::Response)),
             (MessageType::EventResponse, Some(Under::Event)),
             (MessageType::Discover, None),

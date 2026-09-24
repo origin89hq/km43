@@ -124,6 +124,11 @@ pub enum WifiError {
     ListIncomplete,
     /// A refusal beside a running scan, which a refresh joins instead (P-218).
     RefusedWhileRunning,
+    /// `complete` without a list, or `none` with one (P-217). Read as
+    /// *heard nothing*, the first would hide a controller that lost its list.
+    ScanStateDisagrees,
+    /// A `joining` report offered as a `0x0806` record, which P-220 forbids.
+    JoiningIsNotRecorded,
     /// `version` and `state` not both present or both absent (P-219).
     ReportIncomplete,
     /// A `reason` without `failed`, or `failed` without one (P-219, L-204).
@@ -161,6 +166,8 @@ impl WifiError {
             | Self::SsidRepeated
             | Self::ListIncomplete
             | Self::RefusedWhileRunning
+            | Self::ScanStateDisagrees
+            | Self::JoiningIsNotRecorded
             | Self::ReportIncomplete
             | Self::ReasonDisagrees
             | Self::AddressDisagrees
@@ -192,6 +199,10 @@ impl fmt::Display for WifiError {
             Self::SsidRepeated => f.write_str("two rows name one SSID"),
             Self::ListIncomplete => f.write_str("a list without its age or count, or the reverse"),
             Self::RefusedWhileRunning => f.write_str("a refusal beside a running scan"),
+            Self::ScanStateDisagrees => {
+                f.write_str("a scan state that disagrees with whether a list is held")
+            }
+            Self::JoiningIsNotRecorded => f.write_str("joining is never written as a record"),
             Self::ReportIncomplete => f.write_str("a version without a state, or the reverse"),
             Self::ReasonDisagrees => f.write_str("a reason and a state that disagree"),
             Self::AddressDisagrees => f.write_str("an address and a state that disagree"),
@@ -566,7 +577,8 @@ pub struct ScanAnswer<'a> {
 
 impl<'a> ScanAnswer<'a> {
     /// A refresh that meets a running scan joins it (P-218), so `running`
-    /// with a refusal is a contradiction and is refused here.
+    /// with a refusal is refused here. So are `complete` without a list and
+    /// `none` with one (P-217): each state names what is held.
     pub const fn new(
         scan: ScanState,
         refused: Option<ScanRefusal>,
@@ -574,6 +586,13 @@ impl<'a> ScanAnswer<'a> {
     ) -> Result<Self, WifiError> {
         if matches!(scan, ScanState::Running) && refused.is_some() {
             return Err(WifiError::RefusedWhileRunning);
+        }
+        match (scan, held.is_some()) {
+            (ScanState::Complete, false) | (ScanState::None, true) => {
+                return Err(WifiError::ScanStateDisagrees);
+            }
+            (ScanState::Complete | ScanState::None | ScanState::Running | ScanState::Failed, _) => {
+            }
         }
         Ok(Self {
             scan,
@@ -875,8 +894,13 @@ impl WifiStatusChanged {
     /// The registry kind to put beside this body in the event envelope.
     pub const KIND: EventKind = EventKind::WIFI_STATUS_CHANGED;
 
-    /// Encode only the body, for `Event` key 4 or a stored log entry.
+    /// Encode only the body, for `Event` key 4 or a stored log entry. A
+    /// `joining` report is refused: every write starts with one, and P-220
+    /// keeps the immediate record for the outcome. A reader still accepts one.
     pub fn encode(&self, dst: &mut [u8]) -> Result<usize, WifiError> {
+        if matches!(self.report.radio, Radio::Joining) {
+            return Err(WifiError::JoiningIsNotRecorded);
+        }
         WifiStatus {
             section: self.section,
             report: Some(self.report),
@@ -1439,11 +1463,38 @@ mod tests {
                 "{keys:?}"
             );
         }
+        let none = [0xa1, 1, ScanState::None as u8];
+        assert_eq!(ScanAnswer::decode(&none).expect("no list").held(), None);
+        // `complete` names the list it completed, so one without it is a
+        // controller that lost its list, not a radio that heard nothing.
         let mut body = [0; 128];
         let len = answer_with(&[1], array, &mut body);
         assert_eq!(
-            ScanAnswer::decode(&body[..len]).expect("no list").held(),
-            None
+            ScanAnswer::decode(&body[..len]),
+            Err(WifiError::ScanStateDisagrees)
+        );
+        let held = Some(HeldList {
+            age_ms: 0,
+            list: ScanList::new(&rows, 0).expect("one row"),
+        });
+        assert_eq!(
+            ScanAnswer::new(ScanState::None, None, held),
+            Err(WifiError::ScanStateDisagrees)
+        );
+        assert_eq!(
+            ScanAnswer::new(ScanState::Complete, None, None),
+            Err(WifiError::ScanStateDisagrees)
+        );
+        let mut none_with_list = [0; 128];
+        let len = answer_with(&[1, 3, 4, 5], array, &mut none_with_list);
+        let at = none_with_list
+            .iter()
+            .position(|b| *b == ScanState::Complete as u8)
+            .expect("key 1's value");
+        none_with_list[at] = ScanState::None as u8;
+        assert_eq!(
+            ScanAnswer::decode(&none_with_list[..len]),
+            Err(WifiError::ScanStateDisagrees)
         );
 
         // An empty list is a list: the radio heard nothing, which is not the
@@ -1563,11 +1614,46 @@ mod tests {
                 let len = status.encode(&mut body).expect("fits");
                 assert_eq!(WifiStatus::decode(&body[..len]), Ok(status));
                 let record = WifiStatusChanged { section, report };
-                assert_eq!(record.encode(&mut body), Ok(len));
                 assert_eq!(WifiStatusChanged::decode(&body[..len]), Ok(record));
+                if report.radio != Radio::Joining {
+                    assert_eq!(record.encode(&mut body), Ok(len));
+                }
             }
         }
         assert_eq!(WifiStatusChanged::KIND, EventKind::WIFI_STATUS_CHANGED);
+    }
+
+    /// A `joining` record would spend the immediate slot a new version gets
+    /// on the one state the write already implied, and the outcome after it
+    /// would wait ten minutes behind it.
+    #[test]
+    fn p_220_joining_is_never_recorded_by_the_encoder() {
+        let record = WifiStatusChanged {
+            section: 3,
+            report: RadioReport {
+                version: 3,
+                radio: Radio::Joining,
+            },
+        };
+        assert_eq!(
+            record.encode(&mut [0; 32]),
+            Err(WifiError::JoiningIsNotRecorded)
+        );
+        for radio in [
+            Radio::Off,
+            Radio::Joined {
+                ipv4: [10, 0, 0, 2],
+            },
+            Radio::Failed {
+                reason: WifiFailure::NotFound,
+            },
+        ] {
+            let record = WifiStatusChanged {
+                section: 3,
+                report: RadioReport { version: 3, radio },
+            };
+            assert!(record.encode(&mut [0; 32]).is_ok(), "{radio:?}");
+        }
     }
 
     #[test]
