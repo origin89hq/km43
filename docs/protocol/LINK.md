@@ -343,10 +343,12 @@ LinkUp  0x60  ·  LinkUp  0xE0
   7: net_version      u32     *optional*, comms only: the version of the last
                               `NetConfig` it stored, a clear included; 0 if it
                               has no written master (L-132)
+  8: device_id        bstr16  controller only: the `device_id` of `Discover`
+                              key 3 (L-035)
 ```
 
 Request and response carry the same fields, except field 7, which only the comms
-processor sends. This is a mutual statement, not a query — whoever comes up first
+processor sends, and field 8, which only the controller sends. This is a mutual statement, not a query — whoever comes up first
 says who it is, and the answer says who the other one is.
 
 **L-030** — Both sides MUST send `LinkUp` at boot, and either side MAY send it
@@ -408,6 +410,22 @@ text: three-digit components, an eight-byte pre-release and the commit come to
 date does not fit, which is why the format names neither. The receiver half
 exists because these texts are diagnostic (L-032): a link taken down over a
 version string is an outage caused by a label.
+
+**L-035** — The controller MUST send field 8 in every `LinkUp`, carrying the
+same 16 bytes `Discover 0x80` key 3 carries, and the comms processor MUST NOT
+send it. A receiver MUST refuse a controller `LinkUp` without field 8, and a
+comms `LinkUp` with one, as it refuses any body missing a required key. The
+comms processor MUST use it only as the TXT `id` of PROTOCOL.md P-224, taken
+from the latest controller `LinkUp` it accepted.
+
+The comms processor advertises the controller on the site network and has no
+other way to learn which controller it is: the only other place the bytes
+travel is inside a relayed `Discover` answer, and a relay that reads the bodies
+it carries is one step from rewriting them. The `device_id` is not a secret
+(P-038), so it comes over the link the way the hostname already does, from the
+controller. Required rather than optional, because a comms processor that
+linked without it would advertise a service no client can pick out, and nothing
+would say why.
 
 ### boot_id is what makes a reboot visible
 

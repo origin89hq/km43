@@ -207,7 +207,7 @@ pub const REQUIREMENTS: &[Requirement] = &[
         id: "P-224",
         document: "docs/PROTOCOL.md",
         section: "WebSocket",
-        statement: "While the station holds an IPv4 address, the comms processor MUST answer multicast DNS (RFC 6762) for `<hostname>.local`, where `hostname` is the network section's, with the address `WifiStatus` key 5 reports, and MUST advertise exactly one DNS-SD (RFC 6763) instance of type `DNSSD_SERVICE` (`_km43._tcp`) in `local.`.",
+        statement: "While the station holds an IPv4 address, the comms processor MUST answer multicast DNS (RFC 6762) for its host name with the address `WifiStatus` key 5 reports, and MUST advertise exactly one DNS-SD (RFC 6763) instance of type `DNSSD_SERVICE` (`_km43._tcp`) in `local.`.",
     },
     Requirement {
         id: "P-225",
@@ -1108,6 +1108,12 @@ pub const REQUIREMENTS: &[Requirement] = &[
         document: "docs/protocol/LINK.md",
         section: "LinkUp",
         statement: "`fw` in `LinkUp`, and `version` in `CommsRelease` and `CommsReleaseAck`, MUST be a semantic version whose build metadata names the commit it was built from: `MAJOR.MINOR.PATCH[-PRE]+gXXXXXXXX`, with the first eight lowercase hex digits of the commit id after the `g`.",
+    },
+    Requirement {
+        id: "L-035",
+        document: "docs/protocol/LINK.md",
+        section: "LinkUp",
+        statement: "The controller MUST send field 8 in every `LinkUp`, carrying the same 16 bytes `Discover 0x80` key 3 carries, and the comms processor MUST NOT send it.",
     },
     Requirement {
         id: "L-040",

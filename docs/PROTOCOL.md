@@ -672,15 +672,17 @@ agree only until a firmware serves something else at `/`. Refusing the others
 turns that into a 404 on the first run.
 
 **P-224** — While the station holds an IPv4 address, the comms processor MUST
-answer multicast DNS (RFC 6762) for `<hostname>.local`, where `hostname` is the
-network section's, with the address `WifiStatus` key 5 reports, and MUST
-advertise exactly one DNS-SD (RFC 6763) instance of type `DNSSD_SERVICE`
-(`_km43._tcp`) in `local.`. Its instance name is `hostname`, its SRV record
-names that host and `WS_PORT`, and its TXT record carries `DNSSD_TXT_DEVICE_ID`
-(`id`) holding the `device_id` rendered as P-038 renders it. It MUST probe and
-resolve name conflicts as RFC 6762 section 9 requires, and MUST send goodbye
-records (TTL 0) for all of these when the station loses its address or the
-network it joined changes.
+answer multicast DNS (RFC 6762) for its host name with the address `WifiStatus`
+key 5 reports, and MUST advertise exactly one DNS-SD (RFC 6763) instance of
+type `DNSSD_SERVICE` (`_km43._tcp`) in `local.`. It MUST probe for
+`<hostname>.local` and an instance named `hostname`, where `hostname` is the
+network section's, and MUST resolve a conflict as RFC 6762 section 9 requires;
+the names it answers for are the ones it holds after probing. The SRV record
+names that host and `WS_PORT`, and the TXT record carries `DNSSD_TXT_DEVICE_ID`
+(`id`) holding the `device_id` from the controller's `LinkUp` (LINK.md L-035),
+rendered as P-038 renders it. It MUST send goodbye records (TTL 0) for all of
+these on the network it is leaving, before it leaves it, when the network
+changes, and MUST stop answering when the station loses its address.
 
 `device_id` on the LAN is a broadcast where `Discover` was an answer: every
 host on the network sees it without connecting. It is not a secret. It is

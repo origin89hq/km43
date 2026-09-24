@@ -34,6 +34,7 @@ use crate::generated::{
     LinkMessageType, LinkTransport, NetConfig, NetConfigOp, TimeOffer,
 };
 use crate::handshake::Version;
+use crate::kdf::DEVICE_ID_BYTES;
 use crate::limits::MAX_LINK_TEXT;
 use crate::wifi::WifiError;
 
@@ -213,6 +214,8 @@ pub enum LinkField {
     BootId,
     Hw,
     NetVersion,
+    /// The controller's `device_id`, which the comms processor advertises.
+    DeviceId,
     /// A connection handle. Never 0 on a `ClientConnected`; 0 means *all* on a
     /// `CloseConnection`.
     Conn,
@@ -255,6 +258,7 @@ impl fmt::Display for LinkField {
             Self::BootId => "boot_id",
             Self::Hw => "hw",
             Self::NetVersion => "net_version",
+            Self::DeviceId => "device_id",
             Self::Conn => "conn",
             Self::Uptime => "uptime_s",
             Self::Conns => "conns",
@@ -305,6 +309,8 @@ pub enum LinkError {
     NotAVersion(LinkField),
     /// `net_version` from the controller, which only the comms processor sends.
     NetVersionFromController,
+    /// `device_id` from the comms processor, which only the controller sends.
+    DeviceIdFromComms,
     /// A `conn` of 0 where a handle is required. L-060 never allocates 0, so it
     /// names no connection — except in `CloseConnection`, where it deliberately
     /// names every one.
@@ -335,6 +341,9 @@ pub enum LinkError {
     /// padded or cut: a digest of any other length matches no image, and an
     /// `authorise` built on one is a release nothing can ever install.
     DigestNotSha256(usize),
+    /// A `device_id` that is not 16 bytes. A shorter one padded out would be
+    /// advertised as a controller that does not exist.
+    DeviceIdNotSixteen(usize),
     /// A Wi-Fi scan or state body that breaks L-200 to L-204.
     Wifi(WifiError),
     /// Pairing-window revisions start at one within each controller boot.
@@ -378,6 +387,9 @@ impl fmt::Display for LinkError {
             Self::NetVersionFromController => {
                 f.write_str("net_version arrived from the controller, and only comms sends it")
             }
+            Self::DeviceIdFromComms => {
+                f.write_str("device_id arrived from comms, and only the controller sends it")
+            }
             Self::NoSuchConnection => f.write_str("conn 0 names no connection"),
             Self::UnknownTransport(raw) => write!(f, "transport {raw} is not allocated"),
             Self::UnknownReason(raw) => write!(f, "reason {raw} is not allocated"),
@@ -400,6 +412,9 @@ impl fmt::Display for LinkError {
             Self::DigestNotSha256(len) => {
                 write!(f, "a digest of {len} bytes is not a SHA-256")
             }
+            Self::DeviceIdNotSixteen(len) => {
+                write!(f, "a device_id of {len} bytes is not 16")
+            }
             Self::Wifi(why) => write!(f, "{why}"),
             Self::ZeroPairingRevision => f.write_str("pairing-window revision is zero"),
             Self::PairingWindowTooLong(ms) => write!(f, "pairing window of {ms} ms exceeds 120000"),
@@ -414,7 +429,8 @@ impl core::error::Error for LinkError {}
 ///
 /// A mutual statement rather than a query: whoever comes up first says who it
 /// is, and the answer says who the other one is. Both directions carry the same
-/// fields except `net_version`, which only the comms processor sends.
+/// fields except `net_version`, which only the comms processor sends, and
+/// `device_id`, which only the controller sends.
 ///
 /// **`boot_id` is the field that matters.** What tears every connection down is
 /// a *changed* one, not the arrival of this message (L-030, L-042) — so a
@@ -440,12 +456,15 @@ pub struct LinkUp<'a> {
     /// Key 7, comms only: the version of the last `NetConfig` it stored, a
     /// clear included; 0 for an empty cache or stored unwritten clear (L-132).
     pub net_version: Option<u32>,
+    /// Key 8, controller only and required from it: the `device_id` the comms
+    /// processor advertises in TXT `id` (L-035). The comms processor has no
+    /// other way to learn it short of reading relayed `Discover` bodies.
+    pub device_id: Option<[u8; DEVICE_ID_BYTES]>,
 }
 
 impl<'a> LinkUp<'a> {
-    /// How many keys a `LinkUp` carries. Six when `net_version` is absent,
-    /// which is every one the controller sends.
-    const KEYS: usize = 7;
+    /// The six keys both sides send; each side adds its own one.
+    const SHARED_KEYS: usize = 6;
 
     /// Write the whole envelope and hand back its length.
     ///
@@ -456,14 +475,10 @@ impl<'a> LinkUp<'a> {
         bounded(LinkField::Fw, self.fw)?;
         versioned(LinkField::Fw, self.fw)?;
         bounded(LinkField::Hw, self.hw)?;
-        if self.net_version.is_some() && matches!(self.role, Side::Controller) {
-            return Err(LinkError::NetVersionFromController);
-        }
-        let keys = if self.net_version.is_some() {
-            LinkUp::KEYS
-        } else {
-            LinkUp::KEYS - 1
-        };
+        Self::sides_agree(self.role, self.net_version, self.device_id)?;
+        let keys = LinkUp::SHARED_KEYS
+            + usize::from(self.net_version.is_some())
+            + usize::from(self.device_id.is_some());
         let mut cbor = header
             .write(keys, dst)
             .map_err(|_| LinkError::Cbor(CborError::DestinationTooSmall))?;
@@ -483,12 +498,16 @@ impl<'a> LinkUp<'a> {
             cbor.key(7)?;
             cbor.u64(u64::from(net_version))?;
         }
+        if let Some(device_id) = &self.device_id {
+            cbor.key(8)?;
+            cbor.bytes(device_id)?;
+        }
         Ok(cbor.finish()?)
     }
 
     /// Read one out of a link-local envelope.
     ///
-    /// A key beside the seven is skipped (P-013): an unknown extra field is a
+    /// A key beside the eight is skipped (P-013): an unknown extra field is a
     /// newer peer being chatty. An unknown `role` is not — that is P-014, and it
     /// is refused.
     ///
@@ -505,6 +524,7 @@ impl<'a> LinkUp<'a> {
         let mut boot_id = None;
         let mut hw = None;
         let mut net_version = None;
+        let mut device_id = None;
 
         for _ in 0..pairs {
             match body.key()? {
@@ -521,15 +541,19 @@ impl<'a> LinkUp<'a> {
                     once(&mut hw, LinkField::Hw, text)?;
                 }
                 7 => once(&mut net_version, LinkField::NetVersion, body.u32()?)?,
+                8 => {
+                    let bytes = body.bytes()?;
+                    let whole = <[u8; DEVICE_ID_BYTES]>::try_from(bytes)
+                        .map_err(|_| LinkError::DeviceIdNotSixteen(bytes.len()))?;
+                    once(&mut device_id, LinkField::DeviceId, whole)?;
+                }
                 _ => body.skip()?,
             }
         }
         body.finish()?;
 
         let role = role.ok_or(LinkError::Missing(LinkField::Role))?;
-        if net_version.is_some() && matches!(role, Side::Controller) {
-            return Err(LinkError::NetVersionFromController);
-        }
+        Self::sides_agree(role, net_version, device_id)?;
         Ok(Self {
             version: Version {
                 major: major.ok_or(LinkError::Missing(LinkField::ProtocolMajor))?,
@@ -540,7 +564,24 @@ impl<'a> LinkUp<'a> {
             boot_id: boot_id.ok_or(LinkError::Missing(LinkField::BootId))?,
             hw: hw.ok_or(LinkError::Missing(LinkField::Hw))?,
             net_version,
+            device_id,
         })
+    }
+
+    /// Each side's own key comes from that side only, and the controller's is
+    /// required (L-035): a comms processor linked without it would advertise a
+    /// service no client can pick out.
+    fn sides_agree(
+        role: Side,
+        net_version: Option<u32>,
+        device_id: Option<[u8; DEVICE_ID_BYTES]>,
+    ) -> Result<(), LinkError> {
+        match (role, net_version, device_id) {
+            (Side::Controller, Some(_), _) => Err(LinkError::NetVersionFromController),
+            (Side::Controller, None, None) => Err(LinkError::Missing(LinkField::DeviceId)),
+            (Side::Comms, _, Some(_)) => Err(LinkError::DeviceIdFromComms),
+            (Side::Controller, None, Some(_)) | (Side::Comms, _, None) => Ok(()),
+        }
     }
 }
 
@@ -2300,6 +2341,117 @@ mod tests {
             boot_id: 0xDEAD_BEEF,
             hw: "esp32-c6-devkitc-1",
             net_version: Some(7),
+            device_id: None,
+        }
+    }
+
+    const A_DEVICE_ID: [u8; DEVICE_ID_BYTES] = *b"ORIGIN89 DEMO 01";
+
+    fn a_controller_link_up() -> LinkUp<'static> {
+        LinkUp {
+            role: Side::Controller,
+            net_version: None,
+            device_id: Some(A_DEVICE_ID),
+            ..a_link_up()
+        }
+    }
+
+    /// A controller `LinkUp` written key by key, so the decoder can be handed
+    /// what the encoder refuses to build.
+    fn raw_controller_link_up(device_id: Option<&[u8]>) -> ([u8; 256], usize) {
+        let mut bytes = [0u8; 256];
+        let keys = 6 + usize::from(device_id.is_some());
+        let mut cbor = link_header(LinkMessageType::LinkUp)
+            .write(keys, &mut bytes)
+            .expect("a header");
+        let up = a_link_up();
+        cbor.key(1).expect("key");
+        cbor.u64(u64::from(up.version.major)).expect("value");
+        cbor.key(2).expect("key");
+        cbor.u64(u64::from(up.version.minor)).expect("value");
+        cbor.key(3).expect("key");
+        cbor.u64(u64::from(Side::Controller.number()))
+            .expect("value");
+        cbor.key(4).expect("key");
+        cbor.text(up.fw).expect("value");
+        cbor.key(5).expect("key");
+        cbor.u64(u64::from(up.boot_id)).expect("value");
+        cbor.key(6).expect("key");
+        cbor.text(up.hw).expect("value");
+        if let Some(id) = device_id {
+            cbor.key(8).expect("key");
+            cbor.bytes(id).expect("value");
+        }
+        let len = cbor.finish().expect("a body");
+        (bytes, len)
+    }
+
+    /// **L-035: the controller says which controller it is.** Without key 8
+    /// the comms processor would have to read relayed `Discover` answers to
+    /// fill the TXT `id` a client picks its controller by.
+    #[test]
+    fn l_035_controller_link_up_carries_device_id() {
+        let mut bytes = [0u8; 256];
+        let len = a_controller_link_up()
+            .write(link_header(LinkMessageType::LinkUp), &mut bytes)
+            .expect("it encodes");
+        let envelope = crate::envelope::LinkEnvelope::decode(bytes.get(..len).expect("the frame"))
+            .expect("an envelope");
+        assert_eq!(LinkUp::decode(envelope), Ok(a_controller_link_up()));
+    }
+
+    /// **L-035: a controller `LinkUp` without key 8 is refused, not linked.**
+    /// A comms processor that linked anyway would advertise a service no
+    /// client can tell from its neighbour's, and nothing would say why.
+    #[test]
+    fn l_035_a_controller_link_up_without_a_device_id_is_refused() {
+        let mut bytes = [0u8; 256];
+        let missing = LinkUp {
+            device_id: None,
+            ..a_controller_link_up()
+        };
+        assert_eq!(
+            missing
+                .write(link_header(LinkMessageType::LinkUp), &mut bytes)
+                .err(),
+            Some(LinkError::Missing(LinkField::DeviceId)),
+            "the encoder built a frame the decoder must refuse"
+        );
+        let (raw, len) = raw_controller_link_up(None);
+        let envelope = crate::envelope::LinkEnvelope::decode(raw.get(..len).expect("the frame"))
+            .expect("an envelope");
+        assert_eq!(
+            LinkUp::decode(envelope),
+            Err(LinkError::Missing(LinkField::DeviceId))
+        );
+    }
+
+    /// A `device_id` from the comms processor is the relay claiming to be the
+    /// controller, and one of any length but 16 names no controller at all.
+    #[test]
+    fn a_device_id_from_comms_or_of_the_wrong_length_is_refused() {
+        let mut bytes = [0u8; 256];
+        let from_comms = LinkUp {
+            device_id: Some(A_DEVICE_ID),
+            ..a_link_up()
+        };
+        assert_eq!(
+            from_comms
+                .write(link_header(LinkMessageType::LinkUp), &mut bytes)
+                .err(),
+            Some(LinkError::DeviceIdFromComms)
+        );
+        for len in [0, 15, 17, 32] {
+            let id = [0xA5; 32];
+            let (raw, used) = raw_controller_link_up(Some(id.get(..len).expect("in range")));
+            let envelope =
+                crate::envelope::LinkEnvelope::decode(raw.get(..used).expect("the frame"))
+                    .expect("an envelope");
+            assert_eq!(
+                LinkUp::decode(envelope),
+                Err(LinkError::DeviceIdNotSixteen(len)),
+                "{len} bytes"
+            );
         }
     }
 
@@ -2322,11 +2474,7 @@ mod tests {
     #[test]
     fn the_controller_sends_no_net_version_and_that_is_not_a_missing_key() {
         let mut bytes = [0u8; 256];
-        let controller = LinkUp {
-            role: Side::Controller,
-            net_version: None,
-            ..a_link_up()
-        };
+        let controller = a_controller_link_up();
         let len = controller
             .write(link_header(LinkMessageType::LinkUp), &mut bytes)
             .expect("it encodes");
@@ -2344,9 +2492,8 @@ mod tests {
     fn a_net_version_from_the_controller_is_refused() {
         let mut bytes = [0u8; 256];
         let wrong = LinkUp {
-            role: Side::Controller,
             net_version: Some(3),
-            ..a_link_up()
+            ..a_controller_link_up()
         };
         assert_eq!(
             wrong
@@ -2411,7 +2558,7 @@ mod tests {
     fn l_034_a_version_in_another_shape_still_brings_the_link_up() {
         let mut bytes = [0u8; 256];
         let mut cbor = link_header(LinkMessageType::LinkUp)
-            .write(6, &mut bytes)
+            .write(7, &mut bytes)
             .expect("the envelope opens");
         cbor.key(1).expect("major");
         cbor.u64(1).expect("value");
@@ -2425,6 +2572,8 @@ mod tests {
         cbor.u64(7).expect("value");
         cbor.key(6).expect("hw");
         cbor.text("controller-a rev B").expect("value");
+        cbor.key(8).expect("device_id");
+        cbor.bytes(&A_DEVICE_ID).expect("value");
         let len = cbor.finish().expect("it closes");
 
         let envelope = crate::envelope::LinkEnvelope::decode(bytes.get(..len).expect("the frame"))

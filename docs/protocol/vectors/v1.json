@@ -679,6 +679,17 @@
       "encoded_with_delimiter": "048418600601a7010102390302047818302e322e302d616c7068612e31322b673565366637613862051a5eedface0672636f6e74726f6c6c65722d612072657620410703709d00",
       "encoded_len": 71
     },
+    "link_up_0xe0_controller": {
+      "type": 224,
+      "authentication": "none; this link is a cable inside one enclosure and carries no MAC (L-010)",
+      "session_id": 0,
+      "req_id": 1,
+      "body_readable": "{1:protocol_major=1, 2:protocol_minor=0, 3:role=controller, 4:fw, 5:boot_id, 6:hw, 8:device_id}",
+      "envelope_cbor": "8418e00001a70101020003010477302e312e302d626574612e31322b673161326233633464051a0b0e70010672636f6e74726f6c6c65722d6120726576204108504f524947494e38392044454d4f203031",
+      "crc16_ccitt_false": "0x74df",
+      "encoded_with_delimiter": "048418e00601a70101024a03010477302e312e302d626574612e31322b673161326233633464051a0b0e70010672636f6e74726f6c6c65722d6120726576204108504f524947494e38392044454d4f203031df7400",
+      "encoded_len": 85
+    },
     "client_connected_0x62": {
       "type": 98,
       "authentication": "none; this link is a cable inside one enclosure and carries no MAC (L-010)",
