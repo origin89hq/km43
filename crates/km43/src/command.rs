@@ -1,10 +1,10 @@
 //! `Command 0x08` / `Ack 0x88` — the operation a client signs to act on an
 //! output, and what the controller says became of it.
 //!
-//! [`CommandOperation`] is key 3 of a signed body, never a wrapper's payload:
-//! the MAC covers these bytes exactly as they arrived, and the controller's
-//! dedup table hashes those same bytes (P-120), so `signed.rs` carries them and
-//! this file only reads them once the tag and the counter have both passed.
+//! [`CommandOperation`] is the inner body of a sealed `Command 0x08`: the tag
+//! covers these bytes exactly as they arrived, and the controller's dedup table
+//! hashes those same bytes (P-120), so `signed.rs` carries them and this file
+//! only reads them once the tag has passed.
 //!
 //! `args` is carried as the map's own bytes and never read. Its schema is
 //! deferred per kind until an output is granted authority (DEFERRED entry 8),
@@ -14,7 +14,7 @@
 //!
 //! `kind` is refused when the registry does not allocate it (P-019). A kind
 //! nobody allocated is a command nobody can say the meaning of, and the
-//! controller must not reserve a dedup entry or spend a counter on one.
+//! controller must not reserve a dedup entry for one.
 //!
 //! cites: P-013, P-015, P-019
 
@@ -218,9 +218,9 @@ impl<'a> CommandOperation<'a> {
 }
 
 /// The controller's answer to a `Command`. An error rather than an ack is
-/// what a command that never reached the dedup table gets — a bad MAC, a stale
-/// counter, a counter that would not persist — so every value here is a
-/// decision about this `cmd_id`.
+/// what a command that never reached the dedup table gets — a tag that failed,
+/// an entry that would not persist — so every value here is a decision about
+/// this `cmd_id`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct CommandAck<'a> {
@@ -523,7 +523,7 @@ mod tests {
 
     /// A kind nobody allocated is a command whose meaning nobody can state. It
     /// is refused at the decoder, so a controller never reserves a dedup entry
-    /// or persists a counter for one. Zero is what a sender that forgot the
+    /// for one. Zero is what a sender that forgot the
     /// field writes; `0x8000` is the bench range, which this build does not
     /// speak (DEFERRED entry 8).
     #[test]

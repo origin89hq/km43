@@ -55,7 +55,7 @@ fn messages() -> Vec<Allocated> {
 /// `none` and `handshake` are the two that run before a session exists: no key
 /// at all, and a Noise handshake message that authenticates itself. `sealed`
 /// and `signed` both require one — the first is sealed under the session's
-/// keys, and the second is that plus a counter, which is a session's counter.
+/// keys, and the second is sealed the same way and is on the list of writes.
 ///
 /// Watched by flipping `Concerns`' `auth_request` to `handshake` in `protocol.toml`:
 /// this goes red naming the message, while every other check in the repo stays

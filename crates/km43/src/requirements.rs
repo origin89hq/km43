@@ -399,7 +399,7 @@ pub const REQUIREMENTS: &[Requirement] = &[
         id: "P-048",
         document: "docs/PROTOCOL.md",
         section: "Session encryption",
-        statement: "`operation` is a **byte string carried inside the sealed inner body**, and a receiver decodes it only after the body has opened.",
+        statement: "A write's operation body **is** its sealed inner body, and a receiver decodes it only after the body has opened.",
     },
     Requirement {
         id: "P-050",
@@ -423,7 +423,7 @@ pub const REQUIREMENTS: &[Requirement] = &[
         id: "P-053",
         document: "docs/PROTOCOL.md",
         section: "Sealed bodies",
-        statement: "Signed requests (`0x07`, `0x08`, `0x09`, `0x0A`) are sealed like every other request, and their inner body is the signed body of the section below, because they carry a counter.",
+        statement: "Signed requests (`0x07`, `0x08`, `0x09`, `0x0A`) are sealed like every other request, and their inner body is their operation body (P-080).",
     },
     Requirement {
         id: "P-054",
@@ -510,12 +510,6 @@ pub const REQUIREMENTS: &[Requirement] = &[
         statement: "A client that sent `Enrol 0x13` and received no `Enrol 0x93` MUST NOT assume it was refused.",
     },
     Requirement {
-        id: "P-065",
-        document: "docs/PROTOCOL.md",
-        section: "Pair — `0x0B` / `0x8B`, and Enrol — `0x13` / `0x93`",
-        statement: "A newly enrolled client's counter MUST start at **0**, and no response may carry a starting counter.",
-    },
-    Requirement {
         id: "P-067",
         document: "docs/PROTOCOL.md",
         section: "Pair — `0x0B` / `0x8B`, and Enrol — `0x13` / `0x93`",
@@ -525,7 +519,7 @@ pub const REQUIREMENTS: &[Requirement] = &[
         id: "P-068",
         document: "docs/PROTOCOL.md",
         section: "Pair — `0x0B` / `0x8B`, and Enrol — `0x13` / `0x93`",
-        statement: "Counter recovery is a **re-pair, not a reset**.",
+        statement: "Recovering an enrolment is a **re-pair, not a request**.",
     },
     Requirement {
         id: "P-240",
@@ -615,37 +609,25 @@ pub const REQUIREMENTS: &[Requirement] = &[
         id: "P-080",
         document: "docs/PROTOCOL.md",
         section: "Signed requests",
-        statement: "The controller MUST take these steps in this order: 1. Open the sealed body. A tag that fails is P-051's error 10. 2. Check the counter. A counter that does not exceed the stored value MUST be refused with error 11. 3. For a `Command 0x08`, look up `(client_id, cmd_id)` in the dedup table and answer per P-120 and P-124 on a match, **without executing**. 4. For a `Command 0x08`, reserve a dedup entry marked **in flight**, and persist it together with the new counter **in one FRAM transaction**. A failure here is P-079's error 7 and P-122's error 7. 5. Execute. 6. For a `Command 0x08`, mark the reserved entry **complete**, carrying the outcome it produced.",
+        statement: "The controller MUST take these steps in this order: 1. Open the sealed body. A `req_id` P-022 refuses is dropped unanswered, and a tag that fails is P-051's error 10. 2. For a `Command 0x08`, look up `(client_id, cmd_id)` in the dedup table, with the `client_id` the session is bound to. A match whose operation-hash differs is P-124's `rejected`; a match that agrees and was left **in flight** by a reset is answered from the state store, below; any other match is answered per P-120. None of them executes here. 3. For a `Command 0x08`, reserve a dedup entry marked **in flight** and persist it. A failure here is P-079's error 7, and a full table is P-122's. 4. Execute. 5. For a `Command 0x08`, mark the reserved entry **complete**, carrying the outcome it produced.",
     },
     Requirement {
         id: "P-079",
         document: "docs/PROTOCOL.md",
         section: "Signed requests",
-        statement: "If persisting the counter fails, the operation MUST NOT execute.",
-    },
-    Requirement {
-        id: "P-081",
-        document: "docs/PROTOCOL.md",
-        section: "Signed requests",
-        statement: "Counters are **per slot**, each in its own FRAM record beside the slot's key record and never inside it (P-239).",
-    },
-    Requirement {
-        id: "P-084",
-        document: "docs/PROTOCOL.md",
-        section: "Signed requests",
-        statement: "Key 1 `client_id` MUST equal the `client_id` the session was bound to at `Hello`.",
+        statement: "If persisting the dedup entry fails, the command MUST NOT execute.",
     },
     Requirement {
         id: "P-082",
         document: "docs/PROTOCOL.md",
         section: "Signed requests",
-        statement: "`counter` prevents replay.",
+        statement: "P-022's `req_id` window refuses a replay and `cmd_id` suppresses a duplicate.",
     },
     Requirement {
         id: "P-083",
         document: "docs/PROTOCOL.md",
         section: "Signed requests",
-        statement: "`operation` MUST NOT exceed `MAX_OPERATION` (960 bytes).",
+        statement: "A write's inner body MUST NOT exceed `MAX_OPERATION` (960 bytes).",
     },
     Requirement {
         id: "P-093",
@@ -1035,7 +1017,7 @@ pub const REQUIREMENTS: &[Requirement] = &[
         id: "P-120",
         document: "docs/PROTOCOL.md",
         section: "Commands",
-        statement: "The dedup table MUST be keyed `(client_id, cmd_id, operation-hash)`, where **operation-hash is the leftmost 8 bytes of SHA-256 over the `operation` byte string exactly as it arrived on the wire** (P-048, and never over a re-encoding).",
+        statement: "The dedup table MUST be keyed `(client_id, cmd_id, operation-hash)`, where **operation-hash is the leftmost 8 bytes of SHA-256 over the operation body exactly as it opened** (P-048, and never over a re-encoding).",
     },
     Requirement {
         id: "P-121",

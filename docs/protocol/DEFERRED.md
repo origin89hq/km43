@@ -565,7 +565,7 @@ fifteen minutes* is a claim about power draw somebody will act on.
 
 **The sixth is `0x0501`, and it needs a discriminator before it needs anything
 else.** Four requirements raise it and none of them is distinguishable from the
-others in the record: P-079 when persisting a counter fails, P-085 when the epoch
+others in the record: P-079 when a command's dedup entry will not persist, P-085 when the epoch
 write fails, P-115 when an accepted set moves the clock by more than an hour, and
 P-116 when somebody at the panel overrides the monotonic floor. A kind with four
 unrelated producers and no field saying which one fired is a record nobody can
@@ -606,7 +606,8 @@ rename, and calling it one is how it stayed open:
 **Decided, and the controller namespace is not needed after all.** All four
 producers raise `concern raised`, `cond` is the discriminator, and the registry
 allocates the four values they need — `counter write failed`, `epoch write
-failed`, `clock stepped`, `floor overridden`. `PROTOCOL.md` names them in the
+failed`, `clock stepped`, `floor overridden`. The first was retired with the
+counter (origin89hq/km43#131), and P-079 now raises `dedup write failed`. `PROTOCOL.md` names them in the
 requirements themselves, so there is no kind an implementer can send under a name
 the registry does not use.
 

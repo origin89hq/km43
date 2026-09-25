@@ -7,7 +7,7 @@
 //! a caller hands it bytes.
 //!
 //! The `defmt` feature, off by default: it derives `defmt::Format` on the
-//! identifiers, counters, enums, verdicts and errors, so a consumer logging on
+//! identifiers, enums, verdicts and errors, so a consumer logging on
 //! the target can derive it on a row that holds a [`ClientId`] instead of
 //! writing the impl by hand. Never on a key or a tag, which have no `Debug`
 //! for the same reason.

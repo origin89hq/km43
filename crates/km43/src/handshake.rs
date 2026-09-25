@@ -62,13 +62,13 @@ pub const MAX_DISCOVER_BODY: usize = 54 + TEXT_MAX;
 /// once the key widens = 59.
 const TOPOLOGY_REPORT_BYTES: usize = 59;
 
-/// The widest `HelloReport`: thirty-one keys, two 64-byte firmware strings and
-/// four `u64`.
+/// The widest `HelloReport`: thirty keys, two 64-byte firmware strings and
+/// three `u64`. Key 11 is retired, so the numbers run to 31 over thirty keys.
 ///
 /// Keys 30 and 31 cost seven bytes each: a two-byte key and a `u32` at its
 /// widest. The trailing `+ 1` is the map header, which is two bytes past
 /// twenty-three pairs.
-pub const MAX_HELLO_REPORT: usize = 81 + 2 * TEXT_MAX + TOPOLOGY_REPORT_BYTES + 2 * 7 + 1;
+pub const MAX_HELLO_REPORT: usize = 71 + 2 * TEXT_MAX + TOPOLOGY_REPORT_BYTES + 2 * 7 + 1;
 
 // What travels around a report: the envelope, the second byte a `0x81` type
 // costs, key 1 and a two-byte `bstr` head, and message 2's ephemeral key and
@@ -224,7 +224,8 @@ impl fmt::Display for DiscoverKey {
     }
 }
 
-/// The thirty-one keys of `HelloReport`.
+/// The thirty keys of `HelloReport`. Key 11 is retired (P-012) and is skipped
+/// like any key this version does not know.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ReportKey {
@@ -248,8 +249,6 @@ pub enum ReportKey {
     StateSeq,
     /// Key 10.
     TimeKnown,
-    /// Key 11, this client's last accepted counter.
-    Counter,
     /// Key 12, the first of P-005's reported caps.
     MaxSessions,
     /// Key 13, which P-006 caps at 32.
@@ -295,7 +294,7 @@ pub enum ReportKey {
 }
 
 impl ReportKey {
-    const COUNT: usize = 31;
+    const COUNT: usize = 30;
 
     const fn of(number: i64) -> Option<Self> {
         match number {
@@ -309,7 +308,6 @@ impl ReportKey {
             8 => Some(Self::LogNewestSeq),
             9 => Some(Self::StateSeq),
             10 => Some(Self::TimeKnown),
-            11 => Some(Self::Counter),
             12 => Some(Self::MaxSessions),
             13 => Some(Self::MaxChannels),
             14 => Some(Self::MaxClients),
@@ -346,7 +344,6 @@ impl ReportKey {
             Self::LogNewestSeq => 8,
             Self::StateSeq => 9,
             Self::TimeKnown => 10,
-            Self::Counter => 11,
             Self::MaxSessions => 12,
             Self::MaxChannels => 13,
             Self::MaxClients => 14,
@@ -382,7 +379,6 @@ impl ReportKey {
             Self::LogNewestSeq => "log_newest_seq",
             Self::StateSeq => "state_seq",
             Self::TimeKnown => "time_known",
-            Self::Counter => "counter",
             Self::MaxSessions => "max_sessions",
             Self::MaxChannels => "max_channels",
             Self::MaxClients => "max_clients",
@@ -722,8 +718,6 @@ pub struct HelloReport<'a> {
     pub state_seq: StateSeq,
     /// Key 10.
     pub time_known: bool,
-    /// Key 11, this client's last accepted counter.
-    pub counter: u64,
     /// Keys 12 to 17 (P-005).
     pub caps: Caps,
     /// The topology plane's revision, digest and caps, keys 18 to 29.
@@ -735,7 +729,7 @@ pub struct HelloReport<'a> {
 }
 
 impl<'a> HelloReport<'a> {
-    /// Encode the thirty-one keys into `dst`; the caller carries them in
+    /// Encode the thirty keys into `dst`; the caller carries them in
     /// message 2.
     ///
     /// A `channels` above [`Caps::CHANNEL_CEILING`] is refused here as well as on
@@ -765,8 +759,6 @@ impl<'a> HelloReport<'a> {
         cbor.u64(self.state_seq.0)?;
         cbor.key(ReportKey::TimeKnown.number())?;
         cbor.bool(self.time_known)?;
-        cbor.key(ReportKey::Counter.number())?;
-        cbor.u64(self.counter)?;
         self.caps.encode(&mut cbor)?;
         self.topology.encode(&mut cbor)?;
         cbor.key(ReportKey::ClientId.number())?;
@@ -1056,7 +1048,6 @@ struct ReportSlots<'a> {
     log_newest_seq: Slot<LogSeq>,
     state_seq: Slot<StateSeq>,
     time_known: Slot<bool>,
-    counter: Slot<u64>,
     caps: CapSlots,
     topo: TopoSlots,
     client_id: Slot<ClientId>,
@@ -1162,7 +1153,6 @@ impl<'a> ReportSlots<'a> {
             log_newest_seq: Slot::empty(),
             state_seq: Slot::empty(),
             time_known: Slot::empty(),
-            counter: Slot::empty(),
             caps: CapSlots::empty(),
             topo: TopoSlots::empty(),
             client_id: Slot::empty(),
@@ -1182,7 +1172,6 @@ impl<'a> ReportSlots<'a> {
             ReportKey::LogNewestSeq => self.log_newest_seq.fill(key, LogSeq(body.u64()?)),
             ReportKey::StateSeq => self.state_seq.fill(key, StateSeq(body.u64()?)),
             ReportKey::TimeKnown => self.time_known.fill(key, body.bool()?),
-            ReportKey::Counter => self.counter.fill(key, body.u64()?),
             ReportKey::MaxSessions => self.caps.sessions.fill(key, body.u8()?),
             ReportKey::MaxChannels => self.caps.channels.fill(key, body.u8()?),
             ReportKey::MaxClients => self.caps.clients.fill(key, body.u8()?),
@@ -1227,7 +1216,6 @@ impl<'a> ReportSlots<'a> {
             log_newest_seq: self.log_newest_seq.taken(ReportKey::LogNewestSeq)?,
             state_seq: self.state_seq.taken(ReportKey::StateSeq)?,
             time_known: self.time_known.taken(ReportKey::TimeKnown)?,
-            counter: self.counter.taken(ReportKey::Counter)?,
             caps: self.caps.complete()?,
             topology: self.topo.complete()?,
             client_id: self.client_id.taken(ReportKey::ClientId)?,
@@ -1403,7 +1391,6 @@ mod tests {
             log_newest_seq: LogSeq(256),
             state_seq: StateSeq(255),
             time_known: true,
-            counter: 65,
             caps: Caps::THIS_CONTROLLER,
             topology: Topology::THIS_CONTROLLER,
             client_id: ClientId::new(7).expect("slot 7"),
@@ -1539,7 +1526,7 @@ mod tests {
         }
     }
 
-    /// The report comes back as it went out, all thirty-one keys, with the slot
+    /// The report comes back as it went out, all thirty keys, with the slot
     /// and generation it names (P-239).
     #[test]
     fn p_239_a_report_round_trips_with_its_slot_and_generation() {
@@ -1573,14 +1560,18 @@ mod tests {
         );
     }
 
-    /// A report missing any one of its thirty-one keys is refused by name, never
-    /// defaulted: a report without key 11 would send a client counting from a
-    /// counter nobody told it.
+    /// A report missing any one of its thirty keys is refused by name, never
+    /// defaulted: a report without key 30 would bind a client to a slot nobody
+    /// told it.
     #[test]
     fn a_report_missing_any_one_key_is_refused_by_name() {
         let mut full = [0u8; MAX_HELLO_REPORT];
         let len = report().encode(&mut full).expect("encodes");
+        let mut refused_by_name = 0;
         for skip in 1..=31i64 {
+            let Some(key) = ReportKey::of(skip) else {
+                continue;
+            };
             let mut reader = CborReader::new(&full[..len]);
             let pairs = reader.map().expect("a map");
             let mut out = [0u8; MAX_HELLO_REPORT];
@@ -1596,13 +1587,49 @@ mod tests {
             }
             let short = cbor.finish().expect("done");
             let refused = HelloReport::decode(&out[..short], SessionId::from(3));
-            let key = ReportKey::of(skip).expect("a report key");
             assert_eq!(
                 refused.err(),
                 Some(HandshakeError::Missing(key.into())),
                 "{key}"
             );
+            refused_by_name += 1;
         }
+        assert_eq!(
+            refused_by_name,
+            ReportKey::COUNT,
+            "every key was dropped once"
+        );
+    }
+
+    /// P-012 and P-013: a report from a controller that still sends the
+    /// retired key 11 is read, and the key is skipped rather than refused.
+    /// Refusing it would lock a newer client out of an older controller over a
+    /// field nobody reads any more.
+    #[test]
+    fn a_report_still_carrying_retired_key_11_is_read() {
+        let mut full = [0u8; MAX_HELLO_REPORT];
+        let len = report().encode(&mut full).expect("encodes");
+        let mut reader = CborReader::new(&full[..len]);
+        let pairs = reader.map().expect("a map");
+        let mut out = [0u8; MAX_HELLO_REPORT + 10];
+        let mut cbor = CborWriter::new(&mut out);
+        cbor.map(pairs + 1).expect("head");
+        for _ in 0..pairs {
+            let key = reader.key().expect("key");
+            let value = reader.raw().expect("value");
+            cbor.key(key).expect("k");
+            cbor.raw(value).expect("v");
+            if key == 10 {
+                cbor.key(11).expect("k");
+                cbor.u64(u64::MAX).expect("v");
+            }
+        }
+        let n = cbor.finish().expect("done");
+        assert_eq!(ReportKey::of(11), None);
+        assert_eq!(
+            HelloReport::decode(&out[..n], SessionId::from(3)).expect("reads"),
+            report()
+        );
     }
 
     /// A zero slot or generation in a report names nothing and is refused.

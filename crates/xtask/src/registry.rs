@@ -45,12 +45,12 @@ impl Auth {
                  into, which open no session and are destroyed after it (P-064)."
             }
             Self::Sealed => {
-                "Sealed under the session's keys with ChaCha20-Poly1305 (P-231). Read-only, \
-                 so it carries no counter (P-052)."
+                "Sealed under the session's keys with ChaCha20-Poly1305 (P-231). Not a write, \
+                 so not on the signed list (P-052)."
             }
             Self::Signed => {
-                "Sealed like every request, with the client's counter inside. Every write is \
-                 one (P-053)."
+                "Sealed like every request, with the operation as its inner body. Every write \
+                 is one (P-053)."
             }
             Self::Link => {
                 "Controller to comms processor, unauthenticated by design: the link is \

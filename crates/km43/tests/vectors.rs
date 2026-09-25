@@ -12,17 +12,17 @@
 use km43::{
     BOOT_MAX_BYTES, Boot, BootCause, CONCERN_MAX_BYTES, Caps, CborReader, CborWriter, ClientId,
     ClientKind, Closed, CmdList, Concern, ConcernChanged, ConcernRaised, ConcernRows, ConcernState,
-    ConcernsBody, ConcernsHeader, ConcernsOutcome, ConcernsPage, Condition, Counter, DeviceId,
-    Discovery, ElementAt, EnrolAnswer, Enrolment, Entropy, Envelope, Epoch, ErrorBody,
-    ErrorBodyError, ErrorCode, Event, EventKind, Fingerprint, Generation, Header, HelloArrival,
-    HelloOffer, HelloPending, HelloReport, Id, Incoming, InventoryHeader, InventoryOutcome, Label,
-    LogEntry, LogPage, LogSeq, MAX_DISCOVER_BODY, MAX_FRAME, MAX_HELLO_REPORT, MAX_LOG_PAGE_BYTES,
+    ConcernsBody, ConcernsHeader, ConcernsOutcome, ConcernsPage, Condition, DeviceId, Discovery,
+    ElementAt, EnrolAnswer, Enrolment, Entropy, Envelope, Epoch, ErrorBody, ErrorBodyError,
+    ErrorCode, Event, EventKind, Fingerprint, Generation, Header, HelloArrival, HelloOffer,
+    HelloPending, HelloReport, Id, Incoming, InventoryHeader, InventoryOutcome, Label, LogEntry,
+    LogPage, LogSeq, MAX_DISCOVER_BODY, MAX_FRAME, MAX_HELLO_REPORT, MAX_LOG_PAGE_BYTES,
     MAX_PAYLOAD, MAX_SERIES_LEN, MessageType, Outcome, Page, PairArrival, PairOffer, PairPending,
     PairRefusal, PairReply, PanicSite, Part, PresenceChanged, PrintedSecret, Prologue,
     PrologueFields, Provenance, ReadConcerns, ReadInventory, ReadLog, ReadSignals, ReadingsBody,
     ReadingsHeader, ReadingsOutcome, ReadingsPage, ReqId, Row, RowKind, RowSlots, SAMPLE_MAX_BYTES,
     SERIES_MAX_BYTES, Sample, Sealed, Sel, Series, SessionId, Severity, SignalQuality, Signed,
-    SignedClaim, StateSeq, StaticKey, Subject, Suite, TopologyChangeReason, TopologyChanged,
+    SignedWrite, StateSeq, StaticKey, Subject, Suite, TopologyChangeReason, TopologyChanged,
     Validity, ValidityChanged, Value, VendorCode, VendorNamespace, Version,
 };
 
@@ -62,12 +62,7 @@ fn blobs(key: &str) -> Vec<Vec<u8>> {
 #[test]
 fn every_published_body_is_one_this_reader_walks_to_the_end() {
     let mut seen = 0;
-    for key in [
-        "inner_body_cbor",
-        "operation_cbor",
-        "full_body_cbor",
-        "body_cbor",
-    ] {
+    for key in ["inner_body_cbor", "full_body_cbor", "body_cbor"] {
         for bytes in blobs(key) {
             let mut reader = CborReader::new(&bytes);
             reader.skip().unwrap_or_else(|e| panic!("{key}: {e}"));
@@ -77,7 +72,7 @@ fn every_published_body_is_one_this_reader_walks_to_the_end() {
             seen += 1;
         }
     }
-    assert_eq!(seen, 68, "the vector file grew or shrank a body");
+    assert_eq!(seen, 67, "the vector file grew or shrank a body");
 }
 
 /// The envelope the generator publishes must decode here to the same four
@@ -446,7 +441,6 @@ fn published_report() -> HelloReport<'static> {
         log_newest_seq: LogSeq(256),
         state_seq: StateSeq(255),
         time_known: true,
-        counter: 65,
         caps: Caps::THIS_CONTROLLER,
         client_id: ClientId::new(7).expect("slot 7"),
         generation: Generation::new(1).expect("generation 1"),
@@ -640,16 +634,11 @@ fn p_231_the_published_sealed_bodies_are_what_this_crate_seals_and_opens() {
     );
 
     let signed = object_in(sealed, "signed_request");
-    let operation = hex_in(signed, "operation_cbor");
-    let (req_id, len) = Signed::new(
-        MessageType::Command,
-        ClientId::new(7).expect("slot 7"),
-        Counter(0x42),
-        &operation,
-    )
-    .expect("a Command signs")
-    .seal(&mut client.tx, SessionId::from(3), &mut frame)
-    .expect("it seals");
+    let operation = hex_in(signed, "inner_body_cbor");
+    let (req_id, len) = Signed::new(MessageType::Command, &operation)
+        .expect("a Command signs")
+        .seal(&mut client.tx, SessionId::from(3), &mut frame)
+        .expect("it seals");
     assert_eq!(req_id, ReqId(u32_in(signed, "req_id")));
     assert_eq!(
         &frame[..len],
@@ -660,13 +649,8 @@ fn p_231_the_published_sealed_bodies_are_what_this_crate_seals_and_opens() {
         .expect("a sealed request")
         .open(&mut controller.rx, &mut plain)
         .expect("the controller opens it");
-    let fresh = SignedClaim::read(&opened)
-        .expect("a signed body")
-        .bind(ClientId::new(7).expect("slot 7"))
-        .expect("the session's own slot")
-        .fresh(Counter(0x41))
-        .expect("0x42 is ahead of the reported 0x41");
-    assert_eq!(fresh.operation(), operation.as_slice());
+    let write = SignedWrite::read(&opened).expect("a write");
+    assert_eq!(write.operation(), operation.as_slice());
 
     controller_messages_seal_as_published(sealed, &mut controller, &mut client);
 }
@@ -2830,14 +2814,14 @@ fn the_published_time_bodies_carry_the_registry_opcodes() {
 }
 
 /// The command bodies the file already publishes, read and rewritten here: the
-/// operation the signed request signs and the ack the response wraps. `args`
-/// must come back as the bytes that went in, because the MAC and the
+/// operation the signed request seals and the ack the response wraps. `args`
+/// must come back as the bytes that went in, because the tag and the
 /// controller's dedup hash (P-120) are both over the operation as it arrived.
 #[test]
 fn the_published_command_and_ack_bodies_decode_and_reencode_byte_for_byte() {
     use km43::{Command, CommandAck, CommandKind, CommandOperation, MAX_COMMAND_ACK_BYTES};
 
-    let published = blob_under("signed_request", "operation_cbor");
+    let published = blob_under("signed_request", "inner_body_cbor");
     let operation = CommandOperation::decode(&published).expect("the published operation");
     assert_eq!(operation.cmd_id, 0x2A);
     assert_eq!(operation.kind, CommandKind::StartGenerator);

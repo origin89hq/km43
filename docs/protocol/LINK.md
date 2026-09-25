@@ -215,7 +215,7 @@ outstanding. A `Heartbeat` is not retried either, because the next beat two
 seconds later is its retry and a missed one is what L-100 measures. Reusing the
 `req_id` is what lets the peer recognise a retry instead of answering a request
 it has already answered, and it is only safe because nothing in this range
-is sealed or carries a counter. Retrying forever is the alternative, and it hides a
+is sealed. Retrying forever is the alternative, and it hides a
 link that has stopped carrying traffic behind a sender that looks busy.
 
 Nothing in this range is cryptographic, so its vectors in
@@ -1268,7 +1268,7 @@ CommsReleaseAck  0xE7
    reserved and [DEFERRED.md](DEFERRED.md) still owns the field list, `target`
    included. Everything below this step is settled; the step that starts it is
    not, and a reader should not have to discover that by grepping for a field
-   name. The controller opens the sealed request, checks the counter and applies policy.
+   name. The controller opens the sealed request and applies policy.
 
    **L-169** — Policy MUST NOT permit an arbitrary downgrade.
    Rollback-to-known-good is step 6 below — an image that never confirms healthy

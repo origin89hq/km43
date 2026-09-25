@@ -27,7 +27,7 @@ tableOfContents:
   </div>
   <div>
     <dt>Safe repetition</dt>
-    <dd>Sessions, counters, request IDs, and command IDs each answer a different retry failure.</dd>
+    <dd>Sessions, request IDs, and command IDs each answer a different retry failure.</dd>
   </div>
 </dl>
 
@@ -465,7 +465,7 @@ request's nonce is its `req_id`, issued by the client's sealing state itself; th
 controller's nonce counts from 0 across every response and event it seals. A
 nonce used twice under one key gives away the XOR of two plaintexts and the
 one-time Poly1305 key, and with that key anybody on the path forges every later
-message of the session. So the counter lives where a caller cannot supply one,
+message of the session. So the nonce lives where a caller cannot supply one,
 and there is one of it: an application picking a `req_id` and a cipher picking a
 nonce is two sources for one number, which is the version of this that goes
 wrong. Neither key nor nonce is ever persisted (P-230), so a reboot or a restart
@@ -593,33 +593,75 @@ believing it is live and current while a state change never reached it.
 
 ---
 
-## Counters and command IDs solve different problems
+## Request IDs and command IDs solve different problems
 
-### Counters are per client
+### A write carries no counter
 
-A single device-wide counter livelocks the moment two clients are active. Both
-read 100, both send 101, one is rejected and re-reads, and so does the other, and
-neither of them is wrong. A phone and a browser open at the same time is the
-normal case at commissioning, not an edge case.
+Every write used to carry a per-client counter, and the controller refused one
+that did not exceed the last it had accepted. That was the replay defence of v1's
+symmetric scheme, in which every key came from the label, and it was the one
+defence that did not depend on a key being fresh.
 
-So the controller stores `client_id → highest accepted counter` in FRAM, updated
-before the operation executes.
+The Noise sessions of origin89hq/km43#128 took that job over. Each session draws
+fresh ephemeral keys at both ends, so a frame from one session does not open in
+another, and inside a session P-022's window refuses a `req_id` it has already
+accepted. There is nowhere left for a captured write to replay that the counter
+could see.
+
+The review of that change found one role left for it: a backstop if the
+controller's random bit generator ever repeated a draw. A repeat gives the same
+challenge and the same ephemeral, a recorded `Hello` replayed against it derives
+the recorded session's keys, and every write of that session opens again under a
+window that starts empty. The counter would have refused those writes.
+
+It was retired anyway (origin89hq/km43#131), for three reasons.
+
+- **It covers that failure only in part.** The replayed session makes the
+  controller seal new responses under the recorded session's keys at the same
+  nonces, which gives away the XOR of old and new plaintexts and the one-time
+  Poly1305 keys of that direction. A repeated draw breaks P-237 whatever the
+  counter does; the counter turned back one consequence of it.
+- **The failure it backstops is already a type.** `Drbg::draw` takes the store
+  and releases nothing until the advanced state has been written and read back,
+  so a draw that skips the persist does not compile. What no type can check is
+  that the store is durable, and a counter kept in another record does not check
+  that either; an attacker who can roll FRAM back rolls a counter back with it.
+  The test for durability is on the real part: reset between draws and confirm
+  the next one differs.
+- **Its cost fell on every write, from every client.** A FRAM write before each
+  one executed, a failure path with its own class A concern (P-079), an error
+  code (11), a `HelloReport` key a client had to read to recover from it
+  (P-081), a rule forbidding the obvious local recovery, and 21 bytes of signed
+  body. It carried hazards of its own as well: a counter the network could set
+  to 2⁶⁴−1 pinned a client's writes forever, which P-065 existed only to stop,
+  and two sessions of one client raced each other for the next value.
+
+Ordering was not a reason to keep it. Inside a session the counter refused a
+write that arrived behind a later one, but P-081 then told the client to take a
+fresh counter and send it again, so the late write landed anyway. Configuration
+carries `expected_version` (P-100), and that is the ordering that holds.
+
+With the counter gone, the signed body's other two keys had no job. `client_id`
+restated the session's binding, and P-084 existed only to catch the two
+disagreeing; `operation` wrapped the one field left. A write's inner body is now
+its operation body.
 
 ### They are not two spellings of the same idea
 
-- **`counter` prevents replay.** A frame captured off the wire and sent again
-  carries a counter that no longer exceeds the stored one.
+- **`req_id` refuses a replay.** A frame sent again inside its session carries a
+  `req_id` the controller has already accepted (P-022), and a frame from any
+  other session does not open.
 - **`cmd_id` suppresses duplicates.** A retry after a lost acknowledgement
   carries the same `cmd_id`, and the controller answers `duplicate` instead of
   starting a generator a second time.
 
-**A retried command has the same `cmd_id` and a *new* `counter`.** It is a
+**A retried command has the same `cmd_id` and a *new* `req_id`.** It is a
 genuinely new frame — it has to pass the replay check and it has to fail the
 dedup check. Collapse the two mechanisms into one and you lose one of those: a
-single counter-only scheme has no way to tell a retry from a new command, and a
-single id-only scheme has no freshness at all. Losing safe retries matters
-concretely, because MQTT delivery is QoS 1 and a duplicate on a maintained
-contact is a second start.
+`req_id`-only scheme has no way to tell a retry from a new command, and an
+id-only scheme has no freshness at all. Losing safe retries matters concretely,
+because MQTT delivery is QoS 1 and a duplicate on a maintained contact is a
+second start.
 
 The dedup table is keyed `(client_id, cmd_id, operation-hash)`. Keyed on `cmd_id`
 alone, client B's command answers `duplicate` because client A happened to pick
@@ -628,7 +670,7 @@ request.
 
 The hash is there because `(client_id, cmd_id)` still cannot tell a **retry**
 from a **reused id**. A genuine retry carries byte-identical operation bytes —
-same kind, same arguments, only the counter is new — so it hashes the same and
+same kind, same arguments, only the `req_id` is new — so it hashes the same and
 dedups, which is what the table is for. A client that reuses an id inside the
 window for a *different* command hashes differently, and that case is a client
 bug the protocol should name rather than swallow.
@@ -693,10 +735,10 @@ The refusal outcome carries the same instruction one round trip later.
 
 ## Order does not make data current
 
-`counter` orders a client's writes and `cmd_id` suppresses duplicates. Neither
-is a clock, and for a long time nothing else was either. A signed write captured
-at nine in the morning satisfied every rule it met at midnight: the tag still
-verified, the counter still exceeded the stored one because it did when the
+A write's counter ordered a client's writes and `cmd_id` suppresses duplicates.
+Neither is a clock, and for a long time nothing else was either. A signed write
+captured at nine in the morning satisfied every rule it met at midnight: the tag
+still verified, the counter still exceeded the stored one because it did when the
 frame was made, and the dedup entry had aged out ten minutes after it was
 written. *Start the generator*, delivered fifteen hours late, with every check
 passing.
@@ -934,7 +976,7 @@ for a MAC nobody computes is that exact artefact, produced on purpose and
 labelled as a plan.
 
 The deadline is also not really the first granted output. Once the first units
-are paired in cabins their keys and counters depend on these preimages, so a
+are paired in cabins their keys depend on these preimages, so a
 reserved field that changes shape when it is finally implemented is a re-pair of
 every enrolled client at every site. The two weeks are cheaper now than they will
 ever be again.
@@ -1182,8 +1224,8 @@ One place that risk is live right now.
 column — `none`, `handshake`, `pair_reply`, `sealed`, `signed`,
 `sealed_or_bare`, `link`. The same rule is in [PROTOCOL.md](PROTOCOL.md) in
 finer vocabulary and in normative form: P-052 says which messages are sealed and
-by which side, P-053 gives the signed requests their own inner body because they
-carry a counter, and P-054 names what is not sealed: `Discover`, and the
+by which side, P-053 names the signed requests and says their inner body is the
+operation, and P-054 names what is not sealed: `Discover`, and the
 handshake messages that carry their own authentication.
 
 They agree today — somebody checked, line by line. That is the whole problem.

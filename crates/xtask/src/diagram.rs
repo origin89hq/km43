@@ -145,7 +145,7 @@ impl Diagram {
     ///
     /// The grouping is the point: the security model is a property of the auth
     /// column, and read as a column nobody sees that `Discover` is naked or
-    /// that exactly five messages carry a counter.
+    /// that exactly four messages are writes.
     fn exchange(&self) -> String {
         let mut o = String::from(
             "## What protects each message\n\n\
@@ -268,13 +268,7 @@ impl Diagram {
             .map(|m| m.response.0)
             .collect();
 
-        let errs: Vec<u16> = self
-            .registry
-            .errors
-            .iter()
-            .filter(|e| e.status != Status::Retired)
-            .map(|e| e.code)
-            .collect();
+        let errs: Vec<u16> = self.registry.errors.iter().map(|e| e.code).collect();
         let link_errs: Vec<u16> = self.registry.link_errors.iter().map(|e| e.code).collect();
 
         for space in [

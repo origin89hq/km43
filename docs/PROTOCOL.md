@@ -177,7 +177,7 @@ the comms processor does not own.
 `MAX_PAYLOAD` bounds the **encoded envelope** — the whole message as it is
 framed. A receiver refuses a larger one with **error 5** and drops the frame, and
 so does a sender that finds it has built one: an inner body that will not fit its
-sealed body, a signed operation past `MAX_OPERATION`, a log page past
+sealed body, a write's operation past `MAX_OPERATION`, a log page past
 `MAX_LOG_PAGE_BYTES`. An inner body is bounded by what fits inside the sealed body
 and the envelope that carry it.
 
@@ -285,7 +285,7 @@ so a duration measured on it is a duration somebody else sets. Deduplication is
 where that ends up on a maintained contact: client A sends a command and the ack
 is lost; a compromised client advances the clock eleven minutes; the dedup entry
 ages out; A retries with the same `cmd_id` and — correctly, under P-082 — a
-**new** counter. The counter check passes because the counter really is new, the
+**new** `req_id`. The window accepts it because the `req_id` really is new, the
 dedup table has nothing left to match, and the generator starts a second time.
 That is exactly what P-121 puts the table in FRAM for and what P-122 refuses to
 evict for, defeated without forging anything.
@@ -459,7 +459,7 @@ nonce, and the client's sealing state issues it (P-232).
 **The controller MUST enforce this rather than trust it.** It MUST hold, per
 session, the highest `req_id` it has accepted and a record of which of the last
 `MAX_INFLIGHT` it has already accepted, and MUST refuse — without acting, and
-before the counter is read — any request whose `req_id` it has already accepted,
+before its tag is checked — any request whose `req_id` it has already accepted,
 or whose `req_id` is below `highest_accepted − MAX_INFLIGHT`.
 
 **A request this rule refuses MUST NOT be answered** — not with its response,
@@ -492,13 +492,11 @@ order, so a strict *must exceed* rule would refuse honest traffic on a bad
 radio.
 
 This is what bounds how *old* a signed write may be when it lands, which
-nothing else does. `counter` orders a client's writes and `cmd_id` suppresses
-duplicates — P-082 says exactly that — and neither is a clock. A frame captured
-and withheld replays whenever the holder chooses, and every rule it meets is
-satisfied: the tag is valid, the counter is above the stored one because it was
-above it when the frame was made, and the dedup entry aged out ten minutes
-later. *Start the generator*, sent at nine in the morning and delivered at
-midnight.
+nothing else does. `cmd_id` suppresses duplicates and is not a clock. A frame
+captured and withheld replays whenever the holder chooses, and without this rule
+every check it meets is satisfied: the tag is valid, its `req_id` was never
+accepted, and the dedup entry aged out ten minutes later. *Start the generator*,
+sent at nine in the morning and delivered at midnight.
 
 With the receiver rule, the window closes at whichever comes first: the client's
 next accepted request, which moves `highest_accepted` past the banked frame, or
@@ -596,7 +594,7 @@ associated data of a sealed one (P-234). An `Error` about a frame whose envelope
 
 Echoing was only ever implied, and implied is what this document says it must
 never be. Two sides that disagree about which `req_id` went into the associated
-data fail to open codes 6, 7 and 11 — every code the registry marks sealed and
+data fail to open codes 6 and 7 — every code the registry marks sealed and
 live — so a refusal somebody needed to read arrives as an authentication failure
 instead. P-024's carve-out is the other half of it: an error
 about the link answers no request, and a rule that drops everything unmatched
@@ -797,7 +795,7 @@ Process each value in this order:
    refresh the timer. Only `last` delivers bytes, exactly once for that assembly.
 
 Once idle, any ID at index zero is allowed. A repeated complete message can be
-delivered again; KM43's request, counter and deduplication rules still apply.
+delivered again; KM43's request and deduplication rules still apply.
 
 The transmit queue has **one complete message slot per connection and direction**
 (`BLE_TX_CAPACITY`). It owns at most `MAX_PAYLOAD` bytes and refuses a second
@@ -851,7 +849,9 @@ These traces do not simulate a Bluetooth stack or establish native-app pairing.
 hexadecimal characters, no separators. A client learns it from the QR code it
 already scans to pair, because it needs the topic before it can send a Discover.
 
-QoS 1. The `counter` rule below is what makes at-least-once delivery safe.
+QoS 1. P-022's `req_id` window and P-120's dedup table are what make
+at-least-once delivery safe: a second delivery of one frame is dropped unanswered,
+and a client's retry of one command is answered from the table.
 
 ---
 
@@ -1051,9 +1051,9 @@ records the epoch it was written in, and a slot from an earlier epoch is free
 (P-239).
 
 **A factory reset MUST increment `epoch`, persist it, read it back and verify it
-before clearing anything else** — the client table, the counters and the dedup
-table in that order, and only after the read-back agrees. The same reset MUST
-abandon every handshake in progress and unbind every session. On a failed write
+before clearing anything else** — the client table and then the dedup table,
+and only after the read-back agrees. The same reset MUST abandon every
+handshake in progress and unbind every session. On a failed write
 or a failed read-back the reset MUST NOT proceed, the controller MUST raise a
 class A `concern raised` (`0x0501`) at condition `epoch write failed`, and it MUST
 refuse every `Pair` until the write succeeds.
@@ -1244,9 +1244,9 @@ already; `type` is what separates two messages in one direction.
 on; without it in the response's associated data, it can move a genuine answer
 onto the wrong outstanding request.
 
-**P-048** — `operation` is a **byte string carried inside the sealed inner
-body**, and a receiver decodes it only after the body has opened. The sealed
-bytes are what the tag covers; nothing is re-encoded before it is checked.
+**P-048** — A write's operation body **is** its sealed inner body, and a
+receiver decodes it only after the body has opened. The sealed bytes are what the
+tag covers and what P-120 hashes; nothing is re-encoded before either.
 
 ---
 
@@ -1300,8 +1300,7 @@ Every other message is `Discover` or a handshake message, and P-054 says what
 authenticates each.
 
 **P-053** — Signed requests (`0x07`, `0x08`, `0x09`, `0x0A`) are sealed like every
-other request, and their inner body is the signed body of the section below,
-because they carry a counter.
+other request, and their inner body is their operation body (P-080).
 
 **P-054** — `0x00`/`0x80` (Discover) are **unauthenticated**: no key exists yet.
 `Pair 0x0B`/`0x8B` and `Enrol 0x13` carry the pairing handshake, and `Hello
@@ -1386,7 +1385,8 @@ field for somebody to rewrite.
 **P-060** — The controller MUST attempt to mint a **fresh challenge per connection**,
 using the connection handle from [LINK.md](protocol/LINK.md) L-060, and MUST hold
 at most `MAX_CHALLENGES`. A single device-wide challenge livelocks two clients against
-each other exactly the way a device-wide counter would.
+each other: both fetch it, one handshake consumes it (P-061), and the other
+is refused and fetches again into the same race.
 
 A `Discover` MUST be answered with that connection's **current** challenge
 when one is available. If the connection holds none — the one it had was
@@ -1578,20 +1578,19 @@ window is closed, and on a revision A board the table is no longer empty, so the
 power-on window will not open again: one dropped frame costs a slot and a trip to
 the selector.
 
-**P-065** — A newly enrolled client's counter MUST start at **0**, and no
-response may carry a starting counter. A counter supplied by the network is a
-counter an attacker can set to `2^64 − 1`, after which every write that client
-ever makes fails as stale and recovery is a four-hour drive.
+**P-065 is retired.** It kept a starting counter out of every enrolment answer,
+so the network could not pin a new client's writes at `2^64 − 1`. There is no
+counter to start (P-081).
 
 **P-067** — A full client table MUST refuse with outcome 4 when P-240 finds
 nothing to allocate. It MUST NOT evict.
 
-**P-068** — Counter recovery is a **re-pair, not a reset**. A reinstalled app
-pairs again, in person, and P-240 decides which slot it gets. What must never
-happen is handing a client a fresh counter for an existing slot **on request** —
-that is a replay hole with a friendly name. What makes a re-pair different from a
-request is the evidence behind it: the physical window and the label, which is
-the same evidence as a first enrolment and not a message anybody can send.
+**P-068** — Recovering an enrolment is a **re-pair, not a request**. A
+reinstalled app pairs again, in person, and P-240 decides which slot it gets.
+What must never happen is a slot re-keyed because a message asked for it. What
+makes a re-pair different from a request is the evidence behind it: the physical
+window and the label, which is the same evidence as a first enrolment and not a
+message anybody can send.
 
 **P-240** — Allocation MUST run in this order, and MUST compare `label` as the
 exact UTF-8 bytes `PairOffer` carried, with no case folding, trimming or
@@ -1604,7 +1603,7 @@ normalisation:
 4. otherwise outcome 4 `table_full`.
 
 Step 1 is answered outcome 5 `reclaimed`, and steps 1 and 3 both re-key the
-slot: it takes the new client key, a new generation, a counter of 0 and a
+slot: it takes the new client key, a new generation and a
 capability mask re-fixed from this `client_kind`, exactly as a first enrolment,
 and carries nothing of the old enrolment over. Every session bound to the slot
 MUST be unbound before the slot is rewritten. Message 1 carries no client key, so
@@ -1633,20 +1632,17 @@ re-pairings in a season from filling the table with keys nobody holds any more,
 and it is safe for the same reason as a first enrolment: the button and the label
 are behind it.
 
-**Setting the counter back to 0 does not re-open replay.** A signed request is
-sealed under a session key, never under anything the slot holds, and a session key
-is derived from ephemeral keys drawn for that handshake (P-230, P-237). A frame
-captured under an old session cannot open under a new one at any counter value,
-and P-240 unbinds every session on the slot before the counter moves. The counter
-orders a client's writes within a session; it is not what stands between a
-recorded frame and a replay.
+**Re-keying a slot does not re-open replay.** A signed request is sealed under a
+session key, never under anything the slot holds, and a session key is derived
+from ephemeral keys drawn for that handshake (P-230, P-237). A frame captured
+under an old session cannot open under a new one, and P-240 unbinds every session
+on the slot before the slot is rewritten.
 
 **P-239** — A slot's **key record** holds its state, the epoch it was written in,
 its generation, its suite, the client's static key, its admission key (P-238),
 the `client_kind`, the `label` and the capability mask. It MUST be kept as two
 copies, each with a sequence number and an integrity check, and a write MUST go to
-the older copy. The slot's counter is a separate record (P-081), and a counter
-write never touches the key record. Each slot also keeps a **generation mark**:
+the older copy. Each slot also keeps a **generation mark**:
 the highest generation it has issued. Then:
 
 - A copy is **valid** if it passes its check. A slot's key record is the valid
@@ -1669,9 +1665,7 @@ says. Rewrite a slot in place and a power cut between the label and the key
 leaves the stolen install's key under the new label and mask. Writing the older
 of two copies means a torn write leaves the other one standing, and writing the
 slot free first means the worst a re-key interrupted at any byte can leave is a
-free slot. The counter is kept out because it is written on every signed
-request: inside the key record, one brown-out during a `SetConfig` would tear the
-record every other client depends on. Only the generation mark failing costs the
+free slot. Only the generation mark failing costs the
 whole table, and it is written only when a key changes.
 
 The generation is what lets anything keyed by `client_id` — a session binding, a
@@ -1740,7 +1734,6 @@ HelloReport
   8: log_newest_seq   u64
   9: state_seq        u64
  10: time_known       bool
- 11: counter          u64      this client's last accepted counter
  12: max_sessions     u8       the reported limits, P-005. What this controller
  13: max_channels     u8       enforces, not what the protocol permits.
  14: max_clients      u8       Key 13 is capped at 32 and only ever reported
@@ -1767,6 +1760,10 @@ The client runs `IK` against the controller key it pinned (P-222), so message 2
 opens only for the controller that holds it, and message 1 is readable only by
 that controller. `HelloReport` is message 2's payload: it arrives authenticated and
 bound to this handshake, and there is no second tag to check.
+
+Key 11 is **retired** (P-012). It carried the client's last accepted counter,
+which a client read to recover from error 11; both went with the counter (P-081).
+A receiver skips it under P-013.
 
 **P-238** — Each slot holds an admission key, and each `Hello` carries a tag under
 it:
@@ -1871,8 +1868,7 @@ fifteen minutes expire the session it never learned it had. Replacement rather
 than refusal is safe because the handshake is the whole check: a peer that can
 complete one on this row can already open a fresh row, and the row is not a
 permission — it is a place to put keys. The replacing `Hello` may name a
-*different* slot; the session binds whichever one proved itself, and counters are
-per slot (P-081).
+*different* slot; the session binds whichever one proved itself.
 
 **P-077** — Sessions expire after 15 minutes without traffic, and the controller
 sends `CloseConnection` with reason `session_expired` so the row and the
@@ -1903,40 +1899,29 @@ wearing a different hat.
 
 ## Signed requests
 
-Every **write** is signed: configuration, firmware, time and commands. Every
-request is sealed; a write additionally carries the client's counter, so the
-controller knows the order of a client's writes and can refuse one it has already
-applied.
-
-```text
-inner body of any signed request, sealed like every request
-  1: client_id    u32
-  2: counter      u64      MUST exceed this client's last accepted value
-  3: operation    bstr     the CBOR-encoded operation body
-```
+Every **write** is signed: configuration, firmware, time and commands. *Signed*
+names the list and not a second layer. A write is sealed like every request, under
+keys only a handshake with that client's static key produces, and its inner body
+is its operation body, nothing wrapped around it.
 
 **P-080** — The controller MUST take these steps in this order:
 
-1. Open the sealed body. A tag that fails is P-051's error 10.
-2. Check the counter. A counter that does not exceed the stored value MUST be
-   refused with error 11.
-3. For a `Command 0x08`, look up `(client_id, cmd_id)` in the dedup table and
-   answer per P-120 and P-124 on a match, **without executing**.
-4. For a `Command 0x08`, reserve a dedup entry marked **in flight**, and persist
-   it together with the new counter **in one FRAM transaction**. A failure here
-   is P-079's error 7 and P-122's error 7.
-5. Execute.
-6. For a `Command 0x08`, mark the reserved entry **complete**, carrying the
+1. Open the sealed body. A `req_id` P-022 refuses is dropped unanswered, and a
+   tag that fails is P-051's error 10.
+2. For a `Command 0x08`, look up `(client_id, cmd_id)` in the dedup table, with
+   the `client_id` the session is bound to. A match whose operation-hash
+   differs is P-124's `rejected`; a match that agrees and was left **in flight**
+   by a reset is answered from the state store, below; any other match is
+   answered per P-120. None of them executes here.
+3. For a `Command 0x08`, reserve a dedup entry marked **in flight** and persist
+   it. A failure here is P-079's error 7, and a full table is P-122's.
+4. Execute.
+5. For a `Command 0x08`, mark the reserved entry **complete**, carrying the
    outcome it produced.
 
-Persisting before executing is deliberately fail-closed: a brown-out between the
-two loses the operation, and the client's retry carries a new counter and
-succeeds. The reverse order leaves a replayable counter after a power cut, which
-is the worse failure at this site.
-
-The dedup entry is written in the same transaction as the counter for the same
-reason the counter is written before the handler runs. Written after `execute`,
-it is exactly the record that a reset between the two destroys. Written before, a
+Persisting before executing is deliberately fail-closed. Written after
+`execute`, the entry is exactly the record that a reset between the two destroys,
+and the client's retry then starts the generator a second time. Written before, a
 crash leaves an entry saying an operation may have run, which is a question the
 controller can answer.
 
@@ -1949,45 +1934,38 @@ contact the command asked for is already in the asked-for state, the entry
 completes as `accepted` and the retry is answered outcome 3 `duplicate`; if it
 is not, the entry is discarded and the retry executes normally.
 
-**P-079** — If persisting the counter fails, the operation MUST NOT execute. The
-controller MUST answer error 7 `busy` and MUST raise a class A `concern raised`
-(`0x0501`) at condition `counter write failed`. It MUST NOT execute anyway and
-leave a counter store that does not know it happened.
+**P-079** — If persisting the dedup entry fails, the command MUST NOT execute.
+The controller MUST answer error 7 `busy` and MUST raise a class A `concern
+raised` (`0x0501`) at condition `dedup write failed`. It MUST NOT execute anyway
+and leave a table that does not know the command ran.
 
 Error 7 because there is one instruction to give and it is *the controller did
-not do this, send it again*: a retry carries a new counter under P-082 and lands
-if the next write succeeds. The class A record is what tells somebody the part is
-wearing out, because it lands in the log in NOR, a different device from the one
-that just failed.
+not do this, send it again*: the retry carries the same `cmd_id` under P-082 and
+lands if the next write succeeds. The class A record is what tells somebody the
+part is failing, because it lands in the log in NOR, a different device from the
+one that just failed.
 
-**P-081** — Counters are **per slot**, each in its own FRAM record beside the
-slot's key record and never inside it (P-239). A
-single device-wide counter livelocks the moment two clients are active: both
-read 100, both send 101, one is rejected forever.
+**P-081 is retired.** It kept a replay counter per slot, because one counter for
+the whole device livelocked two clients. The counter is gone, and why is in
+[PROTOCOL-RATIONALE.md](PROTOCOL-RATIONALE.md#a-write-carries-no-counter).
 
-**A client that receives error 11 MUST take its next counter from `HelloReport`
-key 11**, re-`Hello`ing if it no longer holds a live value, and MUST NOT retry by
-incrementing the value it just had refused. A local increment from a value that is
-already behind the stored one never catches up.
+**P-084 is retired.** It required a `client_id` in the signed body to equal the
+session's. The body is gone: the session is the only statement of who sent a
+write, so there is no second one to disagree with it.
 
-**P-084** — Key 1 `client_id` MUST equal the `client_id` the session was bound to
-at `Hello`. A mismatch MUST be refused with error 12 **before** the counter is
-read or written. The counter row is selected by **the session**, not by the body;
-key 1 is a second statement of the same fact, and a second source of a fact is a
-second thing to disagree with the first.
+**P-082** — P-022's `req_id` window refuses a replay and `cmd_id` suppresses a
+duplicate. They solve different problems and both are required: a retried command
+carries the same `cmd_id` under a **new** `req_id`, which is a new frame the
+window accepts and a repeat the dedup table catches.
 
-**P-082** — `counter` prevents replay. `cmd_id` suppresses duplicates. They solve
-different problems and both are required: a retried command carries the same
-`cmd_id` and a **new** `counter`.
-
-**P-083** — `operation` MUST NOT exceed `MAX_OPERATION` (960 bytes). The worst
-case around it is 52 bytes — an envelope of 11 with the sealed body's map header
-in it, 20 of sealed body around the ciphertext including its tag, and 21 of signed
-body — so a payload holds an operation of **972**, and 960 is a cap with twelve
-bytes of margin rather than that ceiling.
-The margin is what absorbs a later key: without it, adding one turns an operation
-that was legal yesterday into a frame the controller builds and then has to
-refuse.
+**P-083** — A write's inner body MUST NOT exceed `MAX_OPERATION` (960 bytes). The
+worst case around it is 31 bytes — an envelope of 11 with the sealed body's map
+header in it, and 20 of sealed body around the ciphertext including its tag — so
+a payload holds an operation of **993**, and 960 is a cap with 33 bytes of margin
+rather than that ceiling.
+The margin is what absorbs a later envelope element or sealed-body key: without
+it, adding one turns an operation that was legal yesterday into a frame the
+controller builds and then has to refuse.
 
 ---
 
@@ -3563,9 +3541,8 @@ one, and a client reachable from the internet has no business moving the site's
 radio off channel on demand. It still reads the list that is held.
 
 `WifiScan` is not a signed request, although a refresh starts something. It
-changes nothing a later request reads except the list itself, the interval
-bounds it, and signing it would spend a FRAM counter write on every scan.
-Nothing it does reaches the site.
+changes nothing a later request reads except the list itself, and the interval
+bounds it. Nothing it does reaches the site.
 
 **P-219** — `WifiStatus 0x92` MUST carry key 1, and MUST carry keys 2 and 3
 exactly when the controller holds a report from the comms processor's current
@@ -3799,10 +3776,10 @@ before the operation executes.
 
 The armed state is what makes "somebody is at the panel" an authorisation rather
 than a coincidence. Without rules 1 and 2, holding the button is a *condition* a
-client can wait for: an attacker banks a floor-crossing frame with a valid tag
-and a fresh counter, retries it in a loop, and it lands the moment a technician
-holds the button down for an unrelated reason — enrolling a new phone, most
-likely, since that is the press this document already asks people to make. The
+client can wait for: an attacker holding a client's session seals a
+floor-crossing write, re-sends it in a loop under fresh `req_id`s, and it lands
+the moment a technician holds the button down for an unrelated reason —
+enrolling a new phone, most likely, since that is the press this document already asks people to make. The
 person who authorised nothing sees an engine that will not start in February. Not
 arming on the enrolment press is what breaks that, and it is also what stops
 `pairing_open` in `Discover 0x80` from being a published signal for when to fire.
@@ -3885,8 +3862,8 @@ Ack  0x88               sealed
 
 **P-120** — The dedup table MUST be keyed
 `(client_id, cmd_id, operation-hash)`, where **operation-hash is the leftmost 8
-bytes of SHA-256 over the `operation` byte string exactly as it arrived on the
-wire** (P-048, and never over a re-encoding).
+bytes of SHA-256 over the operation body exactly as it opened** (P-048, and
+never over a re-encoding).
 
 `client_id` is in the key because two clients numbering their commands from zero
 is the normal case, and a `cmd_id`-only key answers `duplicate` to a command
@@ -3895,7 +3872,7 @@ request.
 
 The hash is in the key because `(client_id, cmd_id)` alone cannot tell a **retry**
 from a **reused id**. A genuine retry carries byte-identical operation bytes —
-same `cmd_id`, same `kind`, same `args`, only the counter is new under P-082 — so
+same `cmd_id`, same `kind`, same `args`, only the `req_id` is new under P-082 — so
 it hashes the same and dedups, which is the whole point of the table. A client
 that reuses a `cmd_id` inside the window for a *different* command carries
 different bytes and hashes differently.
@@ -3928,7 +3905,7 @@ that nobody has to guess which of those two happened.
 
 An entry is 25 bytes — `client_id:u32`, `cmd_id:u32`, hash 8, `inserted:u64`,
 `status:u8` — so `MAX_CMD_DEDUP`'s 32 entries cost 800 bytes of FRAM, on a part
-that already holds the client keys, the counters and the A/B configuration
+that already holds the client keys and the A/B configuration
 pointer. `status` is the in-flight/complete distinction P-080 step 4 needs and
 the recorded outcome together; two states and two outcomes fit a byte with room
 left. Eight bytes of hash is 64 bits against an attacker who does not choose the
@@ -3962,8 +3939,8 @@ its command again; the second is why the table is in FRAM.
 
 Do **not** reach for a persisted tick base or a tick counted from first boot.
 Either makes the tick's monotonicity depend on a FRAM write surviving the
-brown-out that caused the reset — and P-079 already says that write is a thing
-that can fail.
+brown-out that caused the reset — and P-079 already says a FRAM write is a
+thing that can fail.
 
 **P-122** — The table holds `MAX_CMD_DEDUP` entries for 10 minutes. When full the
 controller MUST refuse with error 7 rather than evict. Evicting the oldest entry
@@ -3977,8 +3954,8 @@ Without that bound the table is one pool and `MAX_CLIENTS` is 8, so a single
 enrolled client — a commissioning laptop in a retry loop, a cloud relay with a
 stuck queue — fills all 32 entries in ten minutes and every other client's next
 command is refused error 7. That is one misbehaving client denying a stop
-request to all seven others, and P-081 already rejects the same shape for
-counters: shared per-device state livelocks the moment two clients are active.
+request to all seven others, and P-060 already rejects the same shape for
+challenges: shared per-device state livelocks the moment two clients are active.
 
 Half rather than `MAX_CMD_DEDUP / MAX_CLIENTS`: a hard eighth is 4 entries, too
 thin for a commissioning session, and it strands 28 entries whenever one client
@@ -4139,7 +4116,7 @@ Every body after a handshake is sealed, so it cannot read one either.
 | Wi-Fi credentials | Cached on the comms processor, encrypted in its own NVS; controller holds the master copy | It must associate at boot without waiting for the controller |
 | TLS certificates, cloud endpoint | Comms processor | Transport concerns |
 | Connection routing table | Comms processor, 8 rows ([LINK.md](protocol/LINK.md) L-060, L-061) — it owns the transports, not the bindings | Transport concern by definition |
-| Controller key, random bit generator state, the client table's keys, counters | **Controller only, never transmitted** | The whole basis of authentication |
+| Controller key, random bit generator state, the client table's keys | **Controller only, never transmitted** | The whole basis of authentication |
 | Everything about the site | Controller | It is the thing that decides |
 
 ---
@@ -4188,8 +4165,9 @@ MQTT has no transport vectors. Neither is conformance surface — see [DEFERRED.
    `Goodbye` and a fresh `Hello` part-way through the run does not reset the
    count.
 8. A replayed request is dropped unanswered by the `req_id` window, refreshes
-   nothing and counts nothing (P-022), and a signed write re-sent under a fresh
-   `req_id` with its old counter is refused by the counter; a replayed event is
+   nothing and counts nothing (P-022), and a retried command under a fresh
+   `req_id` is answered from the dedup table without executing (P-082); a
+   replayed event is
    rejected by `seq`; a `LogPage` whose entries go backwards is accepted; a
    response moved to another `req_id` fails to open.
 9. Removing any single authentication check — a tag, a handshake step, the

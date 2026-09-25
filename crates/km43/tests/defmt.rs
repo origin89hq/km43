@@ -10,8 +10,8 @@
 #![cfg(feature = "defmt")]
 
 use km43::{
-    ClientCapability, ClientId, ClientKind, Counter, Epoch, ErrorCode, EventKind, LinkError,
-    MessageType, Outcome, ReqId, SessionId, SignedError,
+    ClientCapability, ClientId, ClientKind, Epoch, ErrorCode, EventKind, LinkError, MessageType,
+    Outcome, ReqId, SessionId, SignedError,
 };
 
 /// The shape of a client-table row: every field is a `km43` type, and the
@@ -22,7 +22,6 @@ struct Row {
     minted_under: Epoch,
     kind: ClientKind,
     may: ClientCapability,
-    last: Counter,
 }
 
 /// The shape of a dedup entry and a refusal, which is what the firmware logs
@@ -42,7 +41,6 @@ fn a_row_of_identifiers_derives_format_without_a_hand_written_impl() {
         minted_under: Epoch::FIRST,
         kind: ClientKind::App,
         may: ClientCapability::SEND_COMMAND,
-        last: Counter(1),
     };
     // `Format` has no output to assert on the host; the derive compiling is
     // the witness, and moving the value proves the row is built.
@@ -52,10 +50,7 @@ fn a_row_of_identifiers_derives_format_without_a_hand_written_impl() {
 #[test]
 fn a_refusal_enum_over_link_and_signed_errors_derives_format() {
     let because = [
-        Because::Signed(SignedError::WrongClient {
-            bound: ClientId::new(1).expect("1 is a slot"),
-            body: ClientId::new(2).expect("2 is a slot"),
-        }),
+        Because::Signed(SignedError::NotSigned(MessageType::ReadLog)),
         Because::Link(LinkError::Missing(km43::LinkField::Fw)),
         Because::Answered(Outcome::WindowClosed, ErrorCode::MalformedFrame),
         Because::Seen(

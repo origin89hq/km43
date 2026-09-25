@@ -1614,7 +1614,7 @@ mod tests {
         );
         assert!(bare.contains("(P-142)"), "{bare}");
 
-        let sealed = error_doc("Counter not fresh", true);
+        let sealed = error_doc("Unknown section", true);
         assert!(
             sealed.contains("discards a bare one carrying it (P-051)"),
             "{sealed}"

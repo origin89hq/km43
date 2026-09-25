@@ -1094,7 +1094,21 @@
 # P-222's clause about an earlier epoch was reversed rather than dropped: a
 # restore now keeps an enrolment whose epoch differs, because the `Discover`
 # saying so is unauthenticated.
-uncovered = 142
+# 142 -> 141: the per-client counter was retired (origin89hq/km43#131), and a
+# write's inner body is now its operation. P-065, P-081 and P-084 are retired.
+# P-081 was the uncovered one, which is the whole move. P-065 and P-084 were
+# covered, and their tests went with them: P-084's type-state checked a
+# `client_id` the body no longer carries, and the half of P-065's test that
+# was about a refusal naming a slot is kept as
+# `a_refusal_that_names_a_slot_is_refused`.
+#
+# Two rules were rewritten in place rather than retired, and neither moves the
+# count. P-079 now names the dedup entry's write rather than the counter's and
+# stays up for the reason P-080's later steps do: nothing in this tree writes
+# FRAM. P-082 now says a retry carries a new `req_id` rather than a new counter;
+# a test of it needs the dedup table and the window side by side, and the
+# table is the controller's.
+uncovered = 141
 
 # P-045 is the shape this file is for. Nothing can drive an implementation into
 # transmitting a key it does not have, so the thing that stands behind it reads

@@ -298,11 +298,13 @@ meaning = "Authentication failed"
 sealed = false
 status = "live"
 
+# Retired with the per-client counter (origin89hq/km43#131): a write carries
+# no counter, so nothing is ever not fresh in the sense this code named.
 [[errors]]
 code = 11
 meaning = "Counter not fresh"
 sealed = true
-status = "live"
+status = "retired"
 
 [[errors]]
 code = 12
@@ -1528,10 +1530,12 @@ status = "reserved"
 # discriminator DEFERRED entry 10 asked for. None of them carries a magnitude:
 # the size of a clock step is derivable from `0x0604 time set`, which already
 # owes the old value and the new one, and one number lives in one place.
+# Retired with the per-client counter (origin89hq/km43#131). P-079 now names
+# the dedup entry's write, which is 24.
 [[open_registries.condition]]
 number = 18
 name = "counter write failed"
-status = "reserved"
+status = "retired"
 
 [[open_registries.condition]]
 number = 19
@@ -1560,6 +1564,13 @@ status = "reserved"
 [[open_registries.condition]]
 number = 23
 name = "client table write failed"
+status = "reserved"
+
+# A command's dedup entry could not be persisted before it ran, so the command
+# was refused with error 7 and did not execute (P-079).
+[[open_registries.condition]]
+number = 24
+name = "dedup write failed"
 status = "reserved"
 
 [[open_registries.condition]]
@@ -1819,7 +1830,7 @@ meaning = "No free slot and no slot with this label. Nothing is evicted (P-067, 
 value = 5
 name = "reclaimed"
 status = "live"
-meaning = "No free slot, and the lowest slot with a byte-identical label was re-keyed: the old install's key is erased, the generation moves on and the counter is back to 0 (P-240)"
+meaning = "No free slot, and the lowest slot with a byte-identical label was re-keyed: the old install's key is erased and the generation moves on (P-240)"
 
 [[outcomes.pair]]
 value = 6
