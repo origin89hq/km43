@@ -15,8 +15,12 @@
 //! store:
 //!
 //! ```compile_fail
-//! fn early(drbg: km43::Drbg) -> km43::Entropy { drbg.draw().1 }
+//! async fn early(drbg: km43::Drbg) -> km43::Entropy { drbg.draw().await.1 }
 //! ```
+//!
+//! The store is asynchronous because the controller's storage is: its FRAM is
+//! shared between tasks behind an async lock, and a synchronous store would
+//! have to block on that lock from inside the task that might hold it.
 //!
 //! What the crate cannot check is that the store is durable: a `DrbgStore` that
 //! keeps the state in RAM satisfies the type and not P-237.
@@ -24,6 +28,7 @@
 //! cites: P-237
 
 use core::fmt;
+use core::future::Future;
 
 use hmac::{KeyInit as _, Mac as _};
 use sha2::Sha256;
@@ -64,24 +69,26 @@ impl Drbg {
     /// draw only if the read-back is the state that was written. On any
     /// failure the generator is gone: P-237 refuses every `Pair` and `Hello`
     /// until a state can be read back, and the caller starts again from
-    /// [`Drbg::from_stored`] over what the store holds.
-    pub fn draw<S: DrbgStore>(self, store: &mut S) -> Result<(Self, Entropy), DrbgError> {
-        self.draw_mixing(&[], store)
+    /// [`Drbg::from_stored`] over what the store holds. A draw whose future is
+    /// dropped part-way is the same: the generator was moved into it, so a
+    /// cancelled draw can lose a value but never hand the same one out twice.
+    pub async fn draw<S: DrbgStore>(self, store: &mut S) -> Result<(Self, Entropy), DrbgError> {
+        self.draw_mixing(&[], store).await
     }
 
     /// The same, folding `extra` into the next state: ADC noise, or bytes the
     /// comms processor offered. It passes through the secret state, so a source
     /// that is known or chosen by somebody else adds nothing and takes nothing
     /// away.
-    pub fn draw_mixing<S: DrbgStore>(
+    pub async fn draw_mixing<S: DrbgStore>(
         self,
         extra: &[u8],
         store: &mut S,
     ) -> Result<(Self, Entropy), DrbgError> {
         let next = keyed(&self.state, &[NEXT, extra]);
         let out = keyed(&self.state, &[OUT]);
-        store.write(&next).map_err(|_| DrbgError::NotStored)?;
-        let read_back = Zeroizing::new(store.read().map_err(|_| DrbgError::NotStored)?);
+        store.write(&next).await.map_err(|_| DrbgError::NotStored)?;
+        let read_back = Zeroizing::new(store.read().await.map_err(|_| DrbgError::NotStored)?);
         if !bool::from(next.as_slice().ct_eq(read_back.as_slice())) {
             return Err(DrbgError::NotStored);
         }
@@ -99,10 +106,10 @@ pub trait DrbgStore {
     type Error;
 
     /// Persist `state`.
-    fn write(&mut self, state: &[u8; KEY_BYTES]) -> Result<(), Self::Error>;
+    fn write(&mut self, state: &[u8; KEY_BYTES]) -> impl Future<Output = Result<(), Self::Error>>;
 
     /// Read the state back.
-    fn read(&mut self) -> Result<[u8; KEY_BYTES], Self::Error>;
+    fn read(&mut self) -> impl Future<Output = Result<[u8; KEY_BYTES], Self::Error>>;
 }
 
 /// HMAC-SHA256 keyed by the state, over `parts` joined.
@@ -149,18 +156,28 @@ mod tests {
 
     impl DrbgStore for Fram {
         type Error = ();
-        fn write(&mut self, state: &[u8; KEY_BYTES]) -> Result<(), ()> {
+        fn write(&mut self, state: &[u8; KEY_BYTES]) -> impl Future<Output = Result<(), ()>> {
             if !self.lose_writes {
                 self.state = *state;
             }
-            Ok(())
+            core::future::ready(Ok(()))
         }
-        fn read(&mut self) -> Result<[u8; KEY_BYTES], ()> {
-            if self.fail_reads {
+        fn read(&mut self) -> impl Future<Output = Result<[u8; KEY_BYTES], ()>> {
+            core::future::ready(if self.fail_reads {
                 Err(())
             } else {
                 Ok(self.state)
-            }
+            })
+        }
+    }
+
+    /// Run a future that never waits, which every store here is.
+    fn ready<T>(future: impl Future<Output = T>) -> T {
+        let mut future = core::pin::pin!(future);
+        let mut cx = core::task::Context::from_waker(core::task::Waker::noop());
+        match future.as_mut().poll(&mut cx) {
+            core::task::Poll::Ready(out) => out,
+            core::task::Poll::Pending => panic!("a test store never waits"),
         }
     }
 
@@ -175,7 +192,7 @@ mod tests {
         let mut drbg = Drbg::from_stored(fram.state);
         let mut seen = [[0u8; 16]; 32];
         for i in 0..16 {
-            let (next, out) = drbg.draw(&mut fram).expect("stored");
+            let (next, out) = ready(drbg.draw(&mut fram)).expect("stored");
             seen[i] = out.into_challenge();
             assert!(!seen[..i].contains(&seen[i]), "draw {i} repeated");
             drbg = next;
@@ -183,7 +200,7 @@ mod tests {
         // A reset: the generator in RAM is gone, and the store is what is left.
         let mut drbg = Drbg::from_stored(fram.state);
         for i in 16..32 {
-            let (next, out) = drbg.draw(&mut fram).expect("stored");
+            let (next, out) = ready(drbg.draw(&mut fram)).expect("stored");
             seen[i] = out.into_challenge();
             assert!(
                 !seen[..i].contains(&seen[i]),
@@ -203,7 +220,7 @@ mod tests {
             ..Fram::default()
         };
         assert_eq!(
-            Drbg::from_stored([9; 32]).draw(&mut lost).err(),
+            ready(Drbg::from_stored([9; 32]).draw(&mut lost)).err(),
             Some(DrbgError::NotStored)
         );
         let mut unreadable = Fram {
@@ -212,7 +229,7 @@ mod tests {
             ..Fram::default()
         };
         assert_eq!(
-            Drbg::from_stored([9; 32]).draw(&mut unreadable).err(),
+            ready(Drbg::from_stored([9; 32]).draw(&mut unreadable)).err(),
             Some(DrbgError::NotStored)
         );
     }
@@ -225,7 +242,7 @@ mod tests {
             state: [3; 32],
             ..Fram::default()
         };
-        let (_, out) = Drbg::from_stored([3; 32]).draw(&mut fram).expect("stored");
+        let (_, out) = ready(Drbg::from_stored([3; 32]).draw(&mut fram)).expect("stored");
         assert_ne!(out.into_challenge()[..], fram.state[..16]);
     }
 
@@ -236,10 +253,8 @@ mod tests {
     fn mixed_bytes_move_the_next_state() {
         let mut plain = Fram::default();
         let mut mixed = Fram::default();
-        Drbg::from_stored([5; 32]).draw(&mut plain).expect("stored");
-        Drbg::from_stored([5; 32])
-            .draw_mixing(&[0; 32], &mut mixed)
-            .expect("stored");
+        ready(Drbg::from_stored([5; 32]).draw(&mut plain)).expect("stored");
+        ready(Drbg::from_stored([5; 32]).draw_mixing(&[0; 32], &mut mixed)).expect("stored");
         assert_ne!(plain.state, mixed.state);
     }
 }
