@@ -1,5 +1,40 @@
 # @origin89/km43
 
+## 0.8.0
+
+### Minor Changes
+
+- 1f44896: A controller can vouch for an enrolment so a site can link its generation (origin89hq/km43#135). The bindings follow the registry:
+  
+  - `MessageType.Vouch` (`0x14`) carries a verifier's key, nonce and account binding, and `MessageType.VouchResponse` (`0x94`) the controller's tag over its epoch and the asking slot.
+  - `Vouch.Vouched` (`1`) and `Vouch.BadVerifier` (`2`) are its outcomes.
+  
+  Every controller speaking this version answers `Vouch`; there is no capability bit to check first.
+- 34ac1df: Pairing and sessions now run Noise key agreement, and every message after a handshake is sealed with ChaCha20-Poly1305 (origin89hq/km43#128). The bindings follow the registry:
+  
+  - `MessageType.Enrol` (`0x13`) and `MessageType.EnrolResponse` (`0x93`) carry pairing message 3 and the sealed enrolment result.
+  - `ErrorCode.BadMAC` is now `ErrorCode.AuthenticationFailed` (still `0x0a`), and `ErrorCode.UnsupportedSuite` (`0x13`) refuses a suite the controller does not run.
+  - `Pair.BadProof` is withdrawn: a wrong label is answered with error 10. `Pair.Proceed` (`6`) carries message 2, and `Pair.NotStored` (`7`) says the controller could not write the slot and the client should retry.
+  - `Suite.X25519ChachapolySha256` (`1`) is the one suite.
+  - Conditions `ENTROPY_UNAVAILABLE` and `CLIENT_TABLE_WRITE_FAILED` name two new controller concerns.
+  
+  A client built against 0.7 cannot pair with or open a session on a controller speaking this version, and the QR label format is now version 2 with the controller key's fingerprint.
+- 0f94f45: Clients now hold a role, and a site can be managed by people who never stand at its panel (origin89hq/km43#129). The bindings follow the registry:
+  
+  - `Role` (`Owner`, `Admin`, `Viewer`) decides a client's capability mask; `ClientKind` is now only shown in the client list.
+  - `MessageType.Clients` (`0x18`), `Invite` (`0x15`), `Approve` (`0x16`) and `Remove` (`0x17`), with their responses, list clients, propose and approve invites, and remove an enrolment. The last three are signed.
+  - `Invite`, `Approve` and `Remove` outcome enums, and `InviteDecision`.
+  - `ClientCapability.READ_PRIVATE`, `INVITE` and `APPROVE`.
+  - `ErrorCode.RoleNotPermitted` (`0x18`) refuses a read the client's role does not allow.
+  - `EventKind.CLIENT_REMOVED` (`0x0605`) and `INVITE_PROPOSED` (`0x0606`) are new, and `CLIENT_ENROLLED` (`0x0603`) is now live.
+- e88e538: Writes no longer carry a per-client counter (origin89hq/km43#131). A `SetConfig`, `Command`, `Firmware` or `Time` is sealed with its operation as the whole inner body, and the bindings follow the registry:
+  
+  - `ErrorCode.CounterNotFresh` (`0x0b`) is retired and no longer exported.
+  - Condition `COUNTER_WRITE_FAILED` (`0x0012`) is retired; `DEDUP_WRITE_FAILED` (`0x0018`) names the concern raised when a command's dedup entry cannot be persisted.
+  - `HelloReport` key 11 is retired. A client skips it if an older controller still sends it.
+  
+  A client built against the previous version cannot send a write this controller accepts.
+
 ## 0.7.0
 
 ### Minor Changes
