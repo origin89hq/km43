@@ -181,6 +181,115 @@ mod tests {
         }
     }
 
+    /// A store that waits once inside every write and every read, as FRAM
+    /// behind a lock another task holds does. A write lands before it returns.
+    #[derive(Default)]
+    struct Slow {
+        state: [u8; KEY_BYTES],
+        writes: usize,
+    }
+
+    /// Pending on its first poll and ready on its second.
+    #[derive(Default)]
+    struct Yield(bool);
+
+    impl Future for Yield {
+        type Output = ();
+        fn poll(
+            mut self: core::pin::Pin<&mut Self>,
+            cx: &mut core::task::Context<'_>,
+        ) -> core::task::Poll<()> {
+            if core::mem::replace(&mut self.0, true) {
+                core::task::Poll::Ready(())
+            } else {
+                cx.waker().wake_by_ref();
+                core::task::Poll::Pending
+            }
+        }
+    }
+
+    impl DrbgStore for Slow {
+        type Error = ();
+        async fn write(&mut self, state: &[u8; KEY_BYTES]) -> Result<(), ()> {
+            Yield::default().await;
+            self.state = *state;
+            self.writes += 1;
+            Ok(())
+        }
+        async fn read(&mut self) -> Result<[u8; KEY_BYTES], ()> {
+            Yield::default().await;
+            Ok(self.state)
+        }
+    }
+
+    fn poll_once<T>(future: core::pin::Pin<&mut impl Future<Output = T>>) -> core::task::Poll<T> {
+        future.poll(&mut core::task::Context::from_waker(
+            core::task::Waker::noop(),
+        ))
+    }
+
+    /// Over a store that waits, the draw waits with it: nothing is released
+    /// until the successor has been written and read back.
+    #[test]
+    fn p_237_a_draw_over_a_store_that_waits_is_released_only_after_its_read_back() {
+        let mut fram = Slow {
+            state: [4; 32],
+            ..Slow::default()
+        };
+        let mut draw = core::pin::pin!(Drbg::from_stored([4; 32]).draw(&mut fram));
+        assert!(
+            poll_once(draw.as_mut()).is_pending(),
+            "waiting in the write"
+        );
+        assert!(
+            poll_once(draw.as_mut()).is_pending(),
+            "waiting in the read-back"
+        );
+        let core::task::Poll::Ready(Ok((_, out))) = poll_once(draw.as_mut()) else {
+            panic!("the read-back matched, so the draw is released");
+        };
+        let mut instant = Fram {
+            state: [4; 32],
+            ..Fram::default()
+        };
+        let (_, same) = ready(Drbg::from_stored([4; 32]).draw(&mut instant)).expect("stored");
+        assert_eq!(out.into_challenge(), same.into_challenge());
+    }
+
+    /// A draw dropped after its successor landed and before the read-back
+    /// released nothing, and a restart from the store carries on past it: the
+    /// lost value is never drawn, now or after the restart.
+    #[test]
+    fn p_237_a_draw_dropped_during_its_read_back_is_lost_and_never_repeated() {
+        let mut fram = Slow {
+            state: [6; 32],
+            ..Slow::default()
+        };
+        {
+            let mut draw = core::pin::pin!(Drbg::from_stored([6; 32]).draw(&mut fram));
+            assert!(poll_once(draw.as_mut()).is_pending());
+            assert!(poll_once(draw.as_mut()).is_pending());
+        }
+        assert_eq!(fram.writes, 1, "the successor landed before the drop");
+
+        let mut reference = Fram {
+            state: [6; 32],
+            ..Fram::default()
+        };
+        let (next, lost) = ready(Drbg::from_stored([6; 32]).draw(&mut reference)).expect("stored");
+        assert_eq!(fram.state, reference.state, "the store holds the successor");
+        let (_, second) = ready(next.draw(&mut reference)).expect("stored");
+
+        let mut restarted = Fram {
+            state: fram.state,
+            ..Fram::default()
+        };
+        let (_, after) = ready(Drbg::from_stored(fram.state).draw(&mut restarted)).expect("stored");
+        let after = after.into_challenge();
+        assert_ne!(after, lost.into_challenge(), "the lost draw came back");
+        assert_eq!(after, second.into_challenge());
+    }
+
     /// Successive draws differ, and a generator restarted from what the store
     /// holds carries on where the first left off rather than repeating it.
     #[test]
