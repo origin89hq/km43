@@ -733,6 +733,67 @@ The refusal outcome carries the same instruction one round trip later.
 
 ---
 
+## A site links a generation on the controller's word
+
+The cloud keeps a site's history by ownership generation, and a person links a
+generation to a site from the phone they paired. Before `Vouch` the link route
+took `device_id`, epoch and a name, and all three are public: the label, the mDNS
+TXT record and every `Discover` carry the first two. Anybody signed in to any
+account could link a generation before its owner did. The owner's link then
+failed as already taken, and once readings are delivered (origin89hq/km43#129)
+the squatter's site would receive them. The only recovery was a factory reset,
+which starts a new generation.
+
+The phone cannot be the witness. It says whatever its user wants, and the cloud
+has no way to ask the controller directly. What the phone can do is carry a
+statement the controller made and the cloud can check, and that is P-244.
+
+**Why a MAC under a DH, and not a signature.** The controller already holds an
+X25519 key, and the cloud can hold one too. `X25519(cs, VS)` is a key only the two
+of them can compute, so an HMAC under it is a statement from this controller that
+this verifier alone can check. A signature would let anybody check it, which
+nothing here needs, and would cost a second key made at manufacture and a second
+curve's code on a Cortex-M0+ with an image budget of about 256 KB. The DH costs a
+quarter of a second, once per link, and takes its turn with the handshakes.
+
+**Why the fingerprint.** The verifier needs `CS`, and the only party offering it
+is the caller. A `CS` the caller chose is a key whose private half the caller
+may hold, and the caller can then tag any statement it likes. The manufacturing
+station keeps each unit's `controller_fp` and nothing else (P-235), and 16 bytes
+are enough: the verifier hashes the offered `CS` and compares it with the record
+before it spends a DH. The vector set publishes the forgery this refuses with a
+tag that really verifies under the impostor's key, so a test cannot pass by
+refusing it for the wrong reason.
+
+**Why the verifier builds the statement.** The caller hands over four things: the
+controller key, the slot, the generation and the tag. Everything else in the
+preimage comes from the verifier's own records: the generation being linked, and
+the nonce and binding it issued together. A vouch for another account, or from
+an earlier epoch, therefore fails at the tag, not at a comparison somebody has to
+remember to write. A replay passes the tag, because it is the same bytes, and
+the spent nonce is the one check that refuses it. That is why P-247 records the
+nonce before anything else runs.
+
+**Why both a nonce and a binding.** The nonce makes a vouch good once. The
+binding names the account it was issued for, inside the tagged bytes. A verifier
+that looked the nonce up and forgot to check who presented it would still find
+another account's vouch failing at the tag.
+
+**Why not the cloud's own enrolment.** origin89hq/km43#135 offered a
+second route: the owner enrols the cloud's view-only client, and the cloud reads
+`device_id` and epoch over its own session. That needs owner-approved enrolment,
+which origin89hq/km43#129 has not specified yet, and it still needs a way to bind
+that enrolment to one account's site. A vouch works with the phone the owner
+already paired.
+
+**What a vouch does not say.** It says a slot in this generation asked, and which
+slot. It does not say the slot is the owner's, because roles do not exist yet.
+Any enrolled client may ask, and the verifier learns `client_id` and generation,
+so the owner and admin roles origin89hq/km43#129 adds can narrow who may link
+without changing what the controller tags.
+
+---
+
 ## Order does not make data current
 
 A write's counter ordered a client's writes and `cmd_id` suppresses duplicates.

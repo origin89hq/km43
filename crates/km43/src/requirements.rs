@@ -417,7 +417,7 @@ pub const REQUIREMENTS: &[Requirement] = &[
         id: "P-052",
         document: "docs/PROTOCOL.md",
         section: "Sealed bodies",
-        statement: "The following wear the sealed body under the session's keys: | Messages | Sealed by | |---|---| | Requests `0x03`, `0x05`, `0x06`, `0x07`, `0x08`, `0x09`, `0x0A`, `0x0C`, `0x0D`, `0x0E`, `0x0F`, `0x10`, `0x11`, `0x12` | the client | | Responses `0x83`, `0x85`, `0x86`, `0x87`, `0x88`, `0x89`, `0x8A`, `0x8C`, `0x8D`, `0x8E`, `0x8F`, `0x90`, `0x91`, `0x92`, and `0xFF` in its sealed form (P-142) | the controller | | Event `0x04` | the controller | | `Enrol 0x93` | the controller, under the keys of the pairing that just completed (P-064) | Every other message is `Discover` or a handshake message, and P-054 says what authenticates each.",
+        statement: "The following wear the sealed body under the session's keys: | Messages | Sealed by | |---|---| | Requests `0x03`, `0x05`, `0x06`, `0x07`, `0x08`, `0x09`, `0x0A`, `0x0C`, `0x0D`, `0x0E`, `0x0F`, `0x10`, `0x11`, `0x12`, `0x14` | the client | | Responses `0x83`, `0x85`, `0x86`, `0x87`, `0x88`, `0x89`, `0x8A`, `0x8C`, `0x8D`, `0x8E`, `0x8F`, `0x90`, `0x91`, `0x92`, `0x94`, and `0xFF` in its sealed form (P-142) | the controller | | Event `0x04` | the controller | | `Enrol 0x93` | the controller, under the keys of the pairing that just completed (P-064) | Every other message is `Discover` or a handshake message, and P-054 says what authenticates each.",
     },
     Requirement {
         id: "P-053",
@@ -628,6 +628,36 @@ pub const REQUIREMENTS: &[Requirement] = &[
         document: "docs/PROTOCOL.md",
         section: "Signed requests",
         statement: "A write's inner body MUST NOT exceed `MAX_OPERATION` (960 bytes).",
+    },
+    Requirement {
+        id: "P-244",
+        document: "docs/PROTOCOL.md",
+        section: "Vouching for an enrolment",
+        statement: "A controller MUST answer `Vouch 0x14` with outcome 1 `vouched`, unless P-245 refuses it, and MUST compute its tag as `vouch_key = HKDF(salt = device_id, ikm = X25519(cs, VS), info = \"km43/v1/vouch-key\", L = 32) tag = HMAC(vouch_key, \"km43/v1/vouch\" | device_id | epoch:u32be | client_id:u32be | generation:u32be | nonce[16] | binding[32])[0..16]` The answer carries the `epoch`, `client_id` and `generation` it tagged in keys 2 to 4, and the tag in key 5.",
+    },
+    Requirement {
+        id: "P-245",
+        document: "docs/PROTOCOL.md",
+        section: "Vouching for an enrolment",
+        statement: "When `X25519(cs, VS)` is all zero (P-228), the controller MUST answer outcome 2 `bad_verifier` with keys 2 to 5 absent.",
+    },
+    Requirement {
+        id: "P-246",
+        document: "docs/PROTOCOL.md",
+        section: "Vouching for an enrolment",
+        statement: "A controller MUST set capability bit 9 in `Hello 0x81` exactly when it answers `Vouch`, and a client MUST NOT send `Vouch` to a controller that does not set it.",
+    },
+    Requirement {
+        id: "P-247",
+        document: "docs/PROTOCOL.md",
+        section: "Vouching for an enrolment",
+        statement: "A verifier MUST check a vouch in this order, and MUST refuse at the first step that fails: 1. The nonce is one it issued, less than `VOUCH_NONCE_TTL` (10 minutes) before, to the account now presenting it, and not presented before. The verifier MUST record the nonce as spent before any later step, whether or not the vouch then verifies. 2. It builds the statement from its own records: `device_id` and `epoch` from the generation the caller asks to link, and the nonce, binding and verifier key it issued together. Only `client_id`, `generation`, `CS` and the tag come from the caller. 3. `CS` hashes to the `controller_fp` (P-236) that the manufacturing record holds for that `device_id`. The fingerprint MUST come from that record and never from the caller, and this check comes before any DH. 4. `X25519(vs, CS)` is not all zero, and the tag it computes over the statement equals the tag presented, compared in constant time.",
+    },
+    Requirement {
+        id: "P-248",
+        document: "docs/PROTOCOL.md",
+        section: "Vouching for an enrolment",
+        statement: "A verifier MUST draw each nonce from a CSPRNG and issue it once.",
     },
     Requirement {
         id: "P-093",

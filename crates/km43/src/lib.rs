@@ -68,6 +68,7 @@ mod sealed;
 mod signed;
 mod subscribe;
 mod time;
+mod vouch;
 mod wifi;
 
 pub use admission::*;
@@ -110,6 +111,7 @@ pub use sealed::*;
 pub use signed::*;
 pub use subscribe::*;
 pub use time::*;
+pub use vouch::*;
 pub use wifi::*;
 
 /// Published protocol vectors, including BLE traces, pinned to this crate version.

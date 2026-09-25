@@ -1108,7 +1108,16 @@
 # FRAM. P-082 now says a retry carries a new `req_id` rather than a new counter;
 # a test of it needs the dedup table and the window side by side, and the
 # table is the controller's.
-uncovered = 141
+# 141 -> 144: P-244 to P-248 are new (origin89hq/km43#135), the controller's
+# vouch that lets a site link a generation. `vouch.rs` and the published
+# `vouch_verification` cases cover P-244 and P-245. Three go up. P-247 has
+# tests for the three checks the bytes decide, but its first step, spending the
+# nonce, is the cloud's store and takes a clause below, owed by
+# origin89hq/cloud#3. P-246 is the controller setting capability bit 9 and a
+# client honouring it, owed by origin89hq/firmware#174 and origin89hq/apps#42.
+# P-248 is how the verifier issues nonces and bindings, owed by
+# origin89hq/cloud#3.
+uncovered = 144
 
 # P-045 is the shape this file is for. Nothing can drive an implementation into
 # transmitting a key it does not have, so the thing that stands behind it reads
@@ -1498,3 +1507,8 @@ reason = "The stored encoding holds the client's key pair, the pinned controller
 id = "L-035"
 each = ["controller_link_up_carries_device_id", "comms_advertises_only_the_latest"]
 reason = "The codec requires key 8 from the controller, refuses it from comms or at another length, and the published controller LinkUp carries Discover's device_id. Using it only as the TXT id, from the latest controller LinkUp, is the comms processor's, owed by origin89hq/firmware#146."
+
+[[clauses]]
+id = "P-247"
+each = ["another_accounts_vouch_is_refused", "earlier_epochs_vouch_does_not_link", "controller_key_the_caller_chose_is_refused", "verifier_spends_the_nonce_first"]
+reason = "The verifier here builds the statement from what it issued, checks the manufacturing fingerprint before the DH and compares the tag in constant time, and the published cases hold it to each refusal. Recording the nonce as spent before anything else runs is the cloud's store, owed by origin89hq/cloud#3: the replay case verifies byte for byte, which is the point of publishing it."

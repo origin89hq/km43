@@ -12,7 +12,7 @@
 //! **separately** (P-042), which is why the two extract arguments are two
 //! newtypes rather than two `&[u8]` in a row.
 //!
-//! cites: P-042, P-043, P-044, P-085, P-086, P-088, P-236
+//! cites: P-042, P-043, P-044, P-085, P-086, P-088, P-236, P-244
 
 use core::fmt;
 use core::num::NonZeroU32;
@@ -22,7 +22,7 @@ use sha2::{Digest as _, Sha256};
 use subtle::ConstantTimeEq as _;
 use zeroize::{Zeroize as _, Zeroizing};
 
-use crate::mac::{AdmitKey, RefusalKey};
+use crate::mac::{AdmitKey, RefusalKey, VouchKey};
 use crate::noise::{KEY_BYTES, Psk, PublicKey};
 
 mod stored;
@@ -48,7 +48,7 @@ const_assert!(
     "the expand here stops at T(1); a wider key needs T(2)"
 );
 
-/// The three HKDF `info` labels of P-043's table.
+/// The four HKDF `info` labels of P-043's table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Derivation {
@@ -58,6 +58,8 @@ pub enum Derivation {
     PairRefusal,
     /// One enrolment's admission key (P-238).
     AdmitKey,
+    /// The key one vouch is tagged under (P-244).
+    VouchKey,
 }
 
 impl Derivation {
@@ -66,6 +68,7 @@ impl Derivation {
             Self::PairPsk => "km43/v1/pair-psk",
             Self::PairRefusal => "km43/v1/pair-refusal",
             Self::AdmitKey => "km43/v1/admit-key",
+            Self::VouchKey => "km43/v1/vouch-key",
         }
     }
 }
@@ -269,6 +272,15 @@ pub(crate) fn admit_key(device_id: DeviceId, shared: &[u8; KEY_BYTES]) -> AdmitK
     AdmitKey::new(
         Prk::of(Salt(&device_id.0), Ikm(shared))
             .expand(Derivation::AdmitKey)
+            .key(),
+    )
+}
+
+/// P-244's vouch key from the DH between the controller and one verifier.
+pub(crate) fn vouch_key(device_id: DeviceId, shared: &[u8; KEY_BYTES]) -> VouchKey {
+    VouchKey::new(
+        Prk::of(Salt(&device_id.0), Ikm(shared))
+            .expand(Derivation::VouchKey)
             .key(),
     )
 }

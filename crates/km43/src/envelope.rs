@@ -805,7 +805,7 @@ mod tests {
     /// client that hears nothing waits out its own timeout with an empty screen.
     #[test]
     fn an_unallocated_type_is_error_2_rather_than_dropped_or_called_malformed() {
-        for opcode in [0x14u8, 0x15, 0x1f, 0x5f, 0x7f, 0x94, 0xdf] {
+        for opcode in [0x15u8, 0x16, 0x1f, 0x5f, 0x7f, 0x95, 0xdf] {
             let bytes = with_type(opcode);
             assert_eq!(
                 refused(&bytes),

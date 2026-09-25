@@ -187,6 +187,18 @@ impl StaticKey {
         Ok(crate::kdf::admit_key(device_id, &*self.agree(peer)?))
     }
 
+    /// P-244's vouch key between this key and `peer`: the controller's key and
+    /// a verifier's, or the verifier's and the controller's. A low-order `peer`
+    /// is refused, which is P-245's `bad_verifier` on the controller and a
+    /// refusal at P-247's step 4 on the verifier.
+    pub fn vouch_key(
+        &self,
+        device_id: crate::DeviceId,
+        peer: &PublicKey,
+    ) -> Result<crate::VouchKey, NoiseError> {
+        Ok(crate::kdf::vouch_key(device_id, &*self.agree(peer)?))
+    }
+
     /// X25519, refusing an all-zero result. A peer that sends a low-order point
     /// makes the output a constant it already knows, and that DH then adds
     /// nothing to the key it is mixed into.
