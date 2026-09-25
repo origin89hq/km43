@@ -56,8 +56,8 @@ since = "1.0"
 request = 0x01
 response = 0x81
 name = "Hello"
-auth_request = "proof"
-auth_response = "rsp"
+auth_request = "handshake"
+auth_response = "handshake"
 status = "live"
 since = "1.0"
 
@@ -65,8 +65,8 @@ since = "1.0"
 request = 0x02
 response = 0x82
 name = "Snapshot"
-auth_request = "wrq"
-auth_response = "rsp"
+auth_request = "sealed"
+auth_response = "sealed"
 status = "retired"
 since = "1.0"
 
@@ -74,15 +74,15 @@ since = "1.0"
 request = 0x03
 response = 0x83
 name = "Subscribe"
-auth_request = "wrq"
-auth_response = "rsp"
+auth_request = "sealed"
+auth_response = "sealed"
 status = "live"
 since = "1.0"
 
 [[messages]]
 response = 0x04
 name = "Event"
-auth_response = "evt"
+auth_response = "sealed"
 status = "live"
 since = "1.0"
 
@@ -90,8 +90,8 @@ since = "1.0"
 request = 0x05
 response = 0x85
 name = "ReadLog"
-auth_request = "wrq"
-auth_response = "rsp"
+auth_request = "sealed"
+auth_response = "sealed"
 status = "live"
 since = "1.0"
 
@@ -99,8 +99,8 @@ since = "1.0"
 request = 0x06
 response = 0x86
 name = "GetConfig"
-auth_request = "wrq"
-auth_response = "rsp"
+auth_request = "sealed"
+auth_response = "sealed"
 status = "live"
 since = "1.0"
 
@@ -109,7 +109,7 @@ request = 0x07
 response = 0x87
 name = "SetConfig"
 auth_request = "signed"
-auth_response = "rsp"
+auth_response = "sealed"
 status = "live"
 since = "1.0"
 
@@ -118,7 +118,7 @@ request = 0x08
 response = 0x88
 name = "Command"
 auth_request = "signed"
-auth_response = "rsp"
+auth_response = "sealed"
 status = "reserved"
 since = "1.0"
 
@@ -127,7 +127,7 @@ request = 0x09
 response = 0x89
 name = "Firmware"
 auth_request = "signed"
-auth_response = "rsp"
+auth_response = "sealed"
 status = "reserved"
 since = "1.0"
 
@@ -136,7 +136,7 @@ request = 0x0A
 response = 0x8A
 name = "Time"
 auth_request = "signed"
-auth_response = "rsp"
+auth_response = "sealed"
 status = "live"
 since = "1.0"
 
@@ -144,8 +144,8 @@ since = "1.0"
 request = 0x0B
 response = 0x8B
 name = "Pair"
-auth_request = "pair_key"
-auth_response = "pair_key"
+auth_request = "handshake"
+auth_response = "pair_reply"
 status = "live"
 since = "1.0"
 
@@ -153,8 +153,8 @@ since = "1.0"
 request = 0x0C
 response = 0x8C
 name = "Goodbye"
-auth_request = "wrq"
-auth_response = "rsp"
+auth_request = "sealed"
+auth_response = "sealed"
 status = "live"
 since = "1.0"
 
@@ -162,8 +162,8 @@ since = "1.0"
 request = 0x0D
 response = 0x8D
 name = "Inventory"
-auth_request = "wrq"
-auth_response = "rsp"
+auth_request = "sealed"
+auth_response = "sealed"
 status = "live"
 since = "1.0"
 
@@ -171,8 +171,8 @@ since = "1.0"
 request = 0x0E
 response = 0x8E
 name = "Readings"
-auth_request = "wrq"
-auth_response = "rsp"
+auth_request = "sealed"
+auth_response = "sealed"
 status = "live"
 since = "1.0"
 
@@ -180,8 +180,8 @@ since = "1.0"
 request = 0x0F
 response = 0x8F
 name = "Concerns"
-auth_request = "wrq"
-auth_response = "rsp"
+auth_request = "sealed"
+auth_response = "sealed"
 status = "live"
 since = "1.0"
 
@@ -189,8 +189,8 @@ since = "1.0"
 request = 0x10
 response = 0x90
 name = "History"
-auth_request = "wrq"
-auth_response = "rsp"
+auth_request = "sealed"
+auth_response = "sealed"
 status = "reserved"
 since = "1.0"
 
@@ -198,8 +198,8 @@ since = "1.0"
 request = 0x11
 response = 0x91
 name = "WifiScan"
-auth_request = "wrq"
-auth_response = "rsp"
+auth_request = "sealed"
+auth_response = "sealed"
 status = "live"
 since = "1.0"
 
@@ -207,8 +207,17 @@ since = "1.0"
 request = 0x12
 response = 0x92
 name = "WifiStatus"
-auth_request = "wrq"
-auth_response = "rsp"
+auth_request = "sealed"
+auth_response = "sealed"
+status = "live"
+since = "1.0"
+
+[[messages]]
+request = 0x13
+response = 0x93
+name = "Enrol"
+auth_request = "handshake"
+auth_response = "sealed"
 status = "live"
 since = "1.0"
 
@@ -224,7 +233,7 @@ since = "1.0"
 [[messages]]
 response = 0xFF
 name = "Error"
-auth_response = "rsp_or_bare"
+auth_response = "sealed_or_bare"
 status = "live"
 since = "1.0"
 
@@ -232,109 +241,115 @@ since = "1.0"
 [[errors]]
 code = 1
 meaning = "Malformed frame"
-macd = false
+sealed = false
 status = "live"
 
 [[errors]]
 code = 2
 meaning = "Unknown message type"
-macd = false
+sealed = false
 status = "live"
 
 [[errors]]
 code = 3
 meaning = "Protocol major mismatch"
-macd = false
+sealed = false
 status = "live"
 
 [[errors]]
 code = 4
 meaning = "Hello required first"
-macd = false
+sealed = false
 status = "live"
 
 [[errors]]
 code = 5
 meaning = "Payload too large"
-macd = false
+sealed = false
 status = "live"
 
 [[errors]]
 code = 6
 meaning = "Unknown section"
-macd = true
+sealed = true
 status = "live"
 
 [[errors]]
 code = 7
 meaning = "Busy — retry"
-macd = true
+sealed = true
 status = "live"
 
 [[errors]]
 code = 8
 meaning = "Session table full"
-macd = false
+sealed = false
 status = "live"
 
 [[errors]]
 code = 9
 meaning = "Session expired"
-macd = false
+sealed = false
 status = "live"
 
 [[errors]]
 code = 10
-meaning = "Bad MAC"
-macd = false
+meaning = "Authentication failed"
+sealed = false
 status = "live"
 
 [[errors]]
 code = 11
 meaning = "Counter not fresh"
-macd = true
+sealed = true
 status = "live"
 
 [[errors]]
 code = 12
 meaning = "Unknown client"
-macd = false
+sealed = false
 status = "live"
 
 [[errors]]
 code = 13
 meaning = "Pairing window closed"
-macd = false
+sealed = false
 status = "withdrawn"
 
 [[errors]]
 code = 14
 meaning = "Stale challenge — reconnect and retry"
-macd = false
+sealed = false
 status = "live"
 
 [[errors]]
 code = 15
 meaning = "Snapshot exceeds channel cap"
-macd = true
+sealed = true
 status = "withdrawn"
 
 [[errors]]
 code = 16
 meaning = "Not permitted on this transport"
-macd = false
+sealed = false
 status = "withdrawn"
 
 [[errors]]
 code = 17
 meaning = "Clock not set"
-macd = true
+sealed = true
 status = "withdrawn"
 
 [[errors]]
 code = 18
 meaning = "Challenge unavailable"
-macd = false
+sealed = false
+status = "live"
+
+[[errors]]
+code = 19
+meaning = "Unsupported suite"
+sealed = false
 status = "live"
 
 [[error_ranges]]
@@ -1508,7 +1523,7 @@ number = 17
 name = "bay flapping"
 status = "reserved"
 
-# The four the controller raises about itself. `0x0501` was `alarm raised` with
+# The six the controller raises about itself. `0x0501` was `alarm raised` with
 # these as unnamed producers; it is `concern raised` now, and `cond` is the
 # discriminator DEFERRED entry 10 asked for. None of them carries a magnitude:
 # the size of a clock step is derivable from `0x0604 time set`, which already
@@ -1531,6 +1546,20 @@ status = "reserved"
 [[open_registries.condition]]
 number = 21
 name = "floor overridden"
+status = "reserved"
+
+# The random bit generator's state did not read back (P-237): every `Pair` and
+# `Hello` is refused until it does.
+[[open_registries.condition]]
+number = 22
+name = "entropy unavailable"
+status = "reserved"
+
+# A slot could not be written durably, so an enrolment answered `not_stored`
+# (P-064).
+[[open_registries.condition]]
+number = 23
+name = "client table write failed"
 status = "reserved"
 
 [[open_registries.condition]]
@@ -1766,31 +1795,43 @@ meaning = "Correct, and applied at the next `MIN_REV_INTERVAL_MS` boundary rathe
 value = 1
 name = "enrolled"
 status = "live"
-meaning = "The client is enrolled, and `client_id` is the one allocated to it (P-064)"
+meaning = "The client's key is in a slot that was free, and `client_id` names it (P-064, P-240)"
 
 [[outcomes.pair]]
 value = 2
 name = "window_closed"
 status = "live"
-meaning = "No pairing window was open. Checked before the proof, so it costs the controller nothing and does not count as an auth failure (P-066)"
+meaning = "No pairing window was open. Answered under the refusal tag after message 1, or in `Enrol 0x93` when the window closed before message 3; never counted as an authentication failure (P-241)"
 
 [[outcomes.pair]]
 value = 3
 name = "bad_proof"
-status = "live"
-meaning = "The proof did not verify. It counts against `MAX_AUTH_FAILURES`, and the challenge is spent all the same (P-061)"
+status = "withdrawn"
+meaning = "A wrong label cannot be answered under a key the client holds, so it is bare error 10 now (P-066)"
 
 [[outcomes.pair]]
 value = 4
 name = "table_full"
 status = "live"
-meaning = "Eight distinct labels are enrolled and none matched this one. Nothing is evicted (P-067)"
+meaning = "No free slot and no slot with this label. Nothing is evicted (P-067, P-240)"
 
 [[outcomes.pair]]
 value = 5
 name = "reclaimed"
 status = "live"
-meaning = "The label matched an occupied row byte for byte, and that row was reused: same `client_id`, counter back to 0 (P-078)"
+meaning = "No free slot, and the lowest slot with a byte-identical label was re-keyed: the old install's key is erased, the generation moves on and the counter is back to 0 (P-240)"
+
+[[outcomes.pair]]
+value = 6
+name = "proceed"
+status = "live"
+meaning = "Message 1 opened, the window is open and there is a slot to allocate; `Pair 0x8B` carries message 2 (P-064)"
+
+[[outcomes.pair]]
+value = 7
+name = "not_stored"
+status = "live"
+meaning = "The slot could not be written durably, so nothing was enrolled and a class A concern was raised (P-064)"
 
 
 [[outcomes.time]]
@@ -2590,6 +2631,13 @@ name = "cloud"
 [[enums.client_kind]]
 value = 4
 name = "cli"
+
+# The key agreement and cipher a pairing or a session runs (P-226). One suite,
+# and a slot pins the one it enrolled under.
+[[enums.suite]]
+value = 1
+name = "x25519_chachapoly_sha256"
+meaning = "Noise_XXpsk0_25519_ChaChaPoly_SHA256 to pair, Noise_IK_25519_ChaChaPoly_SHA256 for a session"
 
 
 # The three spaces P-125 names: a metric whose key 3 is an answer rather than a

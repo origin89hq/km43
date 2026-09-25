@@ -155,26 +155,27 @@ value.
 | Request | Response | Name | Auth (request) | Auth (response) | Since | Status |
 |---|---|---|---|---|---|---|
 | `0x00` | `0x80` | Discover | `none` | `none` | 1.0 | live |
-| `0x01` | `0x81` | Hello | `proof` | `rsp` | 1.0 | live |
-| `0x02` | `0x82` | Snapshot | `wrq` | `rsp` | 1.0 | retired |
-| `0x03` | `0x83` | Subscribe | `wrq` | `rsp` | 1.0 | live |
-| — | `0x04` | Event | — | `evt` | 1.0 | live |
-| `0x05` | `0x85` | ReadLog | `wrq` | `rsp` | 1.0 | live |
-| `0x06` | `0x86` | GetConfig | `wrq` | `rsp` | 1.0 | live |
-| `0x07` | `0x87` | SetConfig | `signed` | `rsp` | 1.0 | live |
-| `0x08` | `0x88` | Command | `signed` | `rsp` | 1.0 | reserved |
-| `0x09` | `0x89` | Firmware | `signed` | `rsp` | 1.0 | reserved |
-| `0x0A` | `0x8A` | Time | `signed` | `rsp` | 1.0 | live |
-| `0x0B` | `0x8B` | Pair | `pair_key` | `pair_key` | 1.0 | live |
-| `0x0C` | `0x8C` | Goodbye | `wrq` | `rsp` | 1.0 | live |
-| `0x0D` | `0x8D` | Inventory | `wrq` | `rsp` | 1.0 | live |
-| `0x0E` | `0x8E` | Readings | `wrq` | `rsp` | 1.0 | live |
-| `0x0F` | `0x8F` | Concerns | `wrq` | `rsp` | 1.0 | live |
-| `0x10` | `0x90` | History | `wrq` | `rsp` | 1.0 | reserved |
-| `0x11` | `0x91` | WifiScan | `wrq` | `rsp` | 1.0 | live |
-| `0x12` | `0x92` | WifiStatus | `wrq` | `rsp` | 1.0 | live |
+| `0x01` | `0x81` | Hello | `handshake` | `handshake` | 1.0 | live |
+| `0x02` | `0x82` | Snapshot | `sealed` | `sealed` | 1.0 | retired |
+| `0x03` | `0x83` | Subscribe | `sealed` | `sealed` | 1.0 | live |
+| — | `0x04` | Event | — | `sealed` | 1.0 | live |
+| `0x05` | `0x85` | ReadLog | `sealed` | `sealed` | 1.0 | live |
+| `0x06` | `0x86` | GetConfig | `sealed` | `sealed` | 1.0 | live |
+| `0x07` | `0x87` | SetConfig | `signed` | `sealed` | 1.0 | live |
+| `0x08` | `0x88` | Command | `signed` | `sealed` | 1.0 | reserved |
+| `0x09` | `0x89` | Firmware | `signed` | `sealed` | 1.0 | reserved |
+| `0x0A` | `0x8A` | Time | `signed` | `sealed` | 1.0 | live |
+| `0x0B` | `0x8B` | Pair | `handshake` | `pair_reply` | 1.0 | live |
+| `0x0C` | `0x8C` | Goodbye | `sealed` | `sealed` | 1.0 | live |
+| `0x0D` | `0x8D` | Inventory | `sealed` | `sealed` | 1.0 | live |
+| `0x0E` | `0x8E` | Readings | `sealed` | `sealed` | 1.0 | live |
+| `0x0F` | `0x8F` | Concerns | `sealed` | `sealed` | 1.0 | live |
+| `0x10` | `0x90` | History | `sealed` | `sealed` | 1.0 | reserved |
+| `0x11` | `0x91` | WifiScan | `sealed` | `sealed` | 1.0 | live |
+| `0x12` | `0x92` | WifiStatus | `sealed` | `sealed` | 1.0 | live |
+| `0x13` | `0x93` | Enrol | `handshake` | `sealed` | 1.0 | live |
 | `0x60`–`0x7E` | `0xE0`–`0xFE` | *link-local, see [LINK.md](LINK.md)* | — | — | 1.0 | live |
-| — | `0xFF` | Error | — | `rsp_or_bare` | 1.0 | live |
+| — | `0xFF` | Error | — | `sealed_or_bare` | 1.0 | live |
 
 `GetConfig` and `SetConfig` are **live**: the four messages are settled, and so
 are the bodies of the two sections marked live under **Config sections** below.
@@ -182,11 +183,12 @@ A section still marked reserved there has a number and no field list, and a
 client must not depend on the contents of one — see
 [DEFERRED.md](DEFERRED.md) entry 9.
 
-`Pair` authenticates under `pair_key`, which P-088 derives from `printed_secret`
-with the label `km43/v1/pair-key`. The printed secret is never an HMAC key
-itself: it can never be rotated, and the comms processor watches every pairing
-exchange, so keying it directly would hand the one component this protocol calls
-hostile an oracle under the one secret the device depends on.
+`Pair` and `Enrol` carry the pairing handshake, `Noise_XXpsk0`, under the
+pre-shared key P-088 derives from `printed_secret`; `Hello` carries the session
+handshake, `Noise_IK`, against the controller key the client pinned (P-226).
+Everything after a handshake is sealed (P-231). The printed secret derives two
+pairing keys and nothing else, so a photographed label is a way to ask for a
+slot while somebody holds the window open, never a way into one that exists.
 
 `Goodbye` exists because a session table with no way to empty it locks every
 client out after eight reconnections inside the expiry window. It is not
@@ -198,7 +200,7 @@ politeness; it is the difference between a browser refresh working and not.
 What `Error 0xFF` carries, for a request that never reached its handler. A
 handler's own refusal is an outcome in its response instead (P-141).
 
-| Code | Meaning | MAC'd? | Status |
+| Code | Meaning | Sealed? | Status |
 |---|---|---|---|
 | 1 | Malformed frame | no | live |
 | 2 | Unknown message type | no | live |
@@ -209,7 +211,7 @@ handler's own refusal is an outcome in its response instead (P-141).
 | 7 | Busy — retry | yes | live |
 | 8 | Session table full | no | live |
 | 9 | Session expired | no | live |
-| 10 | Bad MAC | no | live |
+| 10 | Authentication failed | no | live |
 | 11 | Counter not fresh | yes | live |
 | 12 | Unknown client | no | live |
 | 13 | Pairing window closed | no | withdrawn |
@@ -218,14 +220,15 @@ handler's own refusal is an outcome in its response instead (P-141).
 | 16 | Not permitted on this transport | no | withdrawn |
 | 17 | Clock not set | yes | withdrawn |
 | 18 | Challenge unavailable | no | live |
+| 19 | Unsupported suite | no | live |
 | 256–511 | *link-local, see [LINK.md](LINK.md)* | no | live |
 
 **13, 15, 16 and 17 are withdrawn, not live**, because nothing produces them.
 
-**13** because P-066 answers a `Pair` arriving with no window open with `Pair
-0x8B` outcome 2 `window_closed`, MAC'd under the printed secret. That is P-141
-doing its job: a refusal the comms processor can forge is a refusal that sends
-somebody back to the panel to press a button that was never needed.
+**13** because P-241 answers a `Pair` arriving with no window open with `Pair
+0x8B` outcome 2 `window_closed`, tagged under a key the label derives. That is
+P-141 doing its job: a refusal the comms processor can forge is a refusal that
+sends somebody back to the panel to press a button that was never needed.
 
 **15** because P-090 refuses an over-cap configuration at write time with
 `SetConfigAck` outcome 5 `exceeds_cap`. Nothing builds an over-cap `Snapshot` to
@@ -253,7 +256,7 @@ documents describe without naming a code here is a bug in them: two
 implementations will pick different numbers for the same refusal and neither is
 wrong.
 
-**The MAC'd column is the receiver's rule, not the sender's.** It says which
+**The sealed column is the receiver's rule, not the sender's.** It says which
 codes a receiver refuses to read out of a bare `Error` body — a bare error 6 or
 11 is discarded, not acted on. What shape a sender emits is P-142's question and
 is answered by whether that sender holds a session, never by looking a code up
@@ -264,7 +267,7 @@ Link-local codes start at **256** so a client can tell *the link failed* from
 *your request failed*. Three of them reach a client on purpose: **257** (it sent
 a link-local type), **258** (it connected before the two firmwares had exchanged
 `LinkUp`) and **259** (its handle is gone, which is what a controller reboot
-looks like from the outside). All three mean *reconnect*, and none is MAC'd, so
+looks like from the outside). All three mean *reconnect*, and none is sealed, so
 the rule below applies to them like any other unauthenticated error. The rest —
 **256** and **260**–**264** — never leave the UART, and one of those in a
 client-facing frame is wrong on sight.
@@ -515,7 +518,7 @@ argument for leaving the numbers overlapping is at the head of the metric table.
 
 Every row is **reserved**, and the reason is the `body` map. The kind numbers
 and the classes are settled; not one kind says what is inside its body, so two
-implementations can agree on framing, on the MAC and on the sequence number and
+implementations can agree on framing, on the cipher and on the sequence number and
 still disagree about every event they exchange. The numbers are allocated; the
 body schemas are deferred — see [DEFERRED.md](DEFERRED.md).
 
@@ -697,7 +700,7 @@ reason a person can read; `shadowed` is every decision a site makes while it run
 in shadow.
 
 `5` is what the **client capability mask** below produces. A client whose mask
-does not carry *send commands* is refused here, inside a MAC'd response, rather
+does not carry *send commands* is refused here, inside a sealed response, rather
 than with an error the comms processor could have forged — P-141, applied.
 
 ## SetConfig outcomes — `u8`
@@ -723,23 +726,30 @@ already echoed back in key 1.
 
 How a `Pair 0x8B` answered.
 
-| Value | Name | Meaning |
-|---|---|---|
-| 1 | enrolled | The client is enrolled, and `client_id` is the one allocated to it (P-064) |
-| 2 | window_closed | No pairing window was open. Checked before the proof, so it costs the controller nothing and does not count as an auth failure (P-066) |
-| 3 | bad_proof | The proof did not verify. It counts against `MAX_AUTH_FAILURES`, and the challenge is spent all the same (P-061) |
-| 4 | table_full | Eight distinct labels are enrolled and none matched this one. Nothing is evicted (P-067) |
-| 5 | reclaimed | The label matched an occupied row byte for byte, and that row was reused: same `client_id`, counter back to 0 (P-078) |
+| Value | Name | Meaning | Status |
+|---|---|---|---|
+| 1 | enrolled | The client's key is in a slot that was free, and `client_id` names it (P-064, P-240) | live |
+| 2 | window_closed | No pairing window was open. Answered under the refusal tag after message 1, or in `Enrol 0x93` when the window closed before message 3; never counted as an authentication failure (P-241) | live |
+| 3 | bad_proof | A wrong label cannot be answered under a key the client holds, so it is bare error 10 now (P-066) | withdrawn |
+| 4 | table_full | No free slot and no slot with this label. Nothing is evicted (P-067, P-240) | live |
+| 5 | reclaimed | No free slot, and the lowest slot with a byte-identical label was re-keyed: the old install's key is erased, the generation moves on and the counter is back to 0 (P-240) | live |
+| 6 | proceed | Message 1 opened, the window is open and there is a slot to allocate; `Pair 0x8B` carries message 2 (P-064) | live |
+| 7 | not_stored | The slot could not be written durably, so nothing was enrolled and a class A concern was raised (P-064) | live |
 
-**`5` is what stops the client table being a consumable, and the rule that
-produces it is P-078 in [PROTOCOL.md](../PROTOCOL.md), not this file.** Which
-`Pair` reuses an occupied row, that the `label` comparison is over the exact
-UTF-8 bytes that entered the pair-proof preimage, that matching runs before
-allocation so P-067's `table_full` means eight distinct labels rather than eight
-pairings, that a reclaim is not a revocation, and why setting the counter back to
-0 does not re-open replay — all of it is there, with the arithmetic that says why
-eight cumulative re-pairings is a season and not a lifetime. What this file
-allocates is the number.
+**`5` is what stops the client table being a consumable, and the rules that
+produce it are P-078 and P-240 in [PROTOCOL.md](../PROTOCOL.md), not this file.**
+Which pairing re-keys an occupied slot, that the `label` comparison is over the
+exact UTF-8 bytes `PairOffer` carried, that a free slot is always preferred so a
+reclaim never takes a live phone's slot while there is room, that a reclaim now
+revokes the old install's key, and why setting the counter back to 0 does not
+re-open replay — all of it is there. What this file allocates is the number.
+
+**`6` and `2`, `4` travel in `Pair 0x8B`; the others in `Enrol 0x93`.** `6` is
+the only outcome that carries message 2. A refusal after message 1 carries the
+tag of P-241 instead, and one decided at message 3 is sealed under the keys the
+handshake just split into. `3` is withdrawn: a wrong label is answered with bare
+error 10, because the controller cannot tag a refusal under a key the client
+holds when it cannot know which label the client used.
 
 **Outcome 5 rather than outcome 1** is the part that belongs here, because it is
 the allocation decision: a reclaim silently reported as an enrolment is a row
@@ -917,8 +927,8 @@ implemented.
 
 ## Client kinds — `u8`
 
-What a client says it is when it enrols. It is inside the pair proof, and the
-capability mask is fixed from it (P-105).
+What a client says it is when it enrols. It is inside `PairOffer`, sealed under
+the label's pre-shared key, and the capability mask is fixed from it (P-105).
 
 | Value | Name |
 |---|---|
@@ -926,6 +936,16 @@ capability mask is fixed from it (P-105).
 | 2 | browser |
 | 3 | cloud |
 | 4 | cli |
+
+## Suites — `u8`
+
+The key agreement and cipher a pairing or a session runs (P-226). A slot records
+the suite it enrolled under and a `Hello` must present exactly that one; an
+unknown suite is error 19 before anything else is read.
+
+| Value | Name | Meaning |
+|---|---|---|
+| 1 | x25519_chachapoly_sha256 | Noise_XXpsk0_25519_ChaChaPoly_SHA256 to pair, Noise_IK_25519_ChaChaPoly_SHA256 for a session |
 
 ## Client capability mask — `u16`
 
@@ -982,7 +1002,7 @@ configuration cannot write two particular sections of it either.
 
 Which response answers which denial, because those are outcome numbers and
 outcome numbers live here. P-105 is what requires every one of them to ride
-inside the MAC'd response rather than inside an `Error` the comms processor could
+inside the sealed response rather than inside an `Error` the comms processor could
 have forged:
 
 | Refused | Answer |
@@ -1000,7 +1020,7 @@ default that opens is the one direction this project never defaults.
 
 **A cloud client keeps bit 2, and that is deliberate.** Telling a generator to
 stop from somewhere that is not the site is the whole point of having a cloud at
-all, and every command is MAC'd end to end regardless — a compromised relay cannot
+all, and every command is sealed end to end regardless — a compromised relay cannot
 forge one, it can only refuse to carry it. What it does not need is the ability to
 re-flash the controller, move the clock under a schedule, or read back the
 credentials it forwards. Command authority is separately gated in any case: no
@@ -1265,6 +1285,8 @@ A normalized thing that has gone wrong. Open, so a condition nobody has allocate
 | `0x0013` | epoch write failed | reserved |
 | `0x0014` | clock stepped | reserved |
 | `0x0015` | floor overridden | reserved |
+| `0x0016` | entropy unavailable | reserved |
+| `0x0017` | client table write failed | reserved |
 | `0xF000`–`0xFFFF` | vendor range, skip-unknown under P-019 | — |
 
 ## History buckets

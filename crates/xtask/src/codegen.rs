@@ -434,10 +434,14 @@ impl Codegen {
     }
 
     fn errors(&self) -> String {
-        let mut t = String::from("| Code | Meaning | MAC'd? | Status |\n|---|---|---|---|\n");
+        let mut t = String::from("| Code | Meaning | Sealed? | Status |\n|---|---|---|---|\n");
         for c in &self.registry.errors {
-            let macd = if c.macd { "yes" } else { "no" };
-            let _ = writeln!(t, "| {} | {} | {macd} | {} |", c.code, c.meaning, c.status);
+            let sealed = if c.sealed { "yes" } else { "no" };
+            let _ = writeln!(
+                t,
+                "| {} | {} | {sealed} | {} |",
+                c.code, c.meaning, c.status
+            );
         }
         for r in &self.registry.error_ranges {
             let _ = writeln!(
@@ -515,6 +519,7 @@ pub fn heading_for(key: &str) -> String {
         "boot_reason" => "## Boot reasons",
         "time_source" => "## Time sources",
         "client_kind" => "## Client kinds",
+        "suite" => "## Suites",
         "config_section" => "## Config sections",
         "behaviour_key" => "## Behaviour section keys",
         "command_kind" => "## Command kinds",

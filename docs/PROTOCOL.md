@@ -102,10 +102,10 @@ built against, and the failure is quiet rather than loud: it keeps four requests
 in flight at a controller that allows two, collects error 7 for the afternoon,
 and tells somebody the site is busy.
 
-So the controller reports them in `Hello 0x81`, and the figures below are what
+So the controller reports them in `Hello 0x81`'s `HelloReport`, and the figures below are what
 *this* controller enforces rather than what the protocol permits.
 
-| Name | This controller | `Hello 0x81` key | Behaviour when reached |
+| Name | This controller | `HelloReport` key | Behaviour when reached |
 |---|---|---|---|
 | `MAX_SESSIONS` | 8 | 12 | Error 8, oldest is **not** evicted |
 | `MAX_CHANNELS` | 32 | 13 | Config write refused, `SetConfigAck` outcome 5 `exceeds_cap` |
@@ -158,12 +158,15 @@ is the state it was in before somebody checked it the first time.
 |---|---|---|
 | `MAX_CHALLENGES` | 8 | Error 18 `challenge unavailable`; nothing is evicted |
 | `MAX_AUTH_FAILURES` | 8 per connection in 60 seconds | Connection closed, `CloseConnection` reason 3 `authentication_failures`; a fresh `Hello` does not clear the count |
+| `MAX_REPLAY_WINDOW` | 64 controller nonces per session, ending at the highest accepted, held by the client | An older nonce, or one already accepted, is discarded unanswered (P-233) |
 
-Both bound what the controller will spend on a peer that has proved nothing, and
-there is nothing a client does differently for knowing either. A limit is
-reported so a client can **stay inside** it; these two are reached only by a
-client doing something it was not supposed to be doing — holding challenges it
-never answers, or presenting proofs it cannot pass.
+The first two bound what the controller will spend on a peer that has proved
+nothing, and there is nothing a client does differently for knowing either. A
+limit is reported so a client can **stay inside** it; these two are reached only
+by a client doing something it was not supposed to be doing — holding challenges
+it never answers, or presenting handshakes it cannot complete. The third is the
+client's own bound on how far the controller's messages may arrive out of order,
+which only a relay reordering them ever tests.
 
 `MAX_SESSIONS` is the cap on **bindings**, not on transports. Every client
 transport terminates on the comms processor today, and it refuses a ninth
@@ -174,9 +177,9 @@ the comms processor does not own.
 `MAX_PAYLOAD` bounds the **encoded envelope** — the whole message as it is
 framed. A receiver refuses a larger one with **error 5** and drops the frame, and
 so does a sender that finds it has built one: an inner body that will not fit its
-wrapper, a signed operation past `MAX_OPERATION`, a log page past
-`MAX_LOG_PAGE_BYTES`. The word `payload` on its own means key 1 of the wrapper in
-P-050, which is bounded by what fits inside the envelope that carries it.
+sealed body, a signed operation past `MAX_OPERATION`, a log page past
+`MAX_LOG_PAGE_BYTES`. An inner body is bounded by what fits inside the sealed body
+and the envelope that carry it.
 
 That sentence used to live only inside the snapshot's derivation, which is how
 the reachability sweep found it: retiring the message took the last rule in this
@@ -193,16 +196,22 @@ delimiter                                    + 1    = 1032
 ```
 
 So is `MAX_LOG_PAGE_BYTES`, and the arithmetic is why it is not 1024. A page is not a
-frame — it travels inside one, under an envelope, a wrapper and a MAC:
+frame — it travels inside one, under an envelope and a sealed body:
 
 ```
 MAX_PAYLOAD                                          1024
   less envelope [type, session_id, req_id, body]      -11
-  less wrapper map + bstr header + mac(16)            -23
+  less the second byte a 0x85 type costs               -1
+  less sealed body keys, nonce(9), bstr header
+       and tag(16)                                    -30
   less LogPage keys 2, 3 and 4                        -26
                                                      ────
-  headroom for entries                                 964  ->  896 with margin
+  headroom for entries                                 956  ->  896 with margin
 ```
+
+The envelope's eleven bytes include the body's map header, which is the sealed
+body's; what a sealed body adds is its two keys, the nonce, the head of the
+ciphertext's byte string and the tag.
 
 The envelope is 11 rather than 9 because `req_id` is a `u32` (P-022): a CBOR
 integer at the top of the `u16` range is three bytes and at the top of the `u32`
@@ -309,22 +318,19 @@ recorded in [REGISTRY.md](protocol/REGISTRY.md).
 reject a message for containing them. A v1 controller has to survive a v2
 client's extra fields and the reverse.
 
-**A later field added to `Pair 0x0B`, `Pair 0x8B` or the signed body MUST enter
-that message's preimage.** Those three are the only bodies whose MAC covers
-*fields* rather than an encoding, so a key added outside the preimage is one the
-comms processor can write, alter or remove with every tag still verifying.
-P-013 still applies to them — a v1 controller skips a key it does not know,
-because refusing means a v2 client cannot enrol at, or write to, a v1
-controller, and enrolment is the one exchange that needs somebody at the panel.
-What makes skipping safe is the rule above and the corollary in
-[PROTOCOL-RATIONALE.md](PROTOCOL-RATIONALE.md): a field whose absence has no
-sane default is a new message type rather than a new key.
+Every body a session carries is authenticated as the bytes it was sealed as, and
+every handshake payload as the bytes inside its Noise message, so a key a later
+version adds to any of them is inside the authentication by construction. The
+only maps outside it are the outer bodies that carry a Noise message or a sealed
+body, and those accept exactly the keys they list (P-231). What makes skipping
+safe everywhere else is the corollary in
+[PROTOCOL-RATIONALE.md](PROTOCOL-RATIONALE.md): a field whose absence has no sane
+default is a new message type rather than a new key.
 
-The signed body was missing from that list for as long as the list existed. Its
-`km43/v1/req` preimage covers `client_id` and `counter` as fields and the
-operation as a blob — never an encoding of the map around them — so a key 5
-added in a later version lands outside the MAC in exactly the way this paragraph
-was written to forbid, on the four messages that carry every **write**.
+In v1 three bodies — both pairing messages and the signed body — were covered by
+a MAC over *fields* rather than over an encoding, and a key added to one of them
+landed outside the MAC unless somebody remembered to add it to the preimage too.
+Sealing whole encodings removed the rule rather than keeping it.
 
 **P-014** — A decoder MUST reject an **enum discriminant** it does not
 recognise, with error 1. This is the opposite of P-013 and deliberately so: an
@@ -363,10 +369,10 @@ one day reads them would inherit whichever copy the receiver kept.
 **P-016** — Encoders MUST emit RFC 8949 §4.2 deterministic encoding: shortest
 form integers, sorted map keys, definite lengths, no indefinite strings.
 
-**P-017** — Authentication MUST NOT depend on P-016. Every MAC in this document
+**P-017** — Authentication MUST NOT depend on P-016. Every tag in this document
 is computed over a byte string that is carried on the wire and verified exactly
 as received, never over a re-encoding. P-016 exists for debuggability and
-byte-stability; if it and a MAC ever disagree, the MAC wins.
+byte-stability; if it and a tag ever disagree, the tag wins.
 
 **P-018** — Floating point MUST NOT appear on the wire. Every measurement is an
 integer with a **unit and a scale** from the metric registry. There is no FPU on
@@ -435,7 +441,7 @@ what the controller sees. Handles are never 0, so a client frame reaching the
 controller still carrying 0 is a comms-processor bug.
 
 **P-026** — The controller MUST answer a pre-session request — `Discover 0x80`,
-`Pair 0x8B`, and any bare `Error` answering one — with the connection handle in
+`Pair 0x8B`, `Enrol 0x93`, `Hello 0x81`, and any bare `Error` answering one — with the connection handle in
 `session_id`, so the response routes back to the connection that asked. That is
 not a session; a session exists only after `Hello`.
 
@@ -447,7 +453,8 @@ two-client livelock it exists to prevent.
 
 **P-022** — `req_id` is a **`u32`**, MUST be **strictly increasing within a
 session**, and MUST NOT be reused or restarted. A client MUST NOT have more than
-`MAX_INFLIGHT` outstanding.
+`MAX_INFLIGHT` outstanding. Within a session a request's `req_id` is also its
+nonce, and the client's sealing state issues it (P-232).
 
 **The controller MUST enforce this rather than trust it.** It MUST hold, per
 session, the highest `req_id` it has accepted and a record of which of the last
@@ -458,15 +465,17 @@ or whose `req_id` is below `highest_accepted − MAX_INFLIGHT`.
 **A request this rule refuses MUST NOT be answered** — not with its response,
 not with an `Error` under the session key, and not with a bare one. It MUST NOT
 refresh the session (P-077) and MUST NOT count toward `MAX_AUTH_FAILURES`
-(P-051). The window is consulted only once the request's MAC has verified: a
-request whose MAC fails is P-051's, whatever its `req_id`, and takes nothing
-from the window. A client that hears nothing treats it as any lost exchange: it
+(P-051). The window is consulted before the tag, because a refusal there costs
+nothing, and it moves only once a tag has verified: a request whose tag fails is
+P-051's, whatever its `req_id`, and takes nothing from the window. A forgery that
+reuses an accepted `req_id` is therefore refused as a replay, unanswered and
+uncounted, which is as cheap as refusing anything can be. A client that hears nothing treats it as any lost exchange: it
 times out and, if it still wants the answer, sends the request again under a new
 `req_id`.
 
-Silence is the only answer that does no harm. Anything MAC'd under the session
-key covers `(type, session_id, req_id)`, and that pair has already been
-answered, so the controller would be minting a second genuine response to it,
+Silence is the only answer that does no harm. Anything sealed under the session's
+keys carries `(type, session_id, req_id)` in its associated data, and that pair
+has already been answered, so the controller would be minting a second genuine response to it,
 which is the substitution the freshness paragraph below exists to prevent. A
 bare code would need a number for a condition an honest client never meets: it
 never reuses a `req_id` and never has more than `MAX_INFLIGHT` outstanding, so
@@ -486,24 +495,23 @@ This is what bounds how *old* a signed write may be when it lands, which
 nothing else does. `counter` orders a client's writes and `cmd_id` suppresses
 duplicates — P-082 says exactly that — and neither is a clock. A frame captured
 and withheld replays whenever the holder chooses, and every rule it meets is
-satisfied: the MAC is valid, the counter is above the stored one because it was
+satisfied: the tag is valid, the counter is above the stored one because it was
 above it when the frame was made, and the dedup entry aged out ten minutes
 later. *Start the generator*, sent at nine in the morning and delivered at
 midnight.
 
 With the receiver rule, the window closes at whichever comes first: the client's
 next accepted request, which moves `highest_accepted` past the banked frame, or
-P-077's fifteen-minute session expiry, which destroys the `session_key` the
-frame was MAC'd under. Both are already in this document; what was missing was
+P-077's fifteen-minute session expiry, which destroys the keys the frame was
+sealed under. Both are already in this document; what was missing was
 the requirement that makes the controller notice.
 
-This is what gives a response its freshness. The response MAC covers
-`(type, session_id, req_id)` and nothing that changes over time, so if a
-`req_id` could recur, a response recorded earlier in the same session would
-verify against a later request — the comms processor answering a *"is the
-generator running"* with a genuine, correctly-MAC'd *"no"* from an hour ago.
-Strictly increasing and never reused makes that impossible without a second
-counter on every message.
+This is what binds a response to its request. A response's associated data is
+`(type, session_id, req_id)`, so if a `req_id` could recur, a response recorded
+earlier in the same session would open against a later request — the comms
+processor answering a *"is the generator running"* with a genuine *"no"* from an
+hour ago. Strictly increasing and never reused makes that impossible, and the
+controller's own nonce (P-232) makes every response distinct besides.
 
 **The width is `u32` because a `u16` ran out.** It was two bytes, with a rule
 saying a session that would exhaust the space had to be ended and
@@ -518,24 +526,18 @@ the failure the paragraph above describes.
 Four bytes reach 4.29 billion, which at two seconds a request is more than two
 centuries: the counter outlasts the hardware, so there is nothing to write down
 about what happens when it runs out. Two bytes on every frame is the price, and
-the limits arithmetic above pays it with 102 to spare on the worst frame this
-protocol can build.
+the limits arithmetic above pays for it on every frame this protocol can build.
 
 **P-023** — For an unsolicited `Event` the sender MUST set `req_id = 0`, and it
-enters the MAC preimage as `0x00000000` — four zero bytes, the same width every
-other `req_id` occupies in a preimage, because a field that changes width between
-messages is a field two implementations pad differently.
+enters the associated data as `0x00000000` — four zero bytes, the same width every
+other `req_id` occupies (P-234).
 
 **A receiver MUST refuse an `Event` whose envelope carries a non-zero `req_id`,
-before verifying it.** That half was missing, and it is the half that matters:
-because the preimage carries a literal zero rather than the field, `req_id` is
-the one envelope value on an event that the MAC does *not* cover. Left
-unchecked, the comms processor stamps any number it likes onto an event and the
-tag still verifies — the frame is authentic and one of its fields is not. That
-is P-084's shape exactly, one message over: a preimage that *covers* a field
-without *constraining* it, which P-047 spends four bytes on every other message
-to prevent. It surfaced while the wrapper was being written, which is the
-cheapest place for it to surface.
+before opening it.** The associated data now covers the envelope's own `req_id`,
+so a number stamped on in flight fails the tag anyway; refusing it first keeps an
+event's meaning from depending on a field that says nothing. In v1 the preimage
+carried a literal zero rather than the field, and `req_id` was the one envelope
+value on an event the MAC did not cover.
 
 **P-024** — A client MUST drop a response whose `(session_id, req_id)` matches no
 outstanding request. It MUST NOT re-match a response by inspecting its body.
@@ -543,7 +545,8 @@ outstanding request. It MUST NOT re-match a response by inspecting its body.
 **Before a session exists, a client matches on `req_id` alone**, and MUST take
 the `session_id` the response carries as its **connection handle** — the value it
 puts on every frame from then until `Hello` gives it a session. This covers
-`Discover 0x80`, `Pair 0x8B` and `Hello 0x81`, and any bare `Error` answering one.
+`Discover 0x80`, `Pair 0x8B`, `Enrol 0x93` and `Hello 0x81`, and any bare `Error`
+answering one.
 
 The pair rule cannot be satisfied on message one and never could. A client with
 no session sends `session_id = 0` (P-021); the comms processor overwrites it with
@@ -587,15 +590,15 @@ itself makes a link fault look like a dead controller.
 
 **P-027** — An `Error` answering a frame whose envelope parsed MUST echo that
 frame's `session_id` and `req_id`, and those echoed values are what enter the
-`rsp` MAC preimage. An `Error` about a frame whose envelope did not parse
+associated data of a sealed one (P-234). An `Error` about a frame whose envelope did not parse
 (P-025), or about the link rather than about any request, carries
 `session_id = 0, req_id = 0`.
 
 Echoing was only ever implied, and implied is what this document says it must
-never be. Two sides that disagree about which `req_id` went into the preimage
-compute different MACs for codes 6, 7 and 11 — every code the registry still
-marks MAC'd and live — so a refusal somebody needed to read arrives as a
-verification failure instead. P-024's carve-out is the other half of it: an error
+never be. Two sides that disagree about which `req_id` went into the associated
+data fail to open codes 6, 7 and 11 — every code the registry marks sealed and
+live — so a refusal somebody needed to read arrives as an authentication failure
+instead. P-024's carve-out is the other half of it: an error
 about the link answers no request, and a rule that drops everything unmatched
 drops 259 after a controller reboot — which is the signal to reconnect, and a
 signal nobody receives is not one.
@@ -699,7 +702,7 @@ them. That is why the instance name identifies nothing.
 using it, whether a discovered instance or a remembered `WifiStatus` address,
 and MUST apply P-222 to the answer. mDNS is unauthenticated and any host on the
 LAN can answer for any name or `id`, so a candidate is never an identity; the
-`Hello` proof is what decides. A client MAY pass over a discovered instance
+`Hello` handshake against the pinned controller key is what decides. A client MAY pass over a discovered instance
 whose `id` differs from the `device_id` it kept, and MUST ignore TXT keys it
 does not know. When discovery finds nothing, a client MAY connect to the last address
 `WifiStatus` key 5 reported, on `WS_PORT` with `WS_PATH`.
@@ -734,10 +737,10 @@ subscription success before sending Discover. Refuse the connection if the
 service, characteristics or properties are missing or ambiguous. Do not require
 Bluetooth bonding, site Wi-Fi or internet to discover or use this transport.
 Advertising, connecting and bonding grant no KM43 permission: the STM32 alone
-checks the physical pairing window and Pair proof (P-066, P-068).
+checks the physical pairing window and the pairing handshake (P-066, P-068).
 
 The assembled bytes are exactly one CBOR-encoded KM43 envelope, including its
-body/wrapper and proof or MAC where required. No COBS, CRC, delimiter, length
+sealed body or handshake message where required. No COBS, CRC, delimiter, length
 prefix or BLE-specific opcode is added. `MAX_PAYLOAD` includes the entire
 encoded envelope. Reassembly does not validate CBOR or authenticate a message;
 those checks remain on the ordinary controller/client message path. Link-local
@@ -858,324 +861,452 @@ Everything in this section is fixed by
 [protocol/vectors/v1.json](protocol/vectors/v1.json). If your implementation
 disagrees with a vector, your implementation is wrong.
 
-**P-040** — Every integer entering a MAC or a KDF MUST be encoded **big-endian,
-fixed width, with no padding and no length prefix**. The `|` operator below joins
-fixed-width fields with no separator.
+**P-040** — Every integer entering a MAC, a KDF, a prologue or an associated
+data string MUST be encoded **big-endian, fixed width, with no padding and no
+length prefix**. The `|` operator below joins fixed-width fields with no
+separator. The one little-endian integer in this document is the ChaCha20-Poly1305
+nonce, whose layout Noise fixes (P-232).
 
 **P-041** — `HMAC` means **HMAC-SHA256**. Where 16 bytes are specified it is the
 **leftmost 16 bytes** of the 32-byte output.
 
-**Sixteen bytes is a 128-bit authentication tag, and 128 bits is the security
-target.** It is not a number arrived at by trimming until things fit, and the
-truncation is not a weakening anybody should have to infer from the word
-*truncated*: what it buys is frame size on a link where every byte is budgeted —
-`MAX_PAYLOAD` is 1024, a full `Readings` page spends 880 of it, and the full
-32-byte tag rides on every response, every signed request and every one of eight
-separately-MAC'd copies of each event. Truncating an HMAC to
-its leftmost bytes is the standard construction (RFC 2104 §5, NIST SP 800-107),
-and 128 bits is where this document stops. Anybody tempted to trim further to win
-a few more bytes in a frame is trading the property the whole protocol rests on
-for something the limits arithmetic can be made to give up instead.
+Two tags on this wire are HMACs, and both are 128 bits for the reason the cipher's
+tag is: 128 bits is the security target. The pairing refusal (P-241) and the
+`Hello` admission tag (P-238) are checked before any key agreement, which is the
+whole reason they are HMACs and not Noise messages.
 
 **P-042** — `HKDF` means **HKDF-SHA256** (RFC 5869) with `salt`, `IKM` and `info`
 as **named arguments**. It MUST NOT be implemented as a hash over a
-concatenation; the earlier draft wrote `HKDF(a | b | c)`, which assigns none of
+concatenation; an earlier draft wrote `HKDF(a | b | c)`, which assigns none of
 the three.
 
 **P-043** — Every **domain input** MUST begin with its label, so a value computed
-for one purpose can never verify for another. There are two kinds of domain input
-and the distinction is load-bearing: a **MAC preimage prefix**, and an **HKDF
-`info` argument**. An implementer who reads the table below as nine MAC preimages
-derives keys that are wrong on both sides and identical to nobody — the defect
-P-001 exists to catch, because it is invisible on the wire.
+for one purpose can never verify for another. There are four kinds and the
+distinction is load-bearing: an **HKDF `info` argument**, a **MAC preimage
+prefix**, a **hash prefix** and a **prologue prefix**. An implementer who feeds one kind where
+another belongs derives values that are wrong on both sides and identical to
+nobody, which is the defect P-001 exists to catch because it is invisible on the
+wire.
 
 | Label | Kind | Used for |
 |---|---|---|
-| `km43/v1/pair-key` | HKDF `info` | deriving the pairing key from the printed secret |
-| `km43/v1/client-key` | HKDF `info` | deriving a client's long-term key |
-| `km43/v1/session-key` | HKDF `info` | deriving a session key |
-| `km43/v1/pair-proof` | MAC preimage | the client's proof during pairing |
-| `km43/v1/pair-ack` | MAC preimage | the controller's pairing response |
-| `km43/v1/hello-proof` | MAC preimage | the client's proof during Hello |
-| `km43/v1/req` | MAC preimage | a signed request — one that carries a counter |
-| `km43/v1/wrq` | MAC preimage | a wrapper-authenticated request — read-only, no counter |
-| `km43/v1/rsp` | MAC preimage | a response |
-| `km43/v1/evt` | MAC preimage | an event |
+| `km43/v1/pair-psk` | HKDF `info` | the pre-shared key a pairing handshake mixes in (P-088) |
+| `km43/v1/pair-refusal` | HKDF `info` | the key a pairing refusal is tagged under (P-241) |
+| `km43/v1/admit-key` | HKDF `info` | one enrolment's admission key (P-238) |
+| `km43/v1/pair-refused` | MAC preimage | a pairing refusal (P-241) |
+| `km43/v1/hello-admit` | MAC preimage | a `Hello`'s admission tag (P-238) |
+| `km43/v1/controller-fp` | hash prefix | the controller key's printed fingerprint (P-236) |
+| `km43/v1/prologue` | prologue prefix | both handshakes (P-227) |
 
 Labels are ASCII, no trailing NUL.
 
-### Key derivation
+**P-226** — Key agreement and session encryption are Noise
+([noiseprotocol.org](https://noiseprotocol.org/noise.html), revision 34) with
+**suite 1**: X25519, ChaCha20-Poly1305 and SHA-256. A pairing runs
+`Noise_XXpsk0_25519_ChaChaPoly_SHA256` and a session runs
+`Noise_IK_25519_ChaChaPoly_SHA256`, with the client as initiator in both. Those
+two names are hashed into the first transcript value exactly as Noise defines,
+and no other pattern, cipher or hash is spoken on this wire.
+
+`Pair` and `Hello` each carry the suite number they run. A controller MUST check,
+in this order: that the body decodes (error 1); that the suite is one it
+implements (bare error 19); that the challenge is live (error 14, which consumes
+it). Only then does any handshake work begin. A body refused before the challenge
+check leaves the challenge live. A slot stores the suite it enrolled under, and a `Hello` MUST present
+exactly that suite (P-239). There is one suite. The day there are two, the list a
+controller offers enters the prologue (P-227), so an offer stripped in flight is a
+handshake that fails rather than a quiet downgrade.
+
+The patterns follow from who knows what beforehand. At enrolment the client has
+the label and no key the controller knows, so it sends its new static key inside
+the handshake and the label's pre-shared key authenticates both ends (`XX` with
+`psk0`). Afterwards the client holds the controller's key and the controller
+holds the client's, so one round trip suffices and the client's key travels
+encrypted (`IK`).
+
+**P-228** — Every X25519 operation, on either side, MUST refuse an all-zero
+output and abandon the handshake. A peer that sends a low-order point makes the
+shared value a constant it already knows, so that DH adds nothing to the key it
+is mixed into. At enrolment this is what refuses a small-order client key: the
+`se` of message 3 comes out zero and the slot is never written, where accepting it
+would leave a slot any stranger can open.
+
+### Keys
+
+| Key | Held by | Comes from |
+|---|---|---|
+| controller key `cs`, public half `CS` | the controller | generated at manufacture, permanent (P-235) |
+| DRBG state | the controller | generated at manufacture, ratcheted on every draw (P-237) |
+| `printed_secret` | the label, and the controller | generated at manufacture (P-044) |
+| `pair_psk`, `refusal_key` | anyone holding the label | the printed secret (P-088) |
+| client key `is`, public half `IS` | one client install | the client's CSPRNG, at enrolment |
+| `admit_key` | the controller's slot, and that client | `X25519(is, CS)` (P-238) |
+| handshake and transport keys | both ends of one handshake | Noise, from ephemeral and static DH |
+
+**P-235** — The controller key MUST be generated at manufacture from a CSPRNG,
+MUST stay the same for the life of the unit, and MUST NOT be changed by a factory
+reset. The controller MUST store only the private half and derive `CS` from it
+when it needs it. Neither half of it, nor the DRBG state, may be recorded by the
+manufacturing process; the fingerprint of `CS` is all that leaves the station.
+
+It is the controller's identity, and a client pins it: the owner's phone from the
+label (P-236), an invited phone from the owner's. Rotating it at a reset would
+revoke nothing, because what ends a stolen phone's access is its slot, and it
+would break the one thing the label can still vouch for once the label is on a
+wall.
+
+It is generated at manufacture rather than at first boot because this controller
+has no hardware random number generator, and a key minted from whatever entropy a
+Cortex-M0+ can scrape together at power-on is a key nobody can vouch for.
+
+**P-236** — The controller key's fingerprint is
 
 ```text
-pair_key    = HKDF(salt = device_id,                   16 bytes
-                   ikm  = printed_secret,              32 bytes
-                   info = "km43/v1/pair-key",
-                   L    = 32)
-
-client_key  = HKDF(salt = device_id,                   16 bytes
-                   ikm  = printed_secret,              32 bytes
-                   info = "km43/v1/client-key" | epoch:u32be | client_id:u32be,
-                   L    = 32)
-
-session_key = HKDF(salt = challenge | client_nonce,    16 + 16 bytes
-                   ikm  = client_key,                  32 bytes
-                   info = "km43/v1/session-key" | session_id:u16be,
-                   L    = 32)
+controller_fp = SHA-256("km43/v1/controller-fp" | CS)[0..16]
 ```
 
-**P-085** — `epoch` is a `u32` monotonic counter in FRAM. It starts at 1, MUST be
-incremented on every factory reset, and MUST never be decremented. Every
-`client_key` derived under epoch *n* is unusable at epoch *n+1*.
+and it is printed on the label (P-049). A client pairing from a label MUST compare
+the static key the controller sends in pairing message 2 against it, and MUST
+abandon the pairing without sending message 3 when they differ.
 
-**A factory reset MUST increment `epoch`, persist it, read it back and verify it
-before clearing anything else** — the client table, the counters and the dedup
-table in that order, and only after the read-back agrees. On a failed write or a
-failed read-back the reset MUST NOT proceed, the controller MUST raise a class A
-`concern raised` (`0x0501`) at condition `epoch write failed`, and it MUST refuse
-every `Pair` until the write succeeds.
+That comparison is what makes the label vouch for the controller as well as the
+client. Without it, `XXpsk0` authenticates the controller by the pre-shared key
+alone, and anybody who has photographed the label and has a network position —
+a compromised comms processor, a host on the site's Wi-Fi answering mDNS, a
+phone in Bluetooth range — answers the owner's `Discover` with a key of its own,
+completes the handshake with the owner's phone, and pairs itself into the real
+controller in the same window. The owner's phone then pins the attacker's key, and
+every session the owner opens for the life of that enrolment runs through a relay
+that reads and rewrites it. Sixteen bytes on a label close that, and they are
+public: a fingerprint grants nothing.
 
-The order is the load-bearing half. A power cut between the two steps must leave
-an epoch that is too high, which only over-invalidates — the worst case is a
-phone that has to be paired again. The reverse order leaves a cleared table at a
-stale epoch, and then the next enrolment mints `client_id 1` under the same epoch
-the stolen phone holds a key for. That is the exact failure P-085 exists to
-prevent, arriving through the write that implements it.
+**P-237** — Every random value the controller uses — each ephemeral key and each
+challenge — MUST come from a deterministic random bit generator whose state:
 
-Refusing `Pair` until it succeeds is the same argument as P-079's, one level up:
-a controller that cannot invalidate key material must not mint new material into
-the slots it could not invalidate. This requirement got the treatment P-079 gave
-the counter write because the epoch write is the one FRAM write the entire
-revocation story rests on, and it was the one with nothing said about it failing.
+- is generated at manufacture from a CSPRNG and is never derived from, or
+  recoverable from, `printed_secret`, `device_id` or anything the controller
+  transmits;
+- is advanced irreversibly on every draw, and the advanced state is persisted and
+  read back **before** the draw is used;
+- is never re-initialised: not by a factory reset, not by recovering a corrupt
+  store, not by a firmware update.
 
-**This is the only thing on this design that can invalidate key material, and
-without it a factory reset invalidates nothing.** `device_id` is etched and
-`printed_secret` is on a label that cannot be reprinted into a unit already on a
-wall — so before this counter existed, all three KDF inputs were immutable for the
-life of the product. Press the button, reset, re-pair a new phone, it is issued
-`client_id 1`, and **the phone that was stolen last week already holds
-`client_id 1`'s key.** The documented remedy for a compromised client removed no
-access at all, and a resold unit left its previous owner with a working key for
-somebody else's site. LINK.md's L-135 already clears the Wi-Fi passphrase on a factory
-reset for exactly that scenario; the reasoning simply had not been applied to key
-material.
+When the state cannot be read back intact, the controller MUST refuse every `Pair`
+and `Hello`, and MUST raise a class A `concern raised` (`0x0501`) at condition
+`entropy unavailable`. The controller MAY mix further bytes into the state — its
+own ADC noise, or bytes the comms processor offers — only through the same
+irreversible step, never by replacing the state.
 
-**P-086** — `client_id` MUST be allocated as the **lowest free slot index in the
-client table, counting from 1**. This is a KDF input, so it is frozen as hard as
-the formula around it, and leaving it to the implementer means two firmwares mint
-different keys from the same label. Slot reuse within an epoch is what P-085
-exists to make safe.
+The part has no random number generator, so this is the one. v1 minted challenges
+from the printed secret, which was harmless while the printed secret was every
+key anyway; carried over, it would have made every controller ephemeral a value a
+photographed label computes. The three rules each close one hole. Derive the state
+from anything public and a label holder predicts it. Use a draw before its
+successor is durable and a reset at the wrong moment draws it again: the same
+challenge, the same ephemeral, and a recorded `Hello` accepted a second time
+under the same session keys. Re-initialise it and every unit returns to the
+sequence it started with. Bytes from the comms processor may be mixed in because a
+hash of secret state and known input is still secret; they may not replace the
+state because then the comms processor chooses it.
 
-**P-087** — `Discover 0x80` MUST carry the current `epoch` (key 8), so a client
-whose key no longer derives is told why. Without it the symptom is an
-unexplainable `bad_proof` on a phone that worked yesterday.
-
-**P-088** — `printed_secret` MUST NOT be used directly as an HMAC key. Both
-pairing proofs are computed under `pair_key`.
-
-It is a master secret that can never be rotated, and the comms processor observes
-every pairing exchange — using it raw would hand the one component this document
-declares hostile an HMAC oracle under the one secret the whole device depends on.
-RFC 5869 §3.1 and NIST SP 800-108 both say the same thing: derive a
-purpose-specific key, do not MAC under the master. One extra HKDF at enrolment
-buys it, and it is free only until the first unit is paired.
-
-**P-222** — A client that keeps its enrolment across a restart MUST keep only
-its `client_key` with the `device_id`, `epoch` and `client_id` it was derived
-under, and MUST NOT keep `printed_secret` once `Pair` succeeds. Before sending
-`Hello` under a kept key it MUST compare the kept `device_id` and `epoch` with
-the `Discover 0x80` it has just received, and on either differing it MUST NOT
-send `Hello`. A differing `device_id` is another controller: the client moves
-on to its next candidate address (P-225) and pairs only if a person chose this
-controller. A differing `epoch` is the same controller reset, and the client
-MUST pair again.
-
-Without somewhere to keep the key, a relaunched app can only pair again, and
-that needs a person at the controller (P-066). The shortcut is to keep the
-label's secret and re-derive, and that is the failure this rule names: the
-printed secret derives a key for every slot at every epoch, so a phone holding it
-survives the factory reset P-085 relies on to lock it out. The kept key dies with
-its epoch. `Discover` carries no MAC (P-054), so the comparison guards against
-the wrong controller and a reset, not against a relay; the `Hello` proof is what
-the controller checks.
+Advancing before use also buys forward secrecy against a later capture of the
+controller. A state read out with a probe yields every draw after it and none
+before, so a session recorded before the capture stays sealed. A state that did
+not advance would give up every session the unit ever held.
 
 **P-044** — `printed_secret` MUST be exactly **32 bytes of entropy**, carried in
 the QR code as 64 lowercase hexadecimal characters. The KDF consumes the
 **decoded 32 bytes**, never the printed text. A six-digit PIN is brute-forceable
-offline from a single observed proof and MUST NOT be used.
+offline from a single recorded pairing and MUST NOT be used.
 
-**P-045** — No key is ever transmitted. What crosses the link is a proof of
-knowledge, which an observer learns nothing from.
+**P-088** — `printed_secret` MUST derive exactly two keys and MUST NOT be used
+directly as a key:
+
+```text
+pair_psk    = HKDF(salt = device_id,                   16 bytes
+                   ikm  = printed_secret,              32 bytes
+                   info = "km43/v1/pair-psk",
+                   L    = 32)
+
+refusal_key = HKDF(salt = device_id,
+                   ikm  = printed_secret,
+                   info = "km43/v1/pair-refusal",
+                   L    = 32)
+```
+
+Both are used only by a pairing (P-066, P-241). No client key, no session key,
+no controller key and no random value is derived from the label. In v1 the label
+derived every client's key at every epoch, so whoever photographed it once held
+every slot for the life of the unit, across factory resets. It now authenticates
+one thing: a pairing attempt made while somebody has opened the window at the
+panel.
+
+**P-045** — No private key and no shared secret is ever transmitted. What crosses
+the link is ephemeral public keys, static public keys encrypted inside a
+handshake, and ciphertext.
+
+**P-085** — `epoch` is a `u32` monotonic counter in FRAM. It starts at 1, MUST be
+incremented on every factory reset, and MUST never be decremented. Every slot
+records the epoch it was written in, and a slot from an earlier epoch is free
+(P-239).
+
+**A factory reset MUST increment `epoch`, persist it, read it back and verify it
+before clearing anything else** — the client table, the counters and the dedup
+table in that order, and only after the read-back agrees. The same reset MUST
+abandon every handshake in progress and unbind every session. On a failed write
+or a failed read-back the reset MUST NOT proceed, the controller MUST raise a
+class A `concern raised` (`0x0501`) at condition `epoch write failed`, and it MUST
+refuse every `Pair` until the write succeeds.
+
+The epoch write is the reset's single commit. A power cut after it leaves slots
+that still hold their old keys, and those keys are dead anyway, because a slot
+from an earlier epoch is free; clearing them afterwards is housekeeping. A power
+cut before it leaves the unit exactly as it was. Freeing eight slots one by one
+had no such point: cut the power after the second and the stolen phone in slot
+five still opened a session, and nothing recorded that a reset had been started.
+
+The epoch is also the ownership generation the cloud keys a site's history by: a
+reset starts a new one, and a new first pairing becomes its owner.
+
+**P-086** — `client_id` MUST be allocated as the **lowest free slot index in the
+client table, counting from 1**, whenever P-240 allocates a free slot. It is the
+name a client, the log and the dedup table use for an enrolment, together with
+the epoch and the slot's generation (P-239).
+
+**P-087** — `Discover 0x80` MUST carry the current `epoch` (key 8). It enters the
+prologue (P-227), and a client whose enrolment is from an earlier epoch learns
+from it why its `Hello` failed.
+
+**P-222** — A client that keeps its enrolment across a restart MUST keep its own
+static key `is`, the controller key `CS` it pinned, the `device_id` and the
+suite, and MAY keep the `client_id`, generation and epoch it was told. It MUST NOT
+keep `printed_secret`, `pair_psk` or `refusal_key` once the enrolment is
+confirmed, and it MUST NOT keep any transport key or nonce across a restart.
+
+Before sending `Hello` it MUST compare the kept `device_id` with the one the
+`Discover 0x80` it has just received carries; on a difference it is talking to
+another controller, and it moves on to its next candidate address (P-225) and pairs
+only if a person chose this controller. It MUST run `Hello` against the kept `CS`,
+never against anything a `Discover` says. A `Discover` whose `epoch` differs from
+the kept one is a reason to expect the `Hello` to fail, not a reason to discard the
+enrolment: `Discover` is unauthenticated (P-054), and a comms processor that
+could make a phone forget its key by rewriting one field would be able to send its
+owner back to the panel on demand. A client MAY offer to pair again after a
+`Hello` is refused with error 12, and a client that re-pairs a controller it holds
+an enrolment for MUST pair under its kept key, so P-240's first step gives it its
+own slot back rather than a new one: error 12 is unauthenticated, and a relay that
+could make phones re-pair under fresh keys would fill the table with slots nobody
+holds.
+
+A kept transport key restored after a restart would seal its next message under a
+nonce it has already used, which is the one mistake an AEAD does not survive.
 
 **P-049** — The QR code payload MUST be exactly
 
 ```text
-km43:1:<device_id>:<printed_secret>
+km43:2:<device_id>:<printed_secret>:<controller_fp>
 ```
 
-— the literal ASCII `km43`, a colon, the payload version `1`, a colon, the
-`device_id` as the 32 lowercase hexadecimal characters of P-038, a colon, and the
-`printed_secret` as the 64 lowercase hexadecimal characters of P-044. That is
-`4 + 1 + 1 + 1 + 32 + 1 + 64` = **104** characters: no whitespace, no URI escaping, no trailing newline, nothing else.
+— the literal ASCII `km43`, a colon, the payload version `2`, a colon, the
+`device_id` as the 32 lowercase hexadecimal characters of P-038, a colon, the
+`printed_secret` as the 64 lowercase hexadecimal characters of P-044, a colon, and
+the `controller_fp` of P-236 as 32 lowercase hexadecimal characters. That is
+`4 + 1 + 1 + 1 + 32 + 1 + 64 + 1 + 32` = **137** characters: no whitespace, no URI
+escaping, no trailing newline, nothing else.
 
 A scanner MUST refuse a payload that does not match that shape exactly, and MUST
 NOT pair from a partially parsed one — no uppercase hex, no tolerance for
-surrounding whitespace, and never a bare hex string for either field. The secret
-is meaningless without the `device_id` that salts its KDF, and a scanner that
-will take a fragment is a scanner that can be fed one.
+surrounding whitespace, never a bare hex string for any field, and never a
+version-1 payload, which has no fingerprint to check. The secret is meaningless
+without the `device_id` that salts its KDF, and the fingerprint is what stops the
+label vouching for whoever answers first.
 
-It is a bare string rather than a `km43://` URI because a scheme is an
-app-link registration and a claim on the operating system, and this is the one
-artefact in the whole protocol that is fixed at print time: a label cannot be
-reprinted into a unit already on a wall. Two fields were already specified
-character by character with nothing saying what carried them, which reads as
-settled and is not.
+It is a bare string rather than a `km43://` URI because a scheme is an app-link
+registration and a claim on the operating system, and this is the one artefact in
+the whole protocol that is fixed at print time.
 
-### Message authentication
+### The prologue
+
+**P-227** — Both handshakes use this prologue:
 
 ```text
-req mac = HMAC(session_key, "km43/v1/req" | type:u8 | session_id:u16be
-                          | req_id:u32be | client_id:u32be | counter:u64be
-                          | operation)[0..16]
-
-wrq mac = HMAC(session_key, "km43/v1/wrq" | type:u8 | session_id:u16be
-                          | req_id:u32be | payload)[0..16]
-
-rsp mac = HMAC(session_key, "km43/v1/rsp" | type:u8 | session_id:u16be
-                          | req_id:u32be | payload)[0..16]
-
-evt mac = HMAC(session_key, "km43/v1/evt" | type:u8 | session_id:u16be
-                          | 0x00000000 | payload)[0..16]
+prologue = "km43/v1/prologue" | suite:u8 | protocol_major:u8 | protocol_minor:u8
+         | device_id[16] | epoch:u32be | challenge[16] | handle:u16be
 ```
 
-**P-046** — `type` MUST be inside every preimage, so a signed `SetConfig` cannot
-be replayed as a signed `Command`.
+The client takes `protocol_major`, `protocol_minor`, `device_id` and `epoch` from
+the most recent `Discover 0x80` on this connection, `challenge` from whichever
+live challenge it is presenting — `Discover` key 7, or `Enrol 0x93` key 4 after an
+enrolment on this connection — and `handle` from the `session_id` its pre-session
+responses carry (P-024). The controller builds it from its own values for this
+connection. `suite` is the one the message carries.
 
-**P-047** — `req_id` MUST be inside both the request and the response preimage.
+`Discover` is unauthenticated and everything a client decides from it is here, so
+a `Discover` rewritten in flight is a handshake whose first tag fails. That is the
+negotiation happening inside the authenticated transcript: a relay that lowers the
+advertised minor, swaps the `device_id` or replays an old challenge changes the
+transcript both ends hash, and nothing it did survives to the session. The
+challenge and the handle make every first message good for one connection, once:
+a message 1 recorded on one connection fails on every other one and on the same
+one a second time.
+
+### Session encryption
+
+A cloud client is an enrolled client like any other: its sessions are sealed to
+it, and it reads what it is sent. That is a decision about the product rather than
+the cipher — an alerting service has to read a reading to raise an alarm about it
+— and what sealing buys is that nothing between the controller and a client, the
+comms processor and every relay included, reads one.
+
+**P-230** — When a handshake completes, `Split()` gives two keys: the first
+seals what the client sends, the second what the controller sends. Neither side
+may persist either key or the nonces used under it, and a session ends when either
+side loses them. A controller reboot, a client restart and a new `Hello` all start
+from new ephemeral keys, which is what makes a nonce under a key unrepeatable
+without anybody having to store one.
+
+There is no rekey. A session that has run long enough to want one is replaced by
+a new `Hello`, which gives fresh ephemeral keys and so recovers from a key
+compromise where Noise's `Rekey()` would not.
+
+**P-231** — Every message after a handshake, except a bare `Error` (P-142), MUST
+carry exactly this body:
+
+```text
+sealed body of a request
+  1: sealed       bstr     ciphertext | tag16; the nonce is the envelope's req_id
+
+sealed body of a response or an event
+  1: sealed       bstr     ciphertext | tag16
+  2: nonce        u64      the controller's nonce in this direction
+```
+
+`sealed` is the ChaCha20-Poly1305 encryption of the inner body under the
+direction's key, the nonce below and the associated data of P-234, with the
+16-byte tag appended. A body carrying any other key, or missing one, is error 1,
+and **P-013 does not apply to it**: a key added beside the ciphertext would be
+meaningful and outside the tag, which is the classic shape of the bug.
+
+**P-232** — A nonce MUST be used once per key, and the sealing side, never its
+caller, picks it:
+
+- A request's nonce is its `req_id` (P-022). The client's sealing state issues
+  `req_id` values itself, starting at 1 and rising by one per request, so a
+  `req_id` that was never sealed cannot be put on the wire and one that was cannot
+  be put there twice.
+- The controller's nonce starts at 0 and rises by one per message it seals,
+  response or event alike.
+- The ChaCha20-Poly1305 nonce is four zero bytes followed by the nonce as a
+  little-endian `u64`, which is Noise's layout.
+- A session MUST end before a `req_id` would pass `2^32 − 1` or a controller nonce
+  would reach `2^64 − 1`.
+
+A nonce used twice under one key gives away the XOR of two plaintexts and the
+one-time Poly1305 key, and with that key anybody on the path forges every later
+message of the session. So the counter lives in the state that seals, where a
+caller cannot supply one. Two sources of a `req_id` — the application picking
+one, the cipher picking another — was the version of this that could go wrong.
+
+The request limit costs nothing: at one request every two seconds it is more than
+two centuries.
+
+**P-233** — A receiver MUST verify the tag before reading anything inside, and
+MUST discard the message on failure (P-051). The client keeps, per session, a
+record of the last `MAX_REPLAY_WINDOW` controller nonces ending at the highest it
+has accepted; a message whose nonce is older than that, or already accepted, MUST
+be discarded before its tag is checked, unanswered and uncounted. So MUST one
+carrying the nonce Noise reserves, `2^64 − 1`, which no honest sender uses (P-232):
+answering it would let anybody end a session without a valid frame. The window moves only once a tag has verified. The controller's
+replay check for requests is P-022's, on the `req_id` that is the nonce.
+
+A forged nonce that moved the window would push the honest messages behind it out
+of range, and the attacker would not even have needed a valid tag. A replay that
+counted as a failure would let a relay shed a client's connection using that
+client's own frames. P-022 has both arguments for requests; this is the same pair
+for the other direction.
+
+**P-234** — The associated data of every sealed message is
+
+```text
+ad = type:u8 | session_id:u16be | req_id:u32be
+```
+
+— the three envelope scalars, which are exactly what the comms processor routes
+on. An element a later version appends to the envelope (P-028) MUST enter the
+associated data.
+
+**P-046** — `type` MUST be inside every associated data string, so a sealed
+`SetConfig` cannot be replayed as a sealed `Command`. The keys differ by direction
+already; `type` is what separates two messages in one direction.
+
+**P-047** — `req_id` MUST be inside the associated data in both directions.
 `(session_id, req_id)` is exactly what the untrusted comms processor correlates
-on; without it in the request MAC, it can move a validly-MAC'd answer onto the
-wrong outstanding request.
+on; without it in the response's associated data, it can move a genuine answer
+onto the wrong outstanding request.
 
-**P-048** — `operation` and `payload` are **byte strings carried on the wire**,
-and the MAC covers those literal bytes. A verifier MUST NOT re-encode before
-verifying.
+**P-048** — `operation` is a **byte string carried inside the sealed inner
+body**, and a receiver decodes it only after the body has opened. The sealed
+bytes are what the tag covers; nothing is re-encoded before it is checked.
 
 ---
 
-## Authenticated bodies
+## Sealed bodies
 
-**P-050** — Every message listed in P-052 has a body that is exactly this
-wrapper:
+**P-050** — Every message listed in P-052 wears the sealed body of P-231, and
+nothing outside `sealed` is interpreted before the tag verifies: a `nonce` is
+checked against the window (P-233) and used as the nonce, and that is all. The
+handshake messages carry their own Noise messages instead (P-057).
 
-```text
-1: payload   bstr    the CBOR-encoded inner body
-2: mac       bstr16
-```
-
-The wrapper MUST contain **exactly** keys 1 and 2. Any other key in it is error 1,
-and **P-013 does not apply to the wrapper** — the one structure in this document
-where skip-unknown-keys is switched off. P-051 switches it off for key 2 of this
-same wrapper, which is the other half of the same rule rather than a second
-place.
-
-That is a rule about the future rather than about today. The MAC covers `payload`
-and nothing else, so a key 3 added to the wrapper in v2 would be semantically
-meaningful and structurally **outside the authentication**, and P-013 would have
-every v1 decoder skip it politely on the way past. It is the classic shape of the
-bug: the field added later lands on the wrong side of the MAC, and nobody notices
-because skip-unknown-keys is correct everywhere else. Everything that needs to
-grow, grows inside `payload`, which is authenticated.
-
-`Hello 0x01` and `Pair 0x0B`/`0x8B` are authenticated by the proof formulas in
-their own sections and are deliberately **not** this wrapper: what verifies them
-comes from inside the body, so the wrapper's verify-then-decode ordering is not
-available. P-057 says what they do instead.
-
-**P-051** — For every message in P-052 a receiver MUST verify the MAC **before**
-decoding `payload`, and MUST discard the message on failure. P-013's
-skip-unknown-keys rule MUST NOT be applied to key 2: a body arriving without a
-MAC where one is required is discarded, never accepted as a message with an
-unknown key missing.
+**P-051** — For every message in P-052 a receiver MUST verify the tag **before**
+decoding the inner body, and MUST discard the message on failure. A body arriving
+without `sealed` where one is required is discarded, never accepted as a message
+with a key missing.
 
 Discarding is about not acting, not about staying silent. A receiver MAY answer a
 bare `Error` code 10 carrying the `session_id` and `req_id` from the envelope it
 received, at most once per offending frame; a client treats that under P-055 and
-concludes nothing about the site from it. The controller counts MAC failures
-**per connection** and sheds with `CloseConnection` reason 3
+concludes nothing about the site from it. The controller counts authentication
+failures **per connection** and sheds with `CloseConnection` reason 3
 ([LINK.md](protocol/LINK.md)) at `MAX_AUTH_FAILURES` — 8 inside 60 seconds,
 measured on P-004's tick. The count belongs to the connection row rather than to
 the session, so a `Goodbye` and a fresh `Hello` does not clear it: a threshold
-the peer resets by handshaking again is not a threshold. The same applies to a
-signed request whose MAC fails under P-080 and to a `Hello` proof that fails
-under P-057 — one condition, one code, rather than each implementer picking a
-number. A request P-022 refuses is not a MAC failure and is neither counted nor
-answered: its MAC verified, and counting it would let a relay shed a client's
-connection with frames that client sent.
+the peer resets by handshaking again is not a threshold.
+
+Each of these counts once: a sealed body whose tag fails; a pairing message 1 or
+3 that does not open (P-066); a `Hello` whose admission tag matches no slot, whose
+static key is not the slot's, or whose payload does not open (P-238). A request
+P-022 refuses is not a failure and is neither counted nor answered: it is refused
+before its tag is checked, and counting it would let a relay shed a client's
+connection by replaying that client's own frames. Neither is a pairing refusal (P-241): it is answered only
+after the label's key opened message 1, so the peer has proved it is entitled to
+ask.
 
 The number is named for the reason every other cap here is named. It is not what
-makes a forgery hard — 128 bits of truncated HMAC-SHA256 is what makes a forgery
-hard — it is what bounds the CPU a peer can spend on MACs it cannot pass, and it
-is what turns *the controller sheds a client that keeps failing* into something
-conformance item 7 can prove rather than something each firmware picks at a
-bench: 3 on one, 1000 on the other, and the site that got the second one never
-sheds anybody.
+makes a forgery hard — a 128-bit tag is what makes a forgery hard — it is what
+bounds the work a peer can make the controller do for messages it cannot pass,
+and it is what makes *the controller sheds a client that keeps failing* something
+conformance item 7 can prove rather than something each firmware picks at a bench.
 
-**`Pair` is the exception, and P-141 is why.** A `Pair 0x0B` whose proof fails
-MUST be answered with `Pair 0x8B` outcome 3 `bad_proof`, `client_id = 0`,
-carrying the P-064 MAC — never with a bare error 10. Outcome 3 exists for exactly
-this condition, and P-141 settles which of the two is sent wherever both could
-answer: the outcome. P-066's argument applies here unchanged and is the reason —
-a refusal the comms processor can forge is a refusal that sends somebody back to
-the panel. A forged error 10 tells a person standing at the device that they
-mis-scanned a label they scanned correctly, and the only cure they can think of
-is pressing the button again.
+**P-052** — The following wear the sealed body under the session's keys:
 
-**The exception is about which message answers, not about the count.** A `Pair
-0x0B` answered outcome 3 `bad_proof` MUST count against `MAX_AUTH_FAILURES` for
-that connection: it is the only path on which an unproven peer makes the
-controller compute an HMAC, which is precisely the CPU the counter bounds.
-Outcome 2 `window_closed` and outcome 4 `table_full` MUST NOT count, and for two
-different reasons. `window_closed` is reached **without verifying anything** —
-the window MUST be checked before the proof, so refusing costs the controller
-nothing, and counting it would let anybody close a technician's connection by
-sending `Pair` at a controller with no window open. `table_full` is reached only
-after a proof that **passed**: P-078 puts the reclaim match behind the proof, so
-there is no earlier point at which a full table is knowable, and a peer that
-gets there has proved it is entitled to ask.
-
-Both halves matter and only one is obvious. Without the first, `Pair` is an
-unmetered HMAC oracle sitting behind the one message type that has to work while
-somebody is standing at the panel with a phone. Without the second, the shed
-threshold fires on refusals the controller reached without doing any work.
-
-**P-052** — The following are authenticated by the wrapper above under
-`session_key`, each with the label its direction requires:
-
-| Messages | Label |
+| Messages | Sealed by |
 |---|---|
-| Requests `0x03`, `0x05`, `0x06`, `0x0C`, `0x0D`, `0x0E`, `0x0F`, `0x10`, `0x11`, `0x12` | `km43/v1/wrq` |
-| Responses `0x81`, `0x83`, `0x85`, `0x86`, `0x87`, `0x88`, `0x89`, `0x8A`, `0x8C`, `0x8D`, `0x8E`, `0x8F`, `0x90`, `0x91`, `0x92`, and `0xFF` in its wrapped form (P-142) | `km43/v1/rsp` |
-| Event `0x04` | `km43/v1/evt` |
+| Requests `0x03`, `0x05`, `0x06`, `0x07`, `0x08`, `0x09`, `0x0A`, `0x0C`, `0x0D`, `0x0E`, `0x0F`, `0x10`, `0x11`, `0x12` | the client |
+| Responses `0x83`, `0x85`, `0x86`, `0x87`, `0x88`, `0x89`, `0x8A`, `0x8C`, `0x8D`, `0x8E`, `0x8F`, `0x90`, `0x91`, `0x92`, and `0xFF` in its sealed form (P-142) | the controller |
+| Event `0x04` | the controller |
+| `Enrol 0x93` | the controller, under the keys of the pairing that just completed (P-064) |
 
-The read-only requests need their own label because they carry no counter and so
-cannot use the signed-request preimage. Without one they would have no preimage
-at all, and every request type in the first row could not be authenticated.
+Every other message is `Discover` or a handshake message, and P-054 says what
+authenticates each.
 
-**P-053** — Signed requests (`0x07`, `0x08`, `0x09`, `0x0A`) use the signed body
-in the next section instead, because they carry a counter the wrapper has no room
-for.
+**P-053** — Signed requests (`0x07`, `0x08`, `0x09`, `0x0A`) are sealed like every
+other request, and their inner body is the signed body of the section below,
+because they carry a counter.
 
 **P-054** — `0x00`/`0x80` (Discover) are **unauthenticated**: no key exists yet.
-`0x0B`/`0x8B` (Pair) are authenticated under **`pair_key`**, which P-088 derives
-from `printed_secret` with the label `km43/v1/pair-key`, rather than under a
-session key — there is none yet either.
-
-This used to say the printed secret was keyed directly, with no derived pairing
-key in between, which is the exact thing P-088 forbids and says why: the comms
-processor watches every pairing exchange, and MACing under the master secret
-hands the one component this document declares hostile an HMAC oracle under the
-one secret the whole device depends on. Two requirements one page apart said
-opposite things about which key signs the same message, and an implementer would
-have picked whichever they read second.
+`Pair 0x0B`/`0x8B` and `Enrol 0x13` carry the pairing handshake, and `Hello
+0x01`/`0x81` the session handshake; each is authenticated by the Noise message
+it carries, and `Pair 0x8B` by its refusal tag when it refuses (P-241).
 
 **P-055** — A client MUST NOT render an unauthenticated message as a statement
 about the site. From an unauthenticated `Error` a client may retry or reconnect,
@@ -1184,8 +1315,7 @@ and may conclude nothing else.
 **P-056** — A client MUST hold a mark meaning **the lowest `seq` it will still
 accept**, and MUST reject an unsolicited `Event` (`0x04`) whose `seq` is below
 it. On accepting a `SubscribeAck` the mark is set to `accepted_from_seq`; on
-accepting an event it is set to that event's `seq + 1`. That is what stops a
-replay inside a session.
+accepting an event it is set to that event's `seq + 1`.
 
 Written as *not greater than the highest accepted*, with the mark reset to
 `accepted_from_seq`, the rule discarded the first replayed event of every
@@ -1193,27 +1323,30 @@ subscription: `accepted_from_seq` names a position that is delivered (P-029), an
 the record at exactly that position is not greater than the mark. One record per
 subscription, always the oldest one the client asked for, and on a stream that is
 quiet for eleven months of the year that record is as likely as not the alarm
-somebody subscribed to find. Phrasing the mark as a floor rather than as a
-high-water line makes both cases the same sentence.
+somebody subscribed to find.
 
 Without the reset on `SubscribeAck`, a second `Subscribe` from an earlier
 `from_seq` delivers events the client is then obliged to reject one by one, and
 the catch-up P-094 exists to guarantee does nothing at all.
 
 `LogEntry` values inside a `LogPage` are outside this rule entirely. They are
-records the client asked for, by `req_id`, under a response MAC bound to that
-request — going backwards is the whole point of `ReadLog`, and a rule written for
-the live stream must not reach the catch-up path it exists alongside.
+records the client asked for, by `req_id`, in a response bound to that request —
+going backwards is the whole point of `ReadLog`.
 
-**P-057** — `Hello 0x01` and `Pair 0x0B` cannot be checked before their bodies
-are read: `Hello`'s key comes from a `client_id` inside the body, and `Pair`'s
-preimage covers `client_kind` and `label`, which are inside it too. So the order
-is fixed here rather than left to P-051: decode the body under `MAX_PAYLOAD`,
-`MAX_STRING`, `MAX_DEPTH` and P-015; take the fields the proof needs; verify the
-proof; and only then act on anything that was decoded. A decode failure is error
-1 and an unknown `client_id` is error 12, and neither does any further work. With
-P-072 this is the second place a value is used before it is authenticated, and
-conformance items 4 and 5 are what stand behind it.
+**P-057** — A handshake message is read in the order its pattern writes it, and
+nothing it carries is acted on before the step that authenticates it:
+
+- `Pair 0x0B`: the suite, then message 1, which opens only under `pair_psk`; only
+  then its payload.
+- `Enrol 0x13`: message 3, which opens only for the peer that holds the static key
+  inside it; only then is a slot written.
+- `Hello 0x01`: the suite, then the admission tag (P-238), which selects a slot;
+  then `es` and the client key, which must be that slot's; then `ss`, which is
+  what proves the sender holds it; only then the payload.
+
+The client key read out of a `Hello` before `ss` is a claim, not a proof: anybody
+can encrypt any public key under `es`. It selects nothing and licenses nothing;
+the admission tag already selected the slot, and the key is only compared with it.
 
 ---
 
@@ -1237,14 +1370,18 @@ Discover  0x80          unauthenticated
   6: pairing_open     bool     true while a physical act at the controller has
                               opened a window (P-066)
   7: challenge        bstr16   fresh per connection, from the controller
-  8: epoch            u32      provisioning epoch; keys derived under an older
-                              one no longer verify (P-085)
+  8: epoch            u32      the ownership generation; a slot written in an
+                              earlier one is free (P-085)
 ```
 
-Everything else — snapshot, log, configuration, firmware state, diagnostics —
-requires an authenticated session. Configuration alone would otherwise leak
-occupancy, generator activity, energy use and network settings to anyone within
-BLE range.
+Everything else — readings, log, configuration, firmware state, diagnostics —
+requires a session. Configuration alone would otherwise leak occupancy, generator
+activity, energy use and network settings to anyone within BLE range.
+
+The controller key is not here. A client that has one pinned uses that one, and a
+client pairing from a label checks the one the handshake proves against the
+label's fingerprint (P-236); a key in an unauthenticated message would only be a
+field for somebody to rewrite.
 
 **P-060** — The controller MUST attempt to mint a **fresh challenge per connection**,
 using the connection handle from [LINK.md](protocol/LINK.md) L-060, and MUST hold
@@ -1257,330 +1394,336 @@ consumed, it expired at 120 seconds, or initial minting failed under L-070 —
 the controller MUST discard any expired challenge and attempt to mint another
 for that handle. If minting fails, the connection holds no challenge and the
 controller MUST send the refusal below. At most one challenge exists per
-connection at any moment; only a live challenge may be returned. Handing back a challenge that is already dead
-sends a client off to compute a proof that cannot verify, and error 14 is the
-only way it finds out.
+connection at any moment; only a live challenge may be returned. Handing back a
+challenge that is already dead sends a client off to build a handshake that cannot
+succeed, and error 14 is the only way it finds out.
 
 If the controller cannot supply a valid challenge, it MUST refuse `Discover`
 with error 18 `challenge unavailable`, using the error shape P-142 requires
 and echoing the request under P-027. This includes exhausted challenge storage,
-a failed challenge generator, and missing provisioning material needed to
-produce a valid response. It MUST NOT send a placeholder or expired challenge,
-or evict another connection's challenge. Error 18 is readable bare; under
-P-055 and P-140 it permits retrying or reconnecting, never a conclusion about
-the site or a guarantee that the next attempt will succeed. Error 7 remains
-MAC-required and MUST NOT be used for this refusal.
+a random bit generator that cannot be read back (P-237), and missing provisioning
+material needed to produce a valid response. It MUST NOT send a placeholder or
+expired challenge, or evict another connection's challenge. Error 18 is readable
+bare; under P-055 and P-140 it permits retrying or reconnecting, never a
+conclusion about the site or a guarantee that the next attempt will succeed.
+Error 7 remains sealed-only and MUST NOT be used for this refusal.
 
-A bare `busy` is discarded by a conforming client, leaving it to time out.
-Giving this refusal its own code lets the client read it before a session exists
-without allowing a forged bare `busy` to stand in for an authenticated refusal
-of an in-session request.
-
-**P-061** — A challenge MUST be **single-use**: consumed by the first `Hello` or
-`Pair` that presents it. A second use is error 14.
+**P-061** — A challenge MUST be **single-use**: consumed by the first `Pair` or
+`Hello` that presents it, whether or not the handshake succeeds. A second use is
+error 14.
 
 Consuming one leaves the connection holding none, and something has to replace
 it or a browser would have to drop its socket in the middle of enrolment. Two
-things do: P-058 hands the replacement back inside the `Pair` response, which is
-what makes the flow with somebody standing at the panel `Discover`, `Pair`,
+things do: P-058 hands the replacement back inside `Enrol 0x93`, which is what
+makes the flow with somebody standing at the panel `Discover`, `Pair`, `Enrol`,
 `Hello` on one transport; and P-060 mints one on the next `Discover` for every
-other case, a `Hello` that consumed one, a challenge that expired, a client that
-ignored key 4.
+other case.
 
 **P-062** — A challenge MUST expire 120 seconds after it is minted, and MUST be
 discarded when its connection drops. Error 14 tells the client to reconnect and
 retry. Exactly two conditions produce it and no others: a challenge presented
 after it expired or after its connection dropped, and a challenge presented a
-second time (P-061). A client cannot tell them apart and does not need to — both
-mean *the thing you proved against is gone, go back to `Discover` for a live
-one*, which is why they share a code rather than costing the registry two.
+second time (P-061).
 
-**P-063** — A challenge MUST come from a CSPRNG. A predictable challenge makes
-the session key predictable.
+**P-063** — A challenge MUST be a draw from the controller's random bit generator
+(P-237). It is in every prologue, so a challenge that repeats is a handshake
+message 1 that can be replayed.
 
-### Pair — `0x0B` / `0x8B`
+### Pair — `0x0B` / `0x8B`, and Enrol — `0x13` / `0x93`
 
-A client is enrolled once, in person, and derives a key it is never sent.
+A client is enrolled in person, with the label, and leaves with a key pair it made
+itself and a controller key it has checked against the label.
 
 ```text
 Pair  0x0B
-  1: client_kind      u8       see REGISTRY
-  2: label            text     ≤ MAX_LABEL; what a person sees in the client list
-  3: proof            bstr16
-  4: client_nonce     bstr16   fresh per attempt, from the client's CSPRNG
+  1: suite        u8       see REGISTRY
+  2: handshake    bstr     Noise message 1, -> psk, e, carrying PairOffer
 
-proof = HMAC(pair_key, "km43/v1/pair-proof" | device_id | challenge
-                     | client_nonce | client_kind:u8 | label)[0..16]
+PairOffer
+  1: protocol_major   u8
+  2: protocol_minor   u8
+  3: client_version   text
+  4: client_kind      u8     see REGISTRY
+  5: label            text   <= MAX_LABEL; what a person sees in the client list
 
 Pair  0x8B
-  1: outcome          u8       see REGISTRY
-  2: client_id        u32      0 when outcome is neither 1 enrolled nor 5 reclaimed
-  3: mac              bstr16
-  4: next_challenge   bstr16   the challenge this connection holds now that the
-                               one just presented has been consumed
+  1: outcome      u8       see REGISTRY: 6 proceed, 2 window_closed, 4 table_full
+  2: handshake    bstr     with outcome 6 only: Noise message 2, <- e, ee, s, es,
+                           carrying an empty map
+  3: refusal      bstr16   with outcome 2 or 4 only (P-241)
 
-mac = HMAC(pair_key, "km43/v1/pair-ack" | device_id | challenge
-                   | client_nonce | outcome:u8 | client_id:u32be | epoch:u32be
-                   | next_challenge)[0..16]
+Enrol  0x13
+  1: handshake    bstr     Noise message 3, -> s, se, carrying an empty map
+
+Enrol  0x93             sealed under the keys the pairing split into
+  1: outcome          u8       see REGISTRY: 1 enrolled, 5 reclaimed, 2, 4, or
+                               7 not_stored
+  2: client_id        u32      with outcome 1 or 5 only
+  3: generation       u32      with outcome 1 or 5 only (P-239)
+  4: next_challenge   bstr16   the challenge this connection holds now
 ```
 
-**P-069** — `client_nonce` MUST be fresh per pairing attempt and MUST be in both
-preimages. Without it every input to the pair-ack MAC is chosen by the controller
-or fixed by the device, so an ack recorded from an earlier enrolment verifies
-again on a later attempt — and the ack is the message that fixes a client's
-identity. The controller would be telling one phone it is `client_id 3` while a
-replayed ack tells the next phone the same thing.
+`PairOffer` is sealed under `pair_psk` inside message 1, so the comms processor
+can neither read the label a person will see in the client list nor rewrite it or
+the `client_kind` that fixes the client's capabilities (P-105). The pre-shared key
+comes first (`psk0`), so a peer without the label is refused for the price of an
+HKDF chain and one tag check; no key agreement is spent on it.
 
-`label` enters the preimage as its **UTF-8 bytes**, without the CBOR text-string
-header, and it is last and carries no length prefix — it is the one
-variable-width field in any preimage in this document, everything ahead of it is
-fixed width, and that is the same convention P-048 uses for `operation` and
-`payload`. `MAX_STRING` bounds it at 64 bytes.
+**P-229** — A connection MUST hold at most one pairing handshake, and a new
+`Pair 0x0B` abandons the one it held. A handshake MUST be abandoned on any failure
+of any step, when its connection drops, 120 seconds after message 1 was read, and
+on a factory reset (P-085). An abandoned handshake is never resumed: a message
+that fails to open leaves Noise's state unusable. An `Enrol 0x13` on a connection
+holding no pairing handshake is error 10, and is not counted: nothing was
+computed to refuse it.
 
-It is in the preimage because it is the field a person reads when deciding which
-enrolments belong at this site. Left outside, the comms processor rewrites it in
-flight at no cost and the controller stores the rewritten value and authenticates
-it onward — an audit record naming a device that was never there. P-070 already
-states the same principle one message over.
-
-**P-058** — `Pair 0x8B` MUST carry `next_challenge`: the challenge the
-controller mints for that connection as the presented one is consumed, minted
-under P-060 and P-063 like any other. It MUST be inside the pair-ack preimage,
-and it is present on **every** outcome.
-
-The enrolment flow was `Discover`, `Pair`, `Discover`, `Hello` — four messages,
-of which the third exists only to collect a replacement challenge, because P-061
-makes a challenge single-use. That is a whole round trip on a link somebody is
-standing in front of with a phone, spent asking for a value the controller had
-already decided to mint. Issuing it in the ack makes the flow `Discover`,
-`Pair`, `Hello`.
-
-**It is inside the MAC because the next `Hello` proof is computed against it.**
-Left outside, the comms processor substitutes a challenge of its own choosing and
-the `Hello` that follows proves against a value the untrusted party picked, which
-is the one input to `session_key` the controller is supposed to own. That is
-P-069's argument for `client_nonce`, one field over and in the other direction.
-
-Every outcome carries it because P-061 consumes a challenge on **presentation,
-not on success**: a `Pair` that failed its proof has still spent it. A client
-told `bad_proof` needs a live challenge to retry the thing it just got wrong, and
-without key 4 in that response the answer would be another `Discover` — which is
-the round trip this requirement deleted, put back on the path where somebody is
-already frustrated. A client MAY ignore key 4 and `Discover` again anyway; P-060
-mints a fresh one and discards this one, exactly as it does for a challenge that
-expired.
-
-**P-064** — An enrolment that succeeds MUST be answered with `Pair 0x8B` outcome
-1 `enrolled`, carrying the allocated `client_id`. Every refusal names its outcome
-somewhere below; the one that succeeds did not, and an implementer reaching it by
-elimination is the guessing this document says it must never require.
-
-The pairing response MUST carry the MAC above, and a client MUST
-discard a response that fails it rather than enrolling. Nothing else in this
-protocol can authenticate this message: no session exists, and `client_key`
-cannot be derived until `client_id` has been read out of this very message. The
-earlier draft left it authenticated by nothing, which let the comms processor
-choose a client's identity and its replay baseline.
-
-**A wrong printed secret earns a refusal its client cannot check.** The
-controller MACs outcome 3 under the real `pair_key` (P-051), and a client that
-scanned the wrong label derives a different one, so the `bad_proof` it earned
-fails the MAC exactly as a forged reply does. It cannot tell the two apart.
-The client MUST treat a pairing response that fails the MAC as a failed attempt
-that may mean a wrong code: it MUST NOT enrol, MUST NOT prove a retry against
-that response's `next_challenge`, and starts any retry from `Discover` (P-060).
-It MAY tell the person the code may be wrong and offer to rescan. It MUST NOT
-say the code *is* wrong or that the controller refused: the response is
-unauthenticated, and P-055 applies. A retry whose proof the controller checks
-and rejects counts against `MAX_AUTH_FAILURES` (P-051), so a phone still holding
-the wrong code sheds its own connection after eight tries.
-
-The converse is a statement the client can make. A `bad_proof` that **verifies**
-was MAC'd under the `pair_key` the client holds, so the code was right and the
-controller received fields that do not match the proof: a `label` or
-`client_kind` rewritten in flight (P-069), or a client computing its own proof
-wrong. Telling that person to rescan sends them back to a label that was
-never the problem.
-
-**P-065** — A newly enrolled client's counter MUST start at **0**, and the
-response MUST NOT carry a starting counter. A counter supplied by the network is
-a counter an attacker can set to `2^64 − 1`, after which every write that client
-ever makes fails as stale and recovery is a four-hour drive.
-
-**P-066** — A physical act at the controller MUST gate enrolment: the pushbutton
+**P-066** — A physical act at the controller MUST gate enrolment under the label: the pushbutton
 on a board that has one, otherwise the selector gesture the controller's design
 defines under *Auto / off / manual* ([CONTROLLER-V1](https://github.com/origin89hq/origin89/blob/main/docs/CONTROLLER-V1.md)),
 with the first-enrolment power-on exception below. No message opens the window.
 Knowing the printed secret is not by itself sufficient. The window is 120 seconds.
+Enrolment approved from an owner's session, which does not use the label, is
+origin89hq/km43#129's to specify.
 
 On a controller board without a pushbutton, power-on MUST open the window once
 per boot, at boot, **only when it reads a valid empty client table**, whether
-empty after factory reset or after recovery of a lost or corrupt table. A boot
-that finds the table absent or unreadable and repairs it to a durable empty
-table MUST NOT open a power-on window; a later boot that reads that valid empty
-table is eligible. This window lasts the same 120 seconds
-and MUST close on the first successful `Pair`, as any window closes on successful
-enrolment under L-195; one opening admits one enrolment. While the client table
-is non-empty, power-on MUST NOT open a window: only the design's selector gesture,
-or the pushbutton on a board that has one, opens it. A board **with a pushbutton
-MUST NOT use this exception**. `Pair` still requires the printed-secret proof
-(P-064, P-068); the window is an additional gate, never a replacement for that
-proof. This temporary rule serves controller board A revision A and MUST be
-retired when the pushbutton is present ([firmware#60](https://github.com/origin89hq/firmware/issues/60)).
+empty after factory reset or after recovery of a lost or corrupt table. A table
+whose every slot is from an earlier epoch is empty (P-239). A boot that finds the
+table absent or unreadable and repairs it to a durable empty table MUST NOT open a
+power-on window; a later boot that reads that valid empty table is eligible. This
+window lasts the same 120 seconds and MUST close on the first successful `Enrol`,
+as any window closes on successful enrolment under L-195; one opening admits one
+enrolment. While the client table is non-empty, power-on MUST NOT open a window:
+only the design's selector gesture, or the pushbutton on a board that has one,
+opens it. A board **with a pushbutton MUST NOT use this exception**. The pairing
+handshake still requires the printed secret (P-088); the window is an additional
+gate, never a replacement for it. This temporary rule serves controller board A
+revision A and MUST be retired when the pushbutton is present
+([firmware#60](https://github.com/origin89hq/firmware/issues/60)).
 
 The controller reports every window's open and closed state, including a
 power-on window, to the comms processor using
 [PairingWindow](protocol/LINK.md#pairing-reachability) (L-193 through L-195)
 so a phone can reach it without the house network; that report grants no
 enrolment permission. The deadline starts at boot for a power-on window, not
-when the link becomes ready. A `Pair` arriving with no window open MUST be
-answered with `Pair 0x8B` outcome 2 `window_closed` and `client_id = 0`, carrying
-the MAC above — not with an unauthenticated error. A refusal the comms processor
-can forge is a refusal that sends somebody back to the panel to perform an act
-that was never needed.
+when the link becomes ready.
 
-**P-067** — A full client table MUST refuse with outcome 4, **unless P-078's
-reclaim matched first**. It MUST NOT evict. `table_full` therefore means eight
-distinct labels rather than eight pairings.
+A `Pair 0x0B` whose message 1 does not open MUST be answered with bare error 10
+and MUST count against `MAX_AUTH_FAILURES`: that is a wrong label, a rewritten
+prologue or a forgery, and the controller cannot say which to a peer it cannot
+authenticate. A client that receives it MUST NOT say the code is wrong or that the
+controller refused (P-055); it MAY tell the person the code may be wrong and offer
+to rescan, and starts any retry from `Discover`.
+
+**P-241** — When message 1 opens and the window is closed, the controller MUST
+answer `Pair 0x8B` with outcome 2 `window_closed`; when there is no free slot and
+no slot with this `label`, with outcome 4 `table_full`. Message 1 carries no client
+key, so P-240's first step cannot be run yet, and a re-pairing install that kept
+its key but changed its label is refused here when the table is full. Either
+refusal carries a refusal tag, and the controller MUST NOT send message 2:
+
+```text
+refusal = HMAC(refusal_key, "km43/v1/pair-refused" | h1 | outcome:u8)[0..16]
+```
+
+`h1` is the Noise handshake hash once message 1 has been read, its payload
+included (after its `EncryptAndHash`): the transcript of this attempt, over the
+prologue, the pre-shared key, the client's ephemeral key and the sealed offer. A client MUST
+verify the tag before believing the refusal, and one that does not verify is
+treated as P-066's bare error 10. A refusal does not count against
+`MAX_AUTH_FAILURES`, and the handshake is abandoned (P-229).
+
+A refusal the comms processor can forge is a refusal that sends somebody back to
+the panel to press a button that was never needed, so it has to be authenticated.
+It is authenticated this way rather than inside message 2 because message 2 costs
+a key generation and two DH operations, about three quarters of a second on this
+controller (P-243), and the window is closed almost all the time: a photographed
+label would otherwise be a lever on the controller's processor that needs nobody
+at the panel. The tag costs one HMAC and binds the attempt through `h1`, so it
+cannot be replayed onto another.
+
+**P-058** — `Enrol 0x93` MUST carry `next_challenge`: the challenge the
+controller mints for that connection, minted under P-060 and P-063 like any other,
+on **every** outcome. The `Hello` that follows is built against it (P-227).
+
+It is inside the sealed body because the `Hello` prologue covers it. Left outside,
+the comms processor substitutes a challenge of its own choosing, and the one input
+to the prologue the controller is supposed to own is chosen by the untrusted party.
+
+**P-064** — Message 2 goes only to a peer whose message 1 opened, while the window
+is open and there is a free slot or a slot with this `label`, and carries outcome
+6 `proceed`. The
+client MUST check the static key it carries against the label (P-236), and MUST
+persist its own static key and that controller key before it sends `Enrol 0x13`.
+
+When message 3 opens, the controller MUST check the window again and run P-240,
+write the slot under P-239, close the window (L-195), and answer `Enrol 0x93`
+sealed under the keys the handshake split into: outcome 1 `enrolled` or 5
+`reclaimed` with the slot's `client_id` and generation, or the refusal P-240 or
+the closed window gives. Those keys are then destroyed; a pairing does not open a
+session, and the client says `Hello` next. A slot that cannot be written durably
+MUST NOT be used; the answer is outcome 7 `not_stored`, the window stays open
+because nothing was enrolled, and the controller MUST raise a class A `concern
+raised` (`0x0501`) at condition `client table write failed`. The client retries
+from `Pair` against the `next_challenge` the answer carries.
+
+**P-242** — A client that sent `Enrol 0x13` and received no `Enrol 0x93` MUST NOT
+assume it was refused. It has already kept its keys (P-064), so it sends
+`Discover` and `Hello`: a `Hello 0x81` names the slot it was given (keys 30 and
+31), and error 12 says it was not.
+
+The comms processor can drop the one message that tells a phone it is enrolled.
+Without this, that phone throws away a key the controller has just stored, the
+window is closed, and on a revision A board the table is no longer empty, so the
+power-on window will not open again: one dropped frame costs a slot and a trip to
+the selector.
+
+**P-065** — A newly enrolled client's counter MUST start at **0**, and no
+response may carry a starting counter. A counter supplied by the network is a
+counter an attacker can set to `2^64 − 1`, after which every write that client
+ever makes fails as stale and recovery is a four-hour drive.
+
+**P-067** — A full client table MUST refuse with outcome 4 when P-240 finds
+nothing to allocate. It MUST NOT evict.
 
 **P-068** — Counter recovery is a **re-pair, not a reset**. A reinstalled app
-pairs again, in person, and is given the **same** `client_id` when its `label`
-matches an occupied row byte for byte (P-078, outcome 5 `reclaimed`), and a new
-one otherwise. What must never happen is handing a client a fresh counter for an
-existing id **on request** — that is a replay hole with a friendly name. What
-makes a reclaim different from a request is the evidence behind it: the button,
-the 120-second window and a proof under `pair_key` that needs the printed
-secret, which is the same evidence as a first enrolment and not a message
-anybody can send.
+pairs again, in person, and P-240 decides which slot it gets. What must never
+happen is handing a client a fresh counter for an existing slot **on request** —
+that is a replay hole with a friendly name. What makes a re-pair different from a
+request is the evidence behind it: the physical window and the label, which is
+the same evidence as a first enrolment and not a message anybody can send.
 
-**P-078** — Inside an open pairing window, a `Pair` whose proof verifies and
-whose `label` is **byte-identical** to an occupied row's label MUST reuse that
-row: same `client_id`, counter back to 0, `client_kind` and capability mask
-re-fixed from this proof exactly as at first enrolment, answered with outcome 5
-`reclaimed`. Matching MUST run **before** allocation — reclaim, then P-086's
-lowest free slot, then P-067's outcome 4 — and it MUST compare the exact UTF-8
-bytes that entered the pair-proof preimage: no case folding, no trimming, no
-Unicode normalisation.
+**P-240** — Allocation MUST run in this order, and MUST compare `label` as the
+exact UTF-8 bytes `PairOffer` carried, with no case folding, trimming or
+normalisation:
 
-**Every session bound to that `client_id` MUST be unbound before the row is
-rewritten**, and the counter MUST NOT be reset while any binding on the row
-survives.
+1. the slot that already holds this client key: the same install pairing again;
+2. otherwise the lowest free slot (P-086), answered outcome 1 `enrolled`;
+3. otherwise the lowest occupied slot whose `label` is byte-identical,
+   re-keyed and answered outcome 5 `reclaimed`;
+4. otherwise outcome 4 `table_full`.
 
-Without that the reset is a replay hole. The three rules below hold for a frame
-captured under an *old* session; they say nothing about a session that is still
-bound when the reclaim happens, and nothing else unbinds one. The counter row is
-per `client_id` (P-081) and is selected by the session rather than the body
-(P-084), so a session that survives the reclaim reads a row that was just set to
-0 under a `session_key` nothing touched — and every signed frame captured from
-that session carries a counter above 0. Ten minutes later the dedup entry ages
-out and a captured `Command` is executable again.
+Step 1 is answered outcome 5 `reclaimed`, and steps 1 and 3 both re-key the
+slot: it takes the new client key, a new generation, a counter of 0 and a
+capability mask re-fixed from this `client_kind`, exactly as a first enrolment,
+and carries nothing of the old enrolment over. Every session bound to the slot
+MUST be unbound before the slot is rewritten. Message 1 carries no client key, so
+at message 1 only steps 2 to 4 can be evaluated (P-241); at message 3, step 1 wins.
+A slot that origin89hq/km43#129's roles protect is never a step 3 candidate.
 
-Unbinding is enough on its own, and the transport does not need closing: the
-client discovers it through error 9 and reconnects, which is the signal P-143
-already documents for a session that no longer exists.
+A reclaim now revokes: the old install's key is erased with the slot, where in v1
+the label re-derived the same key and the old install kept working. That makes it
+the wrong thing to run first. Two phones that both call themselves "iPhone" would
+otherwise trade the slot on every pairing, each silently locking the other out,
+and only the phone that just paired would be told. So a free slot is always
+preferred, and a reclaim happens only when the alternative is refusing the pairing
+outright. Whatever is decided at message 2 is decided again at message 3, because
+another connection may have enrolled in between.
 
-**Without this the client table is a consumable.** `MAX_CLIENTS` is 8 and those
-eight are shared by every phone, every browser, the cloud and the CLI, while
-P-068 makes spending one *routine*: app reinstalled, phone replaced, browser data
-cleared. The break point is eight cumulative re-pairings, not eight people, which
-one phone reaches in a season — and after it, the answer to *the site cannot be
-told to stop* is a four-hour drive. The cost of physical-only revocation was
-priced against a lost phone, which is rare. Nobody priced the reinstall.
+**P-078** — The client table exists to be spent: `MAX_CLIENTS` is shared by every
+phone, browser, CLI and cloud client, and a reinstalled app, a replaced phone or a
+cleared browser each spends a slot. Reclaiming by label (P-240) is what stops eight
+re-pairings in a season from filling the table with keys nobody holds any more,
+and it is safe for the same reason as a first enrolment: the button and the label
+are behind it.
 
-Nothing new is granted by it. Whoever can reclaim a row can already enrol into a
-free one and can already factory-reset the whole table.
+**Setting the counter back to 0 does not re-open replay.** A signed request is
+sealed under a session key, never under anything the slot holds, and a session key
+is derived from ephemeral keys drawn for that handshake (P-230, P-237). A frame
+captured under an old session cannot open under a new one at any counter value,
+and P-240 unbinds every session on the slot before the counter moves. The counter
+orders a client's writes within a session; it is not what stands between a
+recorded frame and a replay.
 
-**Matching on `label` is sound only because `label` is inside the pair-proof
-preimage** (P-069). Outside it, the comms processor rewrites it in flight — to
-point a reclaim at somebody else's row, or to stop a legitimate match and burn a
-slot. The byte-exact comparison is the same argument one layer down: two
-implementations that normalise differently hand one client another client's row.
-The cost is that renaming a phone spends a slot, which is the right way round,
-because that is visible to the person standing at the panel and the other error
-is not.
+**P-239** — A slot's **key record** holds its state, the epoch it was written in,
+its generation, its suite, the client's static key, its admission key (P-238),
+the `client_kind`, the `label` and the capability mask. It MUST be kept as two
+copies, each with a sequence number and an integrity check, and a write MUST go to
+the older copy. The slot's counter is a separate record (P-081), and a counter
+write never touches the key record. Each slot also keeps a **generation mark**:
+the highest generation it has issued. Then:
 
-**A reclaim is not a revocation, and reaching for it as one is the wrong tool.**
-Same epoch and same `client_id` means a byte-identical `client_key`, so the old
-install still holds a working key. This is for the honest case. A stolen phone is
-still the button and a factory reset, which bumps the epoch and invalidates every
-key at once (P-085).
+- A copy is **valid** if it passes its check. A slot's key record is the valid
+  copy with the higher sequence number. A slot with no valid copy is free.
+- A slot is occupied only if its key record says occupied and its epoch is the
+  current epoch. Every other slot is free, and a free slot's key MUST NOT be
+  matched by anything.
+- Writing a new key into a slot MUST first raise the generation mark by one,
+  persist it and read it back, then write the slot free with that generation and
+  its keys erased, and read that back; only then may the new record be written.
+  Freeing a slot is those first two steps.
+- A generation MUST NOT decrease and MUST NOT be reused within an epoch. A slot
+  whose generation mark cannot be read back intact makes the table corrupt: P-066's
+  recovery repairs it to empty and MUST advance the epoch as a factory reset does
+  (P-085), so a lost generation cannot be issued again under the same epoch.
+- `(epoch, client_id, generation)` names one enrolment and never a second.
 
-**Setting the counter back to 0 does not re-open replay**, and that is worth
-writing down because it is not obvious. A signed request is MAC'd under
-`session_key`, never under `client_key`, and `session_key` binds a single-use
-CSPRNG challenge (P-061, P-063) and the client's own nonce (P-071). A frame
-captured under an old session cannot verify under a new one at any counter value.
-And P-078 unbinds every session on the row **before** the counter moves, so
-there is no session left that a captured frame could verify under. The counter
-orders a client's writes within a session and across a reboot; it is not what
-stands between a recorded frame and a replay. Weaken any one of those four rules
-and this reset becomes a hole — which is the sentence to check against before
-weakening one. The fourth was missing until a reviewer checked the other three
-against it and found the case they do not cover.
+FRAM commits byte by byte, so a record is not written in one go whatever the code
+says. Rewrite a slot in place and a power cut between the label and the key
+leaves the stolen install's key under the new label and mask. Writing the older
+of two copies means a torn write leaves the other one standing, and writing the
+slot free first means the worst a re-key interrupted at any byte can leave is a
+free slot. The counter is kept out because it is written on every signed
+request: inside the key record, one brown-out during a `SetConfig` would tear the
+record every other client depends on. Only the generation mark failing costs the
+whole table, and it is written only when a key changes.
+
+The generation is what lets anything keyed by `client_id` — a session binding, a
+log record, a removal an owner asks for — tell a slot's current enrolment from the
+one before it.
 
 **P-105** — Every enrolled client MUST carry a **capability mask**, fixed at
-enrolment from the attested `client_kind`, stored in FRAM beside that client's
-counter, and never changed by any message. The bit allocation and the per-kind
-rows are in [REGISTRY.md](protocol/REGISTRY.md). A `client_kind` with no row
-there MUST be refused at enrolment. A refused capability MUST be answered inside
-the MAC'd response for that message — `SetConfigAck` outcome 4 `unauthorised`,
-`Ack` outcome 5 `unauthorised`, `TimeAck` outcome 3 `unauthorised`, `Firmware`
-outcome 8 — and never with an `Error`, which is P-141 applied.
-
-Three outcomes spelled out an authorisation model that no normative document
-defined a single permission for, which left all eight enrolled clients strictly
-equipotent: **the cloud client could push firmware, write the site's Wi-Fi
-passphrase and move the clock.** That client is reachable from the internet by
-definition. A vocabulary of refusals with nothing behind it is worse than an
-outright gap, because it reads as implemented to everybody who greps for it.
+enrolment from the attested `client_kind`, stored in the slot, and never changed by
+any message. The bit allocation and the per-kind rows are in
+[REGISTRY.md](protocol/REGISTRY.md). A `client_kind` with no row there is not a
+value of the closed set and MUST be refused at enrolment as a malformed
+`PairOffer`. A refused capability MUST be answered inside the sealed response for
+that message — `SetConfigAck` outcome 4 `unauthorised`, `Ack` outcome 5
+`unauthorised`, `TimeAck` outcome 3 `unauthorised`, `Firmware` outcome 8 — and
+never with an `Error`, which is P-141 applied.
 
 `client_kind` is a sound input and LINK.md's `transport` (L-072) is not, and the
-difference is provenance: `client_kind` is inside the pair-proof preimage — its
-last two fields are `client_kind:u8 | label` — so it is attested under `pair_key`
-by a holder of the printed secret inside the 120-second window P-066 opens, while
+difference is provenance: `client_kind` is inside `PairOffer`, sealed under
+`pair_psk` by a holder of the label inside the window P-066 opens, while
 `transport` is written by the comms processor, which lifts any rule keyed on it
-for free.
+for free. An enrolment that does not come through `PairOffer` — an invited phone,
+the cloud's view-only identity — takes its capabilities from the rules
+origin89hq/km43#129 adds, never from a default.
 
 **No message raises a mask and no message lowers one.** Either is a re-pair,
-which means the button. This is the rejected-`Revoke` argument one field over: a
-mask any client can edit is a mask the most exposed client edits first, and the
-party that most wants firmware authority is exactly the party that must not be
-able to grant itself firmware authority. A reclaimed row re-fixes its mask from
-the proof P-078 just verified, so a row's permissions never outlive the enrolment
-that set them.
+which means the button. A mask any client can edit is a mask the most exposed
+client edits first. A reclaimed slot re-fixes its mask from the pairing P-240
+just ran, so a slot's permissions never outlive the enrolment that set them.
 
 **The mask is only as good as the enrolment, said out loud.** Whoever holds the
-printed secret inside an open P-066 window chooses `client_kind`, and can therefore
-enrol a cloud relay as `1 app`. That person already has the label and an open window,
-which is the whole of the authority in this design. The mask defends against a
-client that turns hostile later, not against the person who enrolled it.
+label inside an open window chooses `client_kind`, and can therefore enrol a cloud
+relay as `1 app`. That person already has the label and an open window, which is
+the whole of the authority in this design.
 
-**The limitation, stated rather than left to be discovered:** anyone who
-photographs the label can derive keys, and there is no forward secrecy. The
-upgrade is an authenticated key agreement — see
-[DEFERRED.md](protocol/DEFERRED.md).
+**P-069 is retired.** It required a client nonce in both pairing MACs so a
+recorded acknowledgement could not verify again. The ephemeral keys of the pairing
+handshake do that now, for every message of it.
 
 ### Hello — `0x01` / `0x81`
 
 ```text
 Hello  0x01
-  inner body:
-    1: protocol_major   u8
-    2: protocol_minor   u8
-    3: client_id        u32
-    4: client_version   text
-    5: client_nonce     bstr16
-  body:
-    1: payload          bstr     the inner body above, encoded
-    2: proof            bstr16
+  1: suite        u8       the suite the slot enrolled under
+  2: handshake    bstr     Noise message 1, -> e, es, s, ss, carrying HelloOffer
+  3: admit        bstr16   P-238
 
-proof = HMAC(client_key, "km43/v1/hello-proof" | challenge | client_nonce
-                       | client_id:u32be | payload)[0..16]
-
-Hello  0x81             wrapper under session_key
+HelloOffer
   1: protocol_major   u8
   2: protocol_minor   u8
-  3: session_id       u16      also in the envelope; MUST match
+  3: client_version   text
+
+Hello  0x81
+  1: handshake    bstr     Noise message 2, <- e, ee, se, carrying the report
+
+HelloReport
+  1: protocol_major   u8
+  2: protocol_minor   u8
+  3: session_id       u16      the envelope's; MUST match
   4: fw_controller    text
   5: fw_comms         text     what the comms processor says about itself.
                                Diagnostic only — a client MUST NOT decide on it
@@ -1610,27 +1753,63 @@ Hello  0x81             wrapper under session_key
  27: max_selectors    u8       per ReadSignals
  28: max_history_signals  u16
  29: max_topology_depth   u8   how deep either parent chain may run
+ 30: client_id        u32      the slot this session is bound to
+ 31: generation       u32      that slot's generation (P-239)
 ```
 
-**P-070** — The Hello proof MUST cover the whole inner body, so that
-`protocol_major`, `protocol_minor` and `client_version` cannot be rewritten in
-flight. Version negotiation running on attacker-controlled values is a downgrade
-with extra steps.
+The client runs `IK` against the controller key it pinned (P-222), so message 2
+opens only for the controller that holds it, and message 1 is readable only by
+that controller. `HelloReport` is message 2's payload: it arrives authenticated and
+bound to this handshake, and there is no second tag to check.
 
-**P-071** — `client_nonce` MUST come from a CSPRNG and MUST be fresh per
-handshake. Without it every input to the session key is either long-term or
-chosen by the untrusted side, and a recorded session replays cleanly at a client
-that cannot tell.
+**P-238** — Each slot holds an admission key, and each `Hello` carries a tag under
+it:
 
-**P-072** — The client derives `session_key` using the `session_id` from the
-**envelope** of the Hello response, then verifies the body MAC. This is the one
-place a value is used before it is authenticated, and it is safe because
-`session_id` is inside the preimage: a rewritten `session_id` yields a different
-key and the MAC fails.
+```text
+admit_key = HKDF(salt = device_id,
+                 ikm  = X25519(is, CS),            = X25519(cs, IS)
+                 info = "km43/v1/admit-key",
+                 L    = 32)
+
+admit     = HMAC(admit_key, "km43/v1/hello-admit" | prologue | handshake)[0..16]
+```
+
+The controller computes `admit_key` once, when it writes the slot, and stores it
+there (P-239); the client computes it from its own key and the pinned controller
+key. On a `Hello 0x01` the controller MUST, before any DH, compare `admit` in
+constant time against the tag under each occupied slot's key. No match is bare
+error 12 and counts against `MAX_AUTH_FAILURES`. A match selects the slot; the
+static key message 1 then carries MUST be that slot's key, and `ss` MUST open the
+payload, or the answer is error 10, counted.
+
+Without it, every `Hello` costs the controller a DH before anything is
+authenticated, because anybody can build message 1 against a controller key. A DH
+is about a quarter of a second on this part (P-243), the failure count is per
+connection, and connections are free: a host on the site's Wi-Fi cycling
+`Discover` and a garbage `Hello` keeps the controller's handshake work saturated,
+and the owner's own `Hello`, which costs about a second, waits behind it. Eight HMACs cost a few
+milliseconds. The tag covers the prologue, so it is good for one challenge on one
+connection.
+
+**P-070** — `HelloOffer` MUST be the payload of message 1, so that
+`protocol_major`, `protocol_minor` and `client_version` are authenticated by `ss`
+and cannot be rewritten in flight. Version negotiation running on
+attacker-controlled values is a downgrade with extra steps.
+
+**P-071** — The client's ephemeral key MUST come from a CSPRNG and MUST be fresh
+per handshake. The controller's comes from P-237. Without fresh ephemerals on
+both sides a recorded session replays cleanly at whichever end reused one.
+
+**P-072** — The `session_id` is the connection handle, and it is inside the
+prologue (P-227): a client that builds the prologue with a handle the comms
+processor rewrote gets a message 2 that does not open.
 
 **P-073** — A major version mismatch MUST refuse the session with error 3. A
 minor mismatch MUST proceed at the lower of the two. A newer client degrades; it
-never assumes.
+never assumes. A client MUST NOT send `Hello` to a controller whose `Discover`
+advertised another major: the prologue carries that major, so a `Discover`
+rewritten to hide it fails the handshake, and the bare error 3 a controller sends
+is a hint an honest client never needs (P-055).
 
 **P-074** — `state_seq` is the state store's own counter. `log_oldest_seq`,
 `log_newest_seq` and every `seq` elsewhere in this document are positions in the
@@ -1642,11 +1821,20 @@ accepted from that `device_id`. This is SHOULD rather than MUST because a board
 swap or a NOR erase regresses it legitimately, and a hard rule would turn a
 repair into a lockout at a site four hours from a road.
 
+**P-243** — Key agreement MUST NOT delay the controller's control loop, and the
+controller SHOULD compute at most one handshake at a time, serving connections in
+turn. On this controller an X25519 operation costs about 12 million instructions,
+about 190 to 280 milliseconds at 64 MHz; a `Hello` costs the controller
+four of them and a key generation, a pairing costs three at message 2 and two at
+message 3 (the second derives the slot's admission key), and every refusal before
+them costs an HMAC or less. Taking turns bounds what any one
+connection can make the others wait.
+
 ### Goodbye — `0x0C` / `0x8C`
 
 ```text
-Goodbye  0x0C          wrapper, empty inner body
-Goodbye  0x8C          wrapper, empty inner body
+Goodbye  0x0C          sealed, empty inner body
+Goodbye  0x8C          sealed, empty inner body
 ```
 
 **P-076** — A connection row has two independent states: **allocated**, meaning a
@@ -1664,26 +1852,19 @@ A client that has sent `Goodbye` MAY `Hello` again on the same transport: the ro
 is still allocated, and the next `Discover` on it returns a live challenge under
 P-060.
 
-**A `Hello` whose proof verifies on a row that is already bound MUST replace the
-binding**, deriving the new `session_key` from the challenge and `client_nonce`
-that `Hello` presented. The previous `session_key` MUST be destroyed and that
-session's outstanding requests abandoned. It MUST NOT be answered with error 8.
+**A `Hello` that completes on a row that is already bound MUST replace the
+binding** with the new keys. The previous session's keys MUST be destroyed and its
+outstanding requests abandoned. It MUST NOT be answered with error 8.
 
 The state is reached routinely and not by anybody misbehaving: the controller
 binds the row, the response is lost on the way back, and the client — holding no
-`session_id` and no key — has nothing to do except `Hello` again. Refused, it is
-stuck until P-077's fifteen minutes expire the session it never learned it had,
-on a transport it believes is healthy. Error 8 is the worst of the available
-refusals, because it means *session table full* and a client reading it waits
-rather than reconnecting; a binding held by the client that is asking is not a
-full table.
-
-Replacement rather than refusal is safe because the proof is the whole check. A
-peer that can verify a `Hello` on this row can already open a fresh row, and the
-row is not a permission — it is a place to put a key. Note that the replacing
-`Hello` may carry a *different* `client_id`: the session binds whichever one
-proved, and counters are per client in FRAM (P-081), so nothing about the
-previous client's counter row moves.
+keys — has nothing to do except `Hello` again. Refused, it is stuck until P-077's
+fifteen minutes expire the session it never learned it had. Replacement rather
+than refusal is safe because the handshake is the whole check: a peer that can
+complete one on this row can already open a fresh row, and the row is not a
+permission — it is a place to put keys. The replacing `Hello` may name a
+*different* slot; the session binds whichever one proved itself, and counters are
+per slot (P-081).
 
 **P-077** — Sessions expire after 15 minutes without traffic, and the controller
 sends `CloseConnection` with reason `session_expired` so the row and the
@@ -1691,50 +1872,44 @@ transport go at the same moment rather than leaving a socket the client believes
 is healthy.
 
 **Only an authenticated inbound frame refreshes that timer** — a request whose
-wrapper MAC or signed-body MAC verified on that session and that P-022 did not
-refuse. A replayed request verifies, which is why the second condition is
-needed: without it, one captured frame replayed before each expiry is a
-keep-alive the relay holds. Outbound MUST NOT
-refresh it: not a response, not an event, not a `records dropped` record the
-controller generated by itself. A frame that fails its MAC does not count as
+tag verified on that session and that P-022 did not refuse. A replayed request
+verifies, which is why the second condition is needed: without it, one captured
+frame replayed before each expiry is a keep-alive the relay holds. Outbound MUST
+NOT refresh it: not a response, not an event, not a `records dropped` record the
+controller generated by itself. A frame that fails its tag does not count as
 traffic either; it counts against `MAX_AUTH_FAILURES`.
 
-*Traffic* was never defined, and the reading that costs nothing to arrive at is
-the wrong one. If an outbound event refreshed the timer, a **subscribed session
-would never expire at all** — the controller is publishing to it every time
-anything on the site moves, so the session stays alive on the strength of the
-controller talking to itself. And the sessions most likely to be stale are
-exactly the subscribed ones: the browser tab somebody closed the lid on still
-holds one of eight bindings, cheerfully fed events nobody is reading, until
-somebody at the panel is refused with error 8 for a session that stopped existing
-in any useful sense hours ago. Expiry has to measure the client still being
-there, and only something the client sent measures that.
+If an outbound event refreshed the timer, a **subscribed session would never
+expire at all** — the controller publishes to it every time anything on the site
+moves, so the session stays alive on the strength of the controller talking to
+itself. Expiry has to measure the client still being there, and only something
+the client sent measures that.
 
-`MAX_SESSIONS` is 8, and a `Hello` that finds no binding free is
-refused with error 8. Today that only fires on a transport the comms processor
-does not own, because it refuses a ninth connection at `ClientConnected` before
-any `Hello` can be sent. A session table that grows with reconnections is an
-unbounded allocation wearing a different hat.
+`MAX_SESSIONS` is 8, and a `Hello` that finds no binding free is refused with
+error 8. Today that only fires on a transport the comms processor does not own,
+because it refuses a ninth connection at `ClientConnected` before any `Hello` can
+be sent. A session table that grows with reconnections is an unbounded allocation
+wearing a different hat.
 
 ---
 
 ## Signed requests
 
-Every **write** is signed: configuration, firmware, time and commands. Not just
-commands — authenticating one write and not another is a locked door next to an
-open one.
+Every **write** is signed: configuration, firmware, time and commands. Every
+request is sealed; a write additionally carries the client's counter, so the
+controller knows the order of a client's writes and can refuse one it has already
+applied.
 
 ```text
-body of any signed request
+inner body of any signed request, sealed like every request
   1: client_id    u32
   2: counter      u64      MUST exceed this client's last accepted value
   3: operation    bstr     the CBOR-encoded operation body
-  4: mac          bstr16
 ```
 
 **P-080** — The controller MUST take these steps in this order:
 
-1. Verify the MAC. A MAC that fails is P-051's error 10.
+1. Open the sealed body. A tag that fails is P-051's error 10.
 2. Check the counter. A counter that does not exceed the stored value MUST be
    refused with error 11.
 3. For a `Command 0x08`, look up `(client_id, cmd_id)` in the dedup table and
@@ -1749,15 +1924,13 @@ body of any signed request
 Persisting before executing is deliberately fail-closed: a brown-out between the
 two loses the operation, and the client's retry carries a new counter and
 succeeds. The reverse order leaves a replayable counter after a power cut, which
-is the worse failure at this site. One number each for the two refusals, named
-here rather than picked at a bench.
+is the worse failure at this site.
 
 The dedup entry is written in the same transaction as the counter for the same
 reason the counter is written before the handler runs. Written after `execute`,
-it is exactly the record that a reset between the two destroys — which is the
-window P-121 puts the table in FRAM to close, reopened three lines below the
-requirement that closes it. Written before, a crash leaves an entry saying an
-operation may have run, which is a question the controller can answer.
+it is exactly the record that a reset between the two destroys. Written before, a
+crash leaves an entry saying an operation may have run, which is a question the
+controller can answer.
 
 **What a retry meets against an entry left *in flight* by a reset is the case
 this ordering exists for, and ordering alone does not answer it.** The controller
@@ -1766,86 +1939,47 @@ on either side of `execute`. It MUST NOT assume either. It MUST answer from the
 **state store**, which is authoritative for what the hardware is doing — if the
 contact the command asked for is already in the asked-for state, the entry
 completes as `accepted` and the retry is answered outcome 3 `duplicate`; if it
-is not, the entry is discarded and the retry executes normally. That is the one
-reading under which a `start` interrupted by a brown-out neither starts twice
-nor silently fails to start, and it is available because the state store is read
-from the hardware at boot rather than remembered.
+is not, the entry is discarded and the retry executes normally.
 
 **P-079** — If persisting the counter fails, the operation MUST NOT execute. The
 controller MUST answer error 7 `busy` and MUST raise a class A `concern raised`
 (`0x0501`) at condition `counter write failed`. It MUST NOT execute anyway and
 leave a counter store that does not know it happened.
 
-Fail-closed is the whole of P-080's ordering, and it had no exit. FRAM is where
-the per-client counters live, and the client keys, the dedup table, the A/B
-configuration pointer and the panic reason with them; a write that fails there is
-the controller losing its record of what it has already accepted. Execute anyway
-and the frame that just ran replays the moment somebody sends it again — the hole
-P-080 orders its steps to close, opened by the one step that did not work.
-[LINK.md](protocol/LINK.md) L-137 gives the comms processor `nvs_write_failed` for
-exactly this on its own side, where what is at stake is a Wi-Fi passphrase; the
-controller side, where it is a counter, said nothing at all.
-
 Error 7 because there is one instruction to give and it is *the controller did
 not do this, send it again*: a retry carries a new counter under P-082 and lands
-if the next write succeeds. P-141 is not in tension with that — the persist sits
-ahead of `execute` in P-080's order, so nothing has reached a handler yet, which
-is the condition P-141 keeps `Error` for. And what tells somebody the part is
-wearing out is the class A record, which lands in the log in NOR — a different
-device from the one that just failed — rather than the error code, which the
-comms processor can drop.
+if the next write succeeds. The class A record is what tells somebody the part is
+wearing out, because it lands in the log in NOR, a different device from the one
+that just failed.
 
-**P-081** — Counters are **per client**, stored `client_id → highest accepted` in
-FRAM. A single device-wide counter livelocks the moment two clients are active:
-both read 100, both send 101, one is rejected forever.
+**P-081** — Counters are **per slot**, each in its own FRAM record beside the
+slot's key record and never inside it (P-239). A
+single device-wide counter livelocks the moment two clients are active: both
+read 100, both send 101, one is rejected forever.
 
-**A client that receives error 11 MUST take its next counter from `Hello 0x81`
+**A client that receives error 11 MUST take its next counter from `HelloReport`
 key 11**, re-`Hello`ing if it no longer holds a live value, and MUST NOT retry by
-incrementing the value it just had refused.
-
-A local increment from a value that is already behind the stored one never
-catches up: the client sends 101, is refused because the row holds 340, sends
-102, is refused, and spends the afternoon walking towards a number it cannot
-see. That is P-081's livelock reached by one client on its own, and it is
-reachable in the honest case — two installs of the same app on one `client_id`,
-or a client whose local counter did not survive a crash. Key 11 is the way out,
-and until this rule existed the field list described it as *this client's last
-accepted counter* and nothing told anybody to read it.
+incrementing the value it just had refused. A local increment from a value that is
+already behind the stored one never catches up.
 
 **P-084** — Key 1 `client_id` MUST equal the `client_id` the session was bound to
 at `Hello`. A mismatch MUST be refused with error 12 **before** the counter is
-read or written. Key 1 is on the wire only because it is inside the MAC preimage;
-it is never the lookup key, and the counter row is selected by **the session**,
-not by the body.
-
-Without this the counter store is keyed by a field the sender chooses, and the
-MAC does not save it: the sender computes it under its own `session_key`, so the
-preimage *covers* the field without *constraining* it. Any enrolled client could
-write `2^64 − 1` into another client's row, and that client's every later write
-would fail as stale until somebody drove out — which is exactly the lockout P-065
-exists to prevent, reached through a different message. This document already
-sets the precedent it nearly omitted: `Hello 0x81` key 3 carries `session_id`
-with *MUST match*, and the framing section refuses a second length field on the
-grounds that a second source of the same fact is a second thing to disagree with
-the first.
+read or written. The counter row is selected by **the session**, not by the body;
+key 1 is a second statement of the same fact, and a second source of a fact is a
+second thing to disagree with the first.
 
 **P-082** — `counter` prevents replay. `cmd_id` suppresses duplicates. They solve
 different problems and both are required: a retried command carries the same
 `cmd_id` and a **new** `counter`.
 
-**P-083** — `operation` MUST NOT exceed `MAX_OPERATION` (960 bytes). The
-worst-case CBOR overhead of the signed body and the envelope around it is 49
-bytes, so a payload holds an operation of **975** — and 960 is a cap with
-margin, not that ceiling, the same way every page cap in the reading and
-inventory planes sits under one.
-
-The fifteen bytes are what absorbs a later key. The signed body is one of the
-three whose MAC covers *fields* rather than an encoding, so a key added to it
-enters the preimage and these bytes both; without the margin, adding one turns
-an operation that was legal yesterday into a frame the controller builds and
-then has to refuse. This paragraph said 960 *was* `MAX_PAYLOAD` less the
-overhead, which is an equality that never held: the overhead is 49 and the
-subtraction gives 975.
+**P-083** — `operation` MUST NOT exceed `MAX_OPERATION` (960 bytes). The worst
+case around it is 52 bytes — an envelope of 11 with the sealed body's map header
+in it, 20 of sealed body around the ciphertext including its tag, and 21 of signed
+body — so a payload holds an operation of **972**, and 960 is a cap with twelve
+bytes of margin rather than that ceiling.
+The margin is what absorbs a later key: without it, adding one turns an operation
+that was legal yesterday into a frame the controller builds and then has to
+refuse.
 
 ---
 
@@ -1957,14 +2091,14 @@ The reasoning, the bounds and the rest of the model are in
 [TOPOLOGY-DESIGN.md](protocol/TOPOLOGY-DESIGN.md). What is here is the wire.
 
 ```text
-ReadInventory  0x0D          wrapper
+ReadInventory  0x0D          sealed
   1: rev          u32      the revision the client is assembling; 0 on the first call
   2: what         u8       1 buses · 2 devices · 3 components · 4 signals · 5 parameters
   3: from         u16      first row id to include, inclusive (P-029);
                            0 means from the beginning
   4: dev          u16      optional; what = 5 only, parameters of this device
 
-Inventory  0x8D              wrapper under session_key
+Inventory  0x8D              sealed
   1: rev          u32      the controller's current revision
   2: what         u8       echoed, so the response is self-describing
   3: rows         [ BusRow | DeviceRow | ComponentRow | SignalRow | ParamRow ]
@@ -2149,8 +2283,8 @@ produced, and a client hashes the row bytes exactly as they arrived, which
 `CborReader::raw` hands over whole. That is P-017 and P-048 surviving a hash
 computed at both ends, which is the only way two implementations agree on one.
 
-The label is a third kind of domain input beside P-043's two — not a MAC
-preimage prefix and not an HKDF `info`, but a hash-domain prefix. It carries
+The label is a hash prefix, the kind P-043 also uses for the controller key's
+fingerprint — not a MAC preimage prefix and not an HKDF `info`. It carries
 `v1` so a later encoding cannot make every deployed client surface *controller
 faulty* forever on a healthy site. `rev` is inside it so a digest can never be
 lifted from one revision to another.
@@ -2292,7 +2426,7 @@ P-018 already names where the unit and the scale of a standard quantity come
 from, and it is the registry. A row that carries them again is a second source
 of truth for the number on the screen. `0x0101 DC voltage` is volts at a scale
 of −3, so a 25.6 V bank is 25600; a driver that writes `scale = −2` into its own
-rows publishes 2560 for the same bank, and that row parses, MAC-verifies and
+rows publishes 2560 for the same bank, and that row parses, authenticates and
 renders as 2.56 V. Two controllers can then disagree by a factor of ten about a
 standard quantity, and no client can tell which one is the driver bug, because
 each is telling the truth about itself.
@@ -2352,7 +2486,7 @@ A 32-cell string is longer than one series may be, so it is published as two
 6 of the second signal is cell 23 — the number painted on the cell in the rack.
 A client counting off the front of the signal calls that same element the
 seventh and renders cell 7, which is in the other pack. Both readings parse,
-both MAC-verify, and somebody drives four hours and pulls the wrong cell.
+both authenticate, and somebody drives four hours and pulls the wrong cell.
 
 The default is what hides it. On a single pack `ebase` is absent and therefore
 1, so counting from the front and adding `ebase` give the same number for every
@@ -2409,7 +2543,7 @@ The reasoning and the bounds are in
 [TOPOLOGY-DESIGN.md](protocol/TOPOLOGY-DESIGN.md). What is here is the wire.
 
 ```text
-ReadSignals  0x0E            wrapper
+ReadSignals  0x0E            sealed
   1: rev          u32      the revision the client's cache holds
   2: sel          [ Sel ]  optional; at most MAX_SELECTORS. Absent means every signal
   3: from         u16      first `sig` of the resolved selection to include,
@@ -2422,7 +2556,7 @@ Sel
   3: sig          u16      optional
                            exactly one of the three; none or two is error 1
 
-Readings  0x8E               wrapper under session_key
+Readings  0x8E               sealed
   1: seq          u64      log position these readings reflect
   2: rev          u32      the controller's current revision
   3: at           u64      optional; omitted when the clock has never been set
@@ -2464,7 +2598,7 @@ it by anything volatile inside one `rev` — poll-ring arrival, freshest first,
 selector order — and the second page is a prefix of a different sequence: the
 client resumes at the cursor, receives a set that overlaps what it holds and
 omits signals it will never see, with `next` and `total` reconciling perfectly
-and the MAC verifying. The missing ones keep last poll's value with its `q` byte
+and the tag verifying. The missing ones keep last poll's value with its `q` byte
 still reading `ok`, so nothing ever goes stale on a dashboard that is quietly
 missing the well-pump circuit.
 
@@ -2587,7 +2721,7 @@ the sending half would be correct on the day every part was built together and
 wrong from the first update after it.
 
 Rejecting instead is not available on this path. A client cannot refuse part of a
-MAC'd response it has already verified, and refusing all of it throws away every
+sealed response it has already opened, and refusing all of it throws away every
 other signal on the page because one enum was new — which is the failure P-014
 would cause here, and why P-014 is scoped to requests.
 
@@ -2624,12 +2758,12 @@ anything has asked. The reasoning and the bounds are in
 [TOPOLOGY-DESIGN.md](protocol/TOPOLOGY-DESIGN.md). What is here is the wire.
 
 ```text
-ReadConcerns  0x0F           wrapper
+ReadConcerns  0x0F           sealed
   1: rev          u32      the revision the client's cache holds
   2: from         u16      the `cid` to resume at, inclusive;
                            0 means from the beginning
 
-Concerns  0x8F               wrapper under session_key
+Concerns  0x8F               sealed
   1: rev          u32      the controller's current revision
   2: seq          u64      log position this page reflects, and the pin a
                            walk is held against
@@ -2686,7 +2820,7 @@ from scratch on every page, and only a normative order makes that reproducible.
 Order it by where a row happened to land in the table and the second page is a
 prefix of a different sequence: the client resumes at the cursor, is handed a
 row it already holds and never sees another, with `next` and `total` reconciling
-perfectly and the MAC verifying.
+perfectly and the tag verifying.
 
 An ordinal cursor cannot be checked by the side that receives it. A `cid` cursor
 can — the client watches the ids ascend — which is the argument P-198 makes for
@@ -2710,7 +2844,7 @@ cold morning — so a walk over concerns has nothing else to hold it still.
 Without the pin, a `cid` released under P-180 and handed to a different
 condition between two pages is a row the client sees twice or never, in the
 table that decides whether a charger may start, with every field of both pages
-well formed and the MAC verifying.
+well formed and the tag verifying.
 
 The second half is what keeps the fix from being worse than the fault. Move
 `seq` on any change at all and thirty-two per-cell rows clearing at dawn tear
@@ -2740,10 +2874,10 @@ a new concern rather than handed an old one wearing a new number.
 ### Subscribe — `0x03` / `0x83`
 
 ```text
-Subscribe  0x03         wrapper
+Subscribe  0x03         sealed
   1: from_seq     u64      0 means live only, no replay
 
-SubscribeAck  0x83      wrapper
+SubscribeAck  0x83      sealed
   1: accepted_from_seq  u64
   2: oldest_seq         u64
   3: current_seq        u64
@@ -2814,7 +2948,7 @@ earlier subscription and re-opens a replay window from its own
 ### Event — `0x04`
 
 ```text
-Event  0x04             wrapper under session_key, req_id = 0
+Event  0x04             sealed, req_id = 0
   1: seq          u64
   2: at           u64      optional, omitted when the clock was never set
   3: kind         u16      see REGISTRY
@@ -3095,9 +3229,9 @@ only in-band signal that a frame went missing between the controller and the
 screen.
 
 **P-119** — A subscribed client MUST compare the highest `Event` `seq` it has
-accepted against the newest `seq` reported inside the MAC'd responses it is
+accepted against the newest `seq` reported inside the sealed responses it is
 already receiving — `Readings 0x8E` key 1, `SubscribeAck 0x83` key 3
-`current_seq`, and `Hello 0x81` key 8 `log_newest_seq` — and MUST treat a
+`current_seq`, and `HelloReport` key 8 `log_newest_seq` — and MUST treat a
 divergence that persists across a bounded number of such responses as a broken
 stream: surface it, reconnect, and reconcile with a single bounded `ReadLog`,
 exactly as P-097 permits for an unexplained hole.
@@ -3107,19 +3241,19 @@ are not.** `type` is in the clear (P-018), so the comms processor can drop every
 `0x04` without decoding a body and without knowing what any of them said. Total
 suppression produces no hole, because a hole is a gap between two records that
 arrived and none arrive. Every rule above — P-096's three causes, P-097's
-`0x0701` accounting, P-098's separate MAC per session — runs on evidence that
+`0x0701` accounting, P-098's separate copy per session — runs on evidence that
 suppression is careful never to create. A relay that drops one event in ten is
 caught immediately; one that drops all of them looks exactly like a quiet site,
 which is what this site looks like for most of the year.
 
 What makes the check cheap is that the answer is already on the wire and already
 authenticated. The controller's newest `seq` rides inside three responses a
-client asks for anyway, under a MAC the comms processor cannot forge — so
+client asks for anyway, under a tag the comms processor cannot forge — so
 "nothing has happened" and "you have been told nothing has happened" become two
 different, comparable numbers, with no keepalive, no new field and no traffic on
 a link that is metered.
 
-**P-098** — The controller MUST send one separately-MAC'd copy of an event to
+**P-098** — The controller MUST send one separately sealed copy of an event to
 each subscribed session. The comms processor holds no key and therefore cannot
 fan out; it routes. At eight sessions this is 0.026 % of the UART and 0.014 % CPU
 duty on the target, which is what makes the honest option affordable.
@@ -3147,11 +3281,11 @@ written here rather than rediscovered then.
 ### ReadLog — `0x05` / `0x85`
 
 ```text
-ReadLog  0x05           wrapper
+ReadLog  0x05           sealed
   1: from_seq     u64
   2: max_entries  u16      clamped to 64
 
-LogPage  0x85           wrapper
+LogPage  0x85           sealed
   1: entries      [ LogEntry ]
   2: next_seq     u64      pass back to continue
   3: oldest_seq   u64      what the controller still holds
@@ -3177,10 +3311,10 @@ there is one catch-up mechanism rather than one per transport.
 ## Configuration
 
 ```text
-GetConfig  0x06         wrapper
+GetConfig  0x06         sealed
   1: section      u16      see REGISTRY
 
-Config  0x86            wrapper
+Config  0x86            sealed
   1: section      u16
   2: version      u32      increments on every accepted write
   3: body         map      optional; the section's body as Config carries it,
@@ -3191,7 +3325,7 @@ operation body of SetConfig  0x07
   2: expected_version  u32
   3: body         map      the section's body as SetConfig carries it, below
 
-SetConfigAck  0x87      wrapper
+SetConfigAck  0x87      sealed
   1: section      u16
   2: version      u32      the new one
   3: outcome      u8       see REGISTRY
@@ -3323,10 +3457,10 @@ and reports; the controller holds the latest of each and answers from it
 ([LINK.md](protocol/LINK.md) *Wi-Fi scan and join state*).
 
 ```text
-WifiScan  0x11          wrapper
+WifiScan  0x11          sealed
   1: refresh      bool     true asks for a new scan
 
-WifiScan  0x91          wrapper
+WifiScan  0x91          sealed
   1: scan         u8       scan_state, the most recent scan:
                            1 none · 2 running · 3 complete · 4 failed
   2: refused      u8       optional; scan_refusal, why this request's refresh
@@ -3347,10 +3481,10 @@ Ap
   4: band         u8       wifi_band: 1 ghz_2_4 · 2 ghz_5 · 3 ghz_6
   5: channel      u8       1 to 233, within that band
 
-WifiStatus  0x12        wrapper
+WifiStatus  0x12        sealed
   (an empty map)
 
-WifiStatus  0x92        wrapper
+WifiStatus  0x92        sealed
   1: section      u32      the network section's version on the controller;
                            0 when never written or unreadable (P-108)
   2: version      u32      optional; the section version the radio is acting on
@@ -3471,7 +3605,7 @@ record on the one state nobody needed to hear.
 
 **P-221** — A client MUST present the list and the status as the comms
 processor's report, and no decision on the controller or a client that grants
-anything MAY rest on them. The controller's MAC says it relayed them, not that
+anything MAY rest on them. The controller's seal says it relayed them, not that
 they are true: a hostile comms processor can list a network that is not there
 and report `joined` from a board that is not. This is `fw_comms`'s rule
 (L-032) for the same reason. None of it gains that processor anything: the
@@ -3486,7 +3620,7 @@ passphrase a person types for the network it listed reaches it through
 operation body of Time  0x0A
   1: at           u64      ms since epoch
 
-TimeAck  0x8A           wrapper
+TimeAck  0x8A           sealed
   1: outcome      u8       see REGISTRY
   2: at           u64      optional; the controller's time after the write,
                            omitted when the clock has never been set
@@ -3657,7 +3791,7 @@ before the operation executes.
 
 The armed state is what makes "somebody is at the panel" an authorisation rather
 than a coincidence. Without rules 1 and 2, holding the button is a *condition* a
-client can wait for: an attacker banks a floor-crossing frame with a valid MAC
+client can wait for: an attacker banks a floor-crossing frame with a valid tag
 and a fresh counter, retries it in a loop, and it lands the moment a technician
 holds the button down for an unrelated reason — enrolling a new phone, most
 likely, since that is the press this document already asks people to make. The
@@ -3679,7 +3813,7 @@ an unauthenticated, pollable answer to *is somebody standing at the controller
 right now* — strictly better for the attacker above than the `pairing_open`
 oracle rule 1 exists to close, and available to anybody who can reach the port
 rather than only to an enrolled client. Outcome 4 tells a client the same thing
-one refusal later, on a MAC'd response, at a rate P-118 bounds.
+one refusal later, on a sealed response, at a rate P-118 bounds.
 
 **The enrolment window and the floor override are separate states and either may
 be true without the other.** The enrolment window is 120 seconds long, opened by
@@ -3735,7 +3869,7 @@ operation body of Command  0x08
   2: kind         u16      see REGISTRY
   3: args         map
 
-Ack  0x88               wrapper
+Ack  0x88               sealed
   1: cmd_id       u32
   2: outcome      u8       see REGISTRY
   3: detail       text     operator-facing, <= 64 bytes
@@ -3894,21 +4028,19 @@ without help.
 ## Errors
 
 ```text
-Error  0xFF             bare — no session to key a MAC with
+Error  0xFF             bare — no session to seal it under
   1: code         u16      see REGISTRY
   2: detail       text     <= 64 bytes
 
-Error  0xFF             wrapper under session_key, the bare body above inside
-  1: payload      bstr
-  2: mac          bstr16
+Error  0xFF             sealed — the body above as the inner body of P-231
 ```
 
-Which of the two a sender uses is decided by **P-142 and nothing else**: wrapped
+Which of the two a sender uses is decided by **P-142 and nothing else**: sealed
 when the sender holds a session for that `session_id`, bare when it does not.
 
-The registry's MAC'd column is not a second test for the same question. It is the
+The registry's sealed column is not a second test for the same question. It is the
 **receiver's** check — the list of codes a receiver refuses to read out of a bare
-body — so a bare `Error` carrying a code marked MAC'd is discarded under P-051
+body — so a bare `Error` carrying a code marked sealed is discarded under P-051
 rather than acted on. Read as an instruction to the sender it becomes a rule that
 cannot be obeyed: the conditions where there is genuinely no session are exactly
 the ones where the sender has no key to honour it with. One column, one meaning,
@@ -3924,28 +4056,29 @@ error code for the same condition, **the outcome is what is sent**.
 
 Two answers to one refusal is one implementer emitting an error while another
 implements the outcome as dead code, and the split is not cosmetic: an outcome
-rides inside a MAC'd response and most of these error codes do not, so the
-duplicate is also the forgeable one. An over-cap config write is `SetConfigAck`
-outcome 5 (P-090), a closed pairing window is `Pair 0x8B` outcome 2 (P-066), a
-failed pairing proof is `Pair 0x8B` outcome 3 (P-051), and a version mismatch is
-outcome 2 `stale_version` (P-100). Codes 13 and 15 are the error codes the first
-two replaced, and both are now `withdrawn` in
-[REGISTRY.md](protocol/REGISTRY.md) — which is what this requirement looks like
-once it has been applied rather than only stated. Code 10 stays live because it
-still answers a wrapper MAC and a signed request; what it must not answer is a
-`Pair`.
+rides inside an authenticated response and most of these error codes do not, so
+the duplicate is also the forgeable one. An over-cap config write is
+`SetConfigAck` outcome 5 (P-090), a closed pairing window is `Pair 0x8B` outcome
+2 under its refusal tag (P-241), and a version mismatch is outcome 2
+`stale_version` (P-100). Codes 13 and 15 are the error codes the first two
+replaced, and both are now `withdrawn` in [REGISTRY.md](protocol/REGISTRY.md) —
+which is what this requirement looks like once it has been applied rather than
+only stated. Code 10 answers a message that does not open, pairing message 1
+included: that is the one pairing refusal the controller cannot authenticate,
+because it cannot know which label the peer used.
 
 **P-142** — Which of the two shapes an `Error` takes is decided by whether the
-**sender** holds a session for that `session_id` — wrapped under `session_key`
-when it does, bare when it does not. A receiver MUST NOT decide by inspecting the
-body: it applies its own session state, and P-051 stands, so a bare body carrying
-a code the registry marks MAC'd is discarded rather than read. Letting the body
-choose is letting the comms processor strip the MAC off a refusal to hide it.
+**sender** holds a session for that `session_id` — sealed under the session's
+keys when it does, bare when it does not. A receiver MUST NOT decide by inspecting
+the body: it applies its own session state, and P-051 stands, so a bare body
+carrying a code the registry marks sealed is discarded rather than read. Letting
+the body choose is letting the comms processor strip the seal off a refusal to
+hide it.
 
 The two sides can disagree, and one code exists for exactly that: a client whose
 session the controller has already dropped gets a bare error 9 where it expected
-a wrapper. So a client that receives an `Error` on a session it believes is live,
-and that is not the wrapper or does not verify, MUST NOT act on its code and MUST
+a sealed one. So a client that receives an `Error` on a session it believes is
+live, and that is not sealed or does not open, MUST NOT act on its code and MUST
 NOT conclude anything about the site from it (P-055). It reconnects and sends a
 new `Hello`. It MUST NOT conclude that its earlier writes did not land — the log
 is what says that.
@@ -3991,13 +4124,14 @@ places (L-003, L-012, L-062).
 **Shall not:** decode a body, cache controller state, answer a request on the
 controller's behalf, hold automation configuration, interpret command semantics,
 or **fan out an event** — it holds no key, so it cannot produce a valid copy.
+Every body after a handshake is sealed, so it cannot read one either.
 
 | | Where | Why |
 |---|---|---|
 | Wi-Fi credentials | Cached on the comms processor, encrypted in its own NVS; controller holds the master copy | It must associate at boot without waiting for the controller |
 | TLS certificates, cloud endpoint | Comms processor | Transport concerns |
 | Connection routing table | Comms processor, 8 rows ([LINK.md](protocol/LINK.md) L-060, L-061) — it owns the transports, not the bindings | Transport concern by definition |
-| Device key, client keys, counters | **Controller only, never transmitted** | The whole basis of authentication |
+| Controller key, random bit generator state, the client table's keys, counters | **Controller only, never transmitted** | The whole basis of authentication |
 | Everything about the site | Controller | It is the thing that decides |
 
 ---
@@ -4007,12 +4141,12 @@ or **fan out an event** — it holds no key, so it cannot produce a valid copy.
 An implementation is conforming when all of these pass. Controller pairing
 checks MUST include P-066's first-enrolment exception: a valid empty client table
 read at boot on a board without a pushbutton opens one 120-second window; expiry does
-not reopen it in that boot; a first successful `Pair` closes it; an enrolled
+not reopen it in that boot; a first successful `Enrol` closes it; an enrolled
 unit's reboot opens nothing while its table remains non-empty; factory reset
 restores eligibility on subsequent boots; a boot that finds an absent or
 unreadable table and repairs it opens nothing, but a later boot that reads the
 valid empty table is eligible; and a board with a pushbutton never opens a
-window at power-on. A wrong printed-secret proof still fails inside the boot window. PairingWindow reports
+window at power-on. A pairing under the wrong label still fails inside the boot window. PairingWindow reports
 MUST follow L-193 through L-195, including the remaining time after a delayed
 link and closure after enrolment. The selector gesture remains available on a
 board without a pushbutton, including after the boot window expires.
@@ -4029,7 +4163,7 @@ MQTT has no transport vectors. Neither is conformance surface — see [DEFERRED.
    cannot catch on its own, 254 bytes followed by a zero, where an encoder and a
    decoder that are wrong the same way agree with each other and with nobody
    else.
-3. Every single-bit flip in a framed message is caught by the CRC or the MAC.
+3. Every single-bit flip in a framed message is caught by the CRC or the tag.
 4. A truncation at every byte offset of every message decodes to an error, never
    a panic and never a partial accept.
 5. Random bytes fed to the resynchroniser for a million frames produce no panic,
@@ -4049,8 +4183,10 @@ MQTT has no transport vectors. Neither is conformance surface — see [DEFERRED.
    nothing and counts nothing (P-022), and a signed write re-sent under a fresh
    `req_id` with its old counter is refused by the counter; a replayed event is
    rejected by `seq`; a `LogPage` whose entries go backwards is accepted; a
-   response moved to another `req_id` fails its MAC.
-9. Removing any single MAC check causes at least one test to fail loudly.
+   response moved to another `req_id` fails to open.
+9. Removing any single authentication check — a tag, a handshake step, the
+   admission tag, the pairing refusal tag, the fingerprint comparison — causes at
+   least one test to fail loudly.
 10. An `Error` answering a request is matched to that request by its echoed
     `req_id`; an `Error` carrying `session_id = 0, req_id = 0` is surfaced as a
     link diagnostic rather than dropped, and never completes a request.
@@ -4077,3 +4213,8 @@ MQTT has no transport vectors. Neither is conformance surface — see [DEFERRED.
     replaces what the controller holds; a subsequent read returns the written
     body and its nonzero version (P-100). A mismatched expected version is
     refused, and clients reject a `Config` whose version and body disagree.
+16. Both handshakes reproduce the published messages from the published keys; a
+    handshake whose prologue differs from the controller's in any field fails; a
+    pairing whose message 2 carries a key that does not match the label's
+    fingerprint is abandoned before message 3; and an all-zero key agreement is
+    refused on both sides (P-227, P-228, P-236).

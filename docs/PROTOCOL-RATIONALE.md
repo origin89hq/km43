@@ -140,7 +140,11 @@ compromised, and the interesting question is what that buys an attacker.
   and treats a persisting pattern as a link that answers heartbeats and carries
   no traffic, which enters the heartbeat ladder that already exists. The bounds
   are in [`protocol/LINK.md`](protocol/LINK.md).
-- **Read everything it forwards.** See below; this is a stated V1 line.
+- **See who talks, and how much.** Every body after a handshake is sealed, but
+  the envelope is not: `type`, `session_id` and `req_id` are what it routes on,
+  so it sees which kind of message goes where, how often and how large. It also
+  reads `Discover`, which is unauthenticated because no key exists yet: the
+  `device_id`, the model, the epoch and whether the pairing window is open.
 - **Exhaust tables.** Every table has a cap and refuses rather than evicting, so
   the cost of trying is bounded and visible.
 - **Lie about connections.** Connection identity crosses the UART as link-local
@@ -149,7 +153,7 @@ compromised, and the interesting question is what that buys an attacker.
   the *only* thing it is trusted to say is "a connection appeared". Every claim
   about *who* is behind that connection is checked against a key it does not
   have.
-- **Offer a time.** `TimeOffer` carries no MAC, because no key on that link
+- **Offer a time.** `TimeOffer` carries no tag, because no key on that link
   would help. It cannot move the clock below the newest log record the
   controller holds — a floor that is a fact about this unit rather than a build
   timestamp frozen at compile time, and the difference is a unit whose RTC backup
@@ -164,11 +168,19 @@ compromised, and the interesting question is what that buys an attacker.
 **What it must not be able to do, and cannot:**
 
 - Start the generator, change a setpoint, or accept a firmware image. Every write
-  carries a MAC the controller checks itself.
-- Lie about the site. Every response and every event carries a MAC too, which is
-  the largest change in this revision and has its own section below.
-- Learn a key that would let it do either of those later. No key is ever
-  transmitted.
+  is sealed under a session key it does not hold, and the controller checks the
+  tag itself.
+- Lie about the site. Every response and every event is sealed too, and has its
+  own section below.
+- Read the site. The readings, the configuration, the Wi-Fi passphrase in a
+  `SetConfig` and every command cross it as ciphertext.
+- Learn a key that would let it do any of those later. No private key or shared
+  secret is ever transmitted (P-045), and the keys a session runs under come
+  from ephemeral keys drawn for that handshake, so a recording it holds today
+  does not open with anything it could steal tomorrow.
+- Put itself between a phone and the controller. The owner's phone checks the
+  controller's key against the fingerprint printed on the label (P-236), and
+  every phone after that runs its sessions against the key it pinned.
 
 **Out of scope, said plainly:** somebody with the controller board in their hands
 and a debug probe. Physical possession of the STM32 is physical possession of the
@@ -184,12 +196,13 @@ phone, and the controller has no way to tell and no way to log the difference.
 The whole authentication story would be protecting the internet-facing hop and
 nothing else.
 
-So the device key lives in STM32 storage, is never exposed to the ESP32, and the
-controller authenticates end to end. The comms processor routes.
+So the controller key, the random bit generator's state and every enrolled
+client's key live in STM32 storage and are never exposed to the ESP32, and the
+controller authenticates and encrypts end to end. The comms processor routes.
 
 ---
 
-## Keys are derived, never transported
+## Keys are agreed, never transported
 
 ### The history, because it is the best argument for the rule
 
@@ -207,7 +220,10 @@ That is the reason this file exists and the reason the vectors file exists. The
 failure was not a weak primitive. It was prose and format disagreeing, in a
 document long enough that nobody noticed.
 
-### So both sides derive it
+### v1 derived every key from the label, which was the next thing wrong
+
+v1's answer to that draft was to have both sides derive the key instead of
+sending it:
 
 ```text
 client_key = HKDF(salt=device_id, ikm=printed_secret,
@@ -215,41 +231,140 @@ client_key = HKDF(salt=device_id, ikm=printed_secret,
                   L=32)
 ```
 
-`epoch` is P-085's `u32` counter in FRAM, incremented on every factory reset and
-never decremented. It is in that `info` because it is the **only input to the
-formula that anybody can ever change**: `device_id` is etched, and the printed
-secret is on a label that cannot be reprinted into a unit already on a wall.
-Without it, a factory reset invalidates nothing — press the button, reset, pair a
-new phone, it is issued `client_id 1`, and the phone that was stolen last week is
-already holding `client_id 1`'s key. `epoch` is what makes a reset a revocation
-rather than a gesture, and it is why the documented remedy for a compromised
-client is a remedy.
+Nothing crossed the link but a proof of knowledge, and `epoch`, bumped on every
+factory reset, was meant to make a reset a revocation: without it, the phone
+stolen last week already held the key for `client_id 1` that a new phone would be
+issued after the reset.
 
 That field was missing from this page for a revision, which is worth recording
 rather than quietly correcting. [PROTOCOL.md](PROTOCOL.md) had it and so did
 `v1.json`; the formula printed here derived a different key for every client, in
 the one file whose job is to explain the formula. P-001 would have caught it — on
-a bench, on a phone that scanned the right label and got `bad_proof` — which is
-P-001 earning its place and also the most expensive way in the world to find a
+a bench, on a phone that scanned the right label and got v1's `bad_proof` — which
+is P-001 earning its place and also the most expensive way in the world to find a
 missing field in a document. Nothing generated this block from the vectors, so
 nothing compared them.
 
-The printed secret reaches the phone through its camera, off a QR code. It never
-crosses the link. What crosses is a proof of knowledge, and an observer — which
-here means the comms processor, sitting on both the challenge and the proof —
-learns nothing it can replay.
+The deeper problem was in the formula, not the page. Every input to it except the
+label is public: `device_id` is in `Discover`, so is `epoch`, and `client_id`
+counts from 1. So whoever photographed the label once held every slot's key at
+every epoch, factory resets included, for the life of the unit, and every session
+anybody had recorded opened on the day the label leaked. v1 wrote that down as a
+limitation with a trigger, the first unit to leave our hands. What fired it first
+was the product: several people per controller, some invited without visiting it.
+An invitee's key would have had to come from the label, which neither the owner's
+phone nor the cloud should hold, and freeing a slot retires nothing when the label
+derives the same key again.
 
-Two conditions make that sound, and both are requirements rather than
+### So each client makes its own key, and the controller has one
+
+A client generates its static key pair from its own CSPRNG when it enrols, and
+keeps it. The controller has one key pair of its own, generated at manufacture.
+Neither private half ever crosses the link (P-045). The two sides agree the keys a
+session runs under by Noise (P-226): X25519, ChaCha20-Poly1305 and SHA-256, the
+same shape Matter uses for the same problem under the same constraint.
+
+The label now derives exactly two things, `pair_psk` and `refusal_key` (P-088),
+and both are used only while somebody at the panel has opened the pairing window.
+No client key, session key, controller key or random value comes from it. It
+authenticates one thing: a pairing attempt made in person.
+
+**Why `XXpsk0` to enrol, then `IK` for every session.** The pattern follows from
+who knows what beforehand. At enrolment the phone has the label and no key the
+controller knows, so both static keys have to travel inside the handshake, which
+is `XX`, and the label's pre-shared key is mixed in before anything else, which
+is `psk0`. A peer without the label then fails at message 1 for the price of an
+HKDF chain and one tag check, with no key agreement spent on it. After enrolment
+each side holds the other's static key, so `IK` does it in one round trip: the
+phone's key travels encrypted, message 1 is readable only by the controller that
+holds the pinned key, and message 2 opens only for it.
+
+**Why the fingerprint is on the label.** Without it, `XXpsk0` authenticates the
+controller by the pre-shared key alone, and the pre-shared key is the label.
+Anybody who has photographed the label and holds a network position — a
+compromised comms processor, a host on the site's Wi-Fi answering mDNS, a phone
+in Bluetooth range — answers the owner's `Discover` with a key of its own,
+completes the handshake with the owner's phone, and pairs itself into the real
+controller in the same window. The owner's phone pins the attacker's key, and
+every session it opens for the life of that enrolment runs through a relay that
+reads and rewrites it. Printing a 16-byte hash of the controller key (P-236) and
+refusing a message 2 that does not match closes that for 33 more characters in
+the QR code (P-049). The fingerprint is public and grants nothing.
+
+**Why the controller key is made at manufacture and never changes.** The
+STM32G0B1 has no hardware random number generator, and a key minted at first
+boot from whatever a Cortex-M0+ can scrape together at power-on is a key nobody
+can vouch for. The fingerprint also has to exist before the label is printed, so
+the key has to exist before it too. It stays the same across factory resets
+(P-235) because rotating it would revoke nothing — what ends a stolen phone's
+access is its slot — and would break the one thing the label can still vouch for
+once it is on a wall, along with every invited phone's pin. The manufacturing
+station keeps the fingerprint and nothing else.
+
+**Why the controller's randomness is a ratchet.** Every ephemeral key and every
+challenge the controller uses comes from a deterministic random bit generator
+seeded at manufacture (P-237). v1 minted challenges from the printed secret,
+which was harmless while the printed secret was every key anyway; carried over,
+it would have made every controller ephemeral something a photographed label
+computes. The state advances and is persisted before each draw is used, because a
+power cut between a draw and its successor being durable draws the same value
+again after the reset: the same challenge, the same ephemeral, and a recorded
+`Hello` accepted a second time under the same session keys. It is never
+re-initialised, or every unit returns to the sequence it started with. Advancing
+first also means a state read out with a probe yields every later draw and none
+of the earlier ones, so sessions recorded before a capture stay sealed.
+
+**What it costs, measured rather than estimated.** One X25519 operation is about
+12.0 million instructions on this core: measured under QEMU's micro:bit Cortex-M0
+machine with `-icount shift=0`, `x25519-dalek` 3 on its `u32` backend, built at
+`opt-level = "s"`. At 64 MHz that is roughly 190 to 280 ms, depending on how many
+cycles an instruction really takes, which QEMU does not model. v1's deferred
+entry estimated tens of milliseconds per session, and was wrong by more than an
+order of magnitude: a `Hello` costs the controller four DH operations and a key
+generation, one to one and a half seconds, and a pairing costs three at message
+2 and two at message 3. That is why three rules exist (P-243, P-238, P-241). Key agreement
+never runs inside the control loop and one handshake runs at a time; a `Hello`
+names its slot with an HMAC before any DH, so a stranger's garbage costs the
+controller a few milliseconds rather than a quarter of a second; and a pairing
+refused because the window is closed is answered under an HMAC rather than a
+message 2.
+
+The same measurement run over `km43`'s own code for the controller's side, under
+QEMU's MPS2 AN385 model running the same `thumbv6m` build:
+
+| Step | Instructions |
+|---|---|
+| `Hello` admission tag, one slot | 48 thousand |
+| `Hello` `es`, `ss` and the offer | 24.2 million |
+| `Hello` key generation, `ee`, `se` and the report | 35.2 million |
+| `Pair` message 1 opened | 242 thousand |
+| `Pair` refusal, message 1 opened and tagged | 270 thousand |
+| `Pair` message 2 | 35.2 million |
+| `Enrol` message 3, the admission key and `Enrol 0x93` | 24.2 million |
+| One 900-byte response sealed | 150 thousand |
+
+What pairing does not hide, said out loud: `PairOffer` is sealed under a key the
+label derives and nothing else, so somebody who records a pairing and later
+photographs the label reads the `label` and `client_kind` it carried. Nothing
+after message 1 has that weakness; every session key comes from ephemeral keys.
+
+The handshake's stack peaks at 3.4 KB. A pairing held between messages 2 and 3
+is 176 bytes of state, and a session's keys, nonce and window are 104. Flash for
+the new primitives is about 11 KB, X25519 7.8 KB and ChaCha20-Poly1305 2.9 KB,
+inside the 10–15 KB that entry guessed; SHA-256 and HMAC were already there for
+v1.
+
+Two conditions make the label sound, and both are requirements rather than
 recommendations:
 
 - **The printed secret is exactly 32 bytes — 256 bits.** P-044 fixes it there,
   printed as 64 lowercase hex characters and fed to the KDF as the decoded bytes.
   Not *at least* something: the vectors are computed against a 32-byte IKM, so an
   implementer who takes a floor from this paragraph and prints 16 bytes derives a
-  different `client_key` for every client and fails every vector, which is the
-  one disagreement this file exists to stop. A six-digit PIN is brute-forceable
-  offline from a single observed proof, and the observer is not hypothetical: it
-  is the chip in the same enclosure.
+  different `pair_psk` and fails every pairing vector, which is the one
+  disagreement this file exists to stop. A six-digit PIN is brute-forceable
+  offline from a single recorded pairing message 1, and the recorder is not
+  hypothetical: it is the chip in the same enclosure.
 - **A physical act still gates enrolment.** Knowing the secret is not by
   itself sufficient. P-066 opens a 120-second window with the pushbutton or
   selector gesture, with a temporary power-on exception for first enrolment
@@ -260,9 +375,9 @@ which has no pushbutton. Power-on opens one 120-second window only when boot
 reads a valid empty client table. A boot that repairs a lost or corrupt table
 opens nothing; a later boot that reads the valid empty table is eligible.
 Exposure is bounded to an unpaired unit and ends at its first successful
-enrolment; an attacker still needs the printed secret to
-produce the Pair proof. The selector gesture remains available on revision A,
-including after the boot window expires and for later enrolments.
+enrolment; an attacker still needs the printed secret to open pairing message 1.
+The selector gesture remains available on revision A, including after the boot
+window expires and for later enrolments.
 
 The cost is that power-on does not prove somebody is at the panel. A power cut
 at an unattended, unpaired site opens the window with nobody present. Someone
@@ -272,23 +387,22 @@ is re-paired. Losing the client table to corruption locks out every enrolled
 client anyway. Power-on eligibility returning from the next boot after recovery
 is how the owner re-pairs until the button exists; an attacker still needs the
 printed secret and presence in Bluetooth range during that window. This is a
-temporary acceptance of that risk, not a weaker Pair proof. Retire the exception
-when the board gains its pushbutton, as tracked in
+temporary acceptance of that risk, not a weaker pairing check. Retire the
+exception when the board gains its pushbutton, as tracked in
 [firmware#60](https://github.com/origin89hq/firmware/issues/60); a board with a
 pushbutton must never use it. The controller firmware owns boot eligibility,
-window timing and closure. KM43 carries the window report and checks the proof;
-its codecs cannot establish that a physical act occurred.
+window timing and closure. KM43 carries the window report and checks the
+handshake; its codecs cannot establish that a physical act occurred.
 
-**The limitation, stated rather than left to be discovered:** anyone who
-photographs the label can derive keys, permanently, and there is no forward
-secrecy — a recorded session stays recoverable if the label leaks later. The
-upgrade is an authenticated key agreement: X25519 with ChaCha20-Poly1305,
-Noise-style, which is what Matter does for exactly this problem under exactly
-this constraint. Roughly 10–15 KB of flash against a ~256 KB budget, and tens of
-milliseconds per session on an M0+. Worth doing. Not worth doing before there is
-a bench, and the trigger is the first unit that leaves our hands.
-
----
+**What is left, stated rather than left to be discovered.** The label plus an
+open window is still the whole of the authority to enrol, and after a factory
+reset whoever pairs first becomes the owner. That is the ownership root, accepted
+as it stands. `Discover` still gives `device_id` and the epoch, and mDNS the
+`device_id`, to anybody on the network, because a client has to learn them
+before any key exists. And a
+reclaim now does what v1's only pretended to: the old install's key is erased with
+the slot (P-240), where v1's label derived the same key again and the old install
+kept working.
 
 ## Readings need authentication too
 
@@ -310,41 +424,73 @@ the consequence of believing it is that nobody drove out.
 For a product whose proposition is *you can trust what it tells you about a place
 you are not at*, the read direction is not the lesser problem. It is the product.
 
-So every response and every event carries a MAC over its type, its routing fields
-and its payload, under the session key. Sixteen bytes and one HMAC-SHA256 per
-message, on a device budgeted at roughly two thousand log records a day and a
-1 Hz control loop. It is not a number anybody has to think about again.
+So every response and every event is sealed: encrypted with ChaCha20-Poly1305
+under the session's key for that direction, with a 16-byte tag over the
+ciphertext and the envelope fields the comms processor routes on. v1 did the
+authenticating half with an HMAC-SHA256 body wrapper and left the payload
+readable; why it stopped there is under *What v1 deliberately did not provide*.
+Sixteen bytes and one AEAD per message, on a device budgeted at roughly two
+thousand log records a day and a 1 Hz control loop.
 
 ### The shape, and why it is that shape
 
-The MAC lives in a body wrapper — `{1: payload bstr, 2: mac bstr16}` — mirroring
-the byte-string `operation` pattern that signed requests already use. One rule
-for both directions instead of two.
+The sealed body is `{1: sealed}` on a request and `{1: sealed, 2: nonce}` on a
+response or an event (P-231): the ciphertext with its tag, and the controller's
+nonce where the nonce is not already on the envelope. Nothing outside `sealed`
+is interpreted before the tag verifies, and the skip-unknown rule is switched off
+for this one map, because a key added beside the ciphertext would be meaningful
+and outside the tag, which is the classic shape of the bug.
 
-**The verifier authenticates exactly the bytes that arrived, never a
-re-encoding.** This is the COSE_Mac0 pattern and it exists to delete a whole
-class of bug: no canonicalisation rule can be got wrong by one encoder in one
-language, because no canonicalisation rule is load-bearing. The deterministic
-encoding house rule is for debuggability and byte-stability. "Both encoders sort
-map keys identically" is not a property anybody can check at 2 a.m. across two
-languages, so nothing depends on it.
+**The receiver authenticates exactly the bytes that arrived, never a
+re-encoding.** v1's wrapper got this from the COSE_Mac0 pattern; the AEAD gets it
+for free, because the tag is over the ciphertext as it came off the wire and the
+inner body is decoded only after it opens (P-048). No canonicalisation rule can
+be got wrong by one encoder in one language, because none is load-bearing. The
+deterministic encoding house rule is for debuggability and byte-stability. "Both
+encoders sort map keys identically" is not a property anybody can check at 2 a.m.
+across two languages, so nothing depends on it.
 
-**Every preimage is domain-separated and carries `type`.** The labels
-(`km43/v1/req`, `/rsp`, `/evt`) mean a preimage from one direction can never
-collide with one from another, and `type` inside the preimage means a signed
-`SetConfig` cannot be replayed as a signed `Command`.
+**The associated data is `type | session_id | req_id`, and each of the three is
+there for a failure** (P-234). The two directions already have different keys,
+because Noise's `Split()` gives one to each; v1 had to separate them with
+`km43/v1/req`, `/rsp` and `/evt` labels instead. `type` is what separates two
+messages in one direction, so a sealed `SetConfig` cannot be replayed as a
+sealed `Command` (P-046). And `req_id` is inside both directions:
+`(session_id, req_id)` is exactly what the untrusted router correlates on, and
+without it in a response's associated data the router can take a genuinely
+authenticated answer and attach it to the wrong outstanding request (P-047).
 
-**`req_id` is inside both directions.** `(session_id, req_id)` is exactly what the
-untrusted router correlates on. With `req_id` in the response MAC and absent from
-the request MAC, the router can take a genuinely authenticated answer and attach
-it to the wrong outstanding request — which is the failure the response MAC was
-added to prevent, arriving through the one field it forgot to cover.
+**A nonce is used once per key, and the sealing side picks it** (P-232). A
+request's nonce is its `req_id`, issued by the client's sealing state itself; the
+controller's nonce counts from 0 across every response and event it seals. A
+nonce used twice under one key gives away the XOR of two plaintexts and the
+one-time Poly1305 key, and with that key anybody on the path forges every later
+message of the session. So the counter lives where a caller cannot supply one,
+and there is one of it: an application picking a `req_id` and a cipher picking a
+nonce is two sources for one number, which is the version of this that goes
+wrong. Neither key nor nonce is ever persisted (P-230), so a reboot or a restart
+ends the session and the next `Hello` starts from fresh ephemeral keys; nothing
+has to remember a nonce across a power cut, which is the one thing FRAM would
+otherwise have had to get right on every message. There is no rekey either: a
+session long enough to want one is replaced by a new `Hello`, which recovers
+from a key compromise where Noise's `Rekey()` would not. A session ends before a
+`req_id` would pass `2^32 − 1`, which at one request every two seconds is more
+than two centuries.
 
-**The client contributes entropy.** `Hello` carries a `client_nonce` and the
-session key binds it. Without it, every input to the session key is either
-long-term or chosen by the controller, so a comms processor holding a recording
-can replay an entire session at a client that has no way to tell fresh from
-stale — and the read direction of this whole section would hold only for writes.
+**A replay is dropped before its tag is checked, and moves nothing.** The
+controller's check for requests is P-022's window on `req_id`; the client keeps
+the same kind of window over the controller's nonce (P-233). The window moves
+only once a tag has verified, because a forged nonce that moved it would push the
+honest messages behind it out of range without the attacker ever needing a valid
+tag. And a replay is not counted as an authentication failure, because that
+would let a relay shed a client's connection using the client's own frames.
+
+**Both ends contribute entropy.** v1's `Hello` carried a `client_nonce` for
+this; now each side's ephemeral key does it (P-071). Without fresh input from the
+client, every input to the session keys is either long-term or chosen by the
+controller, so a comms processor holding a recording can replay an entire
+session at a client that has no way to tell fresh from stale — and the read
+direction of this whole section would hold only for writes.
 
 The anti-rollback check that goes with it — a client noticing that
 `log_newest_seq` or `state_seq` went backwards — is a SHOULD and not a MUST on
@@ -354,45 +500,66 @@ it loudly, keep the session.
 
 ### Why the first units paired in cabins freeze the handshake
 
-Once the first units are paired in cabins, their `client_key` and their stored
-counters are derived from these formulas. Changing an input afterwards is not a
-protocol revision, it is a re-pair of every enrolled client, in person, at every
-site. That puts the handshake in the same category as per-device keys and the
-other choices that cannot be retrofitted to a fielded unit, and it is why the two
-weeks were spent now, while nothing implements this yet, rather than reserved
-for later.
+Once the first units are paired in cabins, each slot holds a client's static key,
+the suite it enrolled under and its admission key, and each phone holds the
+controller key it pinned. Changing a pattern, the prologue, a label or the
+admission tag's formula afterwards is not a protocol revision, it is a re-pair of
+every enrolled client, in person, at every site. Some of it is fixed earlier
+still: the controller key, its fingerprint and the QR payload are fixed when the
+label is printed, and a label cannot be reprinted into a unit already on a wall.
+
+That puts the handshake in the same category as per-device keys and the other
+choices that cannot be retrofitted to a fielded unit, and it is why v1's
+label-derived handshake was replaced outright rather than kept alongside. The
+plan it had written down assumed fielded v1 units, and offered a second handshake
+at `Discover` with v1 supported for their service life. No unit had left our
+hands, so there was nothing to support. What the next change gets instead is the
+suite byte (P-226): a slot pins the suite it enrolled under and a `Hello` must
+present exactly that one (P-239), and the day a controller offers two, the offer
+enters the prologue, so an offer stripped in flight is a handshake that fails
+rather than a quiet downgrade.
 
 ---
 
 ## Events are copied for each session
 
-Once events are authenticated under a session key, one event to eight subscribed
-sessions is eight MACs and eight frames. That sounded expensive, so it was
-costed instead of argued about:
+Once events are sealed under a session key, one event to eight subscribed
+sessions is eight seals and eight frames. That sounded expensive, so it was
+costed instead of argued about. v1 costed it with an HMAC per copy, and the
+cipher that replaced it has not yet been timed on the part, so the CPU line is
+now a bound rather than a figure:
 
 | | |
 |---|---|
 | Eight copies of the event stream, at 921600 8N1 | **0.026 %** of the UART |
-| Eight HMAC-SHA256 per event, on the 64 MHz M0+ | **0.014 %** CPU duty |
+| Eight HMAC-SHA256 per event, on the 64 MHz M0+ (v1) | **0.014 %** CPU duty |
+| Eight ChaCha20-Poly1305 seals per event, on the same part | under **1 %** unless a seal costs more than 27,000 cycles a byte |
 
-Both are costed against a deliberately conservative operating budget: roughly
-two thousand log records a day — one every 43 seconds — and an event frame of
-128 bytes, which is more than twice the framed size of the example in `v1.json`
-and so generous rather than flattering. The arithmetic is written out because a
-number nobody can reproduce is a number that gets quoted for years and was wrong
-the whole time:
+All three are costed against a deliberately conservative operating budget:
+roughly two thousand log records a day — one every 43 seconds — and an event
+frame of 128 bytes, which is more than twice the framed size of the example in
+`v1.json` and so generous rather than flattering. The arithmetic is written out
+because a number nobody can reproduce is a number that gets quoted for years and
+was wrong the whole time:
 
 - **UART.** 8 copies × 128 bytes × 10 bits on 8N1 = 10,240 bits per event. One
   event every 43.2 s is 237 bit/s against 921,600. That is 0.026 %.
-- **CPU.** An HMAC-SHA256 over a 128-byte preimage is six SHA-256 compression
-  blocks — one for the ipad block, three for the padded preimage, one for the
-  opad block, one for the padded digest. 384 bytes at roughly 125 cycles a byte,
-  which is what SHA-256 costs on a core with no hardware hash, is 48,000 cycles,
-  or 0.75 ms at 64 MHz. Eight of them is 6 ms every 43.2 s. That is 0.014 %.
+- **CPU, v1.** An HMAC-SHA256 over a 128-byte preimage is six SHA-256
+  compression blocks — one for the ipad block, three for the padded preimage,
+  one for the opad block, one for the padded digest. 384 bytes at roughly 125
+  cycles a byte, which is what SHA-256 costs on a core with no hardware hash, is
+  48,000 cycles, or 0.75 ms at 64 MHz. Eight of them is 6 ms every 43.2 s. That
+  is 0.014 %.
+- **CPU, sealed.** One percent of 43.2 s is 432 ms, which is 54 ms for each of
+  eight copies, which is 3.46 million cycles at 64 MHz, which is 27,000 cycles
+  for each of 128 bytes, over two hundred times what SHA-256 costs a byte on
+  the same core. That is a high bar and it is still a bound, not a measurement:
+  the per-message cost on this part is owed, and it belongs beside the X25519
+  figure when it is taken.
 
 A day ten times noisier than the budget still costs a quarter of a percent of the
-UART and a seventh of a percent of the CPU. Two numbers that end the discussion.
-The rest of the argument is about the alternative.
+UART. The CPU is the number to re-check once the seal is measured; the argument
+below does not depend on it, because it is about the alternative.
 
 **A subscription key shared across subscribed sessions** would give one frame and
 real fan-out on the comms processor. It fails on revocation, and it fails
@@ -528,7 +695,7 @@ The refusal outcome carries the same instruction one round trip later.
 
 `counter` orders a client's writes and `cmd_id` suppresses duplicates. Neither
 is a clock, and for a long time nothing else was either. A signed write captured
-at nine in the morning satisfied every rule it met at midnight: the MAC still
+at nine in the morning satisfied every rule it met at midnight: the tag still
 verified, the counter still exceeded the stored one because it did when the
 frame was made, and the dedup entry had aged out ten minutes after it was
 written. *Start the generator*, delivered fifteen hours late, with every check
@@ -544,14 +711,16 @@ The cheaper answer was already written down and was being enforced by nobody.
 what a client does. Making the controller check it costs a `u32` and a small
 bitmask per session, and bounds the delay to whichever comes first: the client's
 next accepted request, or the fifteen-minute session expiry that destroys the
-key the frame was MAC'd under. The tolerance for reordering is not a weakening —
+key the frame was sealed under. The tolerance for reordering is not a weakening —
 four requests may be in flight and may arrive in any order, so a strict
-must-exceed rule would refuse honest traffic on a bad radio.
+must-exceed rule would refuse honest traffic on a bad radio. Since requests are
+sealed, the `req_id` is also the request's nonce (P-232), so the same window is
+what stops the controller opening one nonce twice.
 
 What the controller says when it refuses was left open for a while, and the
 answer is nothing. The obvious move is an `Error`, and under the session key it
-is the one thing this rule must never produce: the response MAC covers
-`(type, session_id, req_id)` and nothing that moves, so an answer to a replayed
+is the one thing this rule must never produce: a response's associated data
+binds it to `(type, session_id, req_id)` and nothing else, so an answer to a replayed
 `req_id` is a second genuine response to a pair that was already answered, and
 the relay now holds two to choose between. A bare code avoids that and buys
 nothing. It would need an allocation argued for out loud, and the only peers
@@ -560,8 +729,8 @@ because an honest client never reuses a `req_id` and never has more than
 `MAX_INFLIGHT` in flight. The broken client times out and retries under a new
 `req_id`, which it does after any lost frame anyway.
 
-The refusal also has to undo what the frame did on its way in. It carries a
-valid MAC, so under the old wording of the session timer it counted as traffic,
+The refusal also has to undo what the frame did on its way in. Its tag
+verifies, so under the old wording of the session timer it counted as traffic,
 and a relay replaying one captured request every fourteen minutes held a
 session open forever while staying clear of the failure limit. So a refused
 request refreshes nothing, and it is not counted as a failure either, since
@@ -577,7 +746,7 @@ is not a rule. If it protects the controller, the controller has to check it.
 
 Every mechanism for detecting a dropped event is built on a **hole** — a gap
 between two `seq` values that arrived. The class-A guarantee, the `records
-dropped` accounting, the per-session MAC: all of them assume something got
+dropped` accounting, the per-session tag: all of them assume something got
 through.
 
 `type` is in the clear, because a receiver has to route a frame before it can
@@ -589,34 +758,48 @@ a quiet one — which is what this site looks like for eleven months of the year
 
 A keepalive would fix it and would cost traffic on a metered link forever. It
 was not needed: the controller's newest `seq` already rides inside `Snapshot`,
-`SubscribeAck` and `Hello`, under a MAC the comms processor cannot forge. The
+`SubscribeAck` and `Hello`, sealed under keys the comms processor does not hold. The
 client compares a number it is already being handed against the highest it has
 accepted. *Nothing has happened* and *you have been told nothing has happened*
 become two comparable numbers, for no bytes at all.
 
 ---
 
-## What v1 deliberately does not provide
+## What v1 deliberately did not provide, and what it provides now
 
-**Confidentiality against our own comms processor.** Stated here so nobody
-discovers it in a review.
+**Confidentiality against our own comms processor was the line v1 drew.** v1
+authenticated every message and encrypted none, so the ESP32 could read everything
+it forwarded: every reading, every command, every configuration value, the Wi-Fi
+passphrase in a `SetConfig`, in the clear on the internal UART. What it learned
+was occupancy patterns, generator activity, energy use and network settings. What
+it could not do was change any of them, forge a report about them, or hold a key
+that would let it do so later. v1 said secrecy needed the AEAD upgrade and would
+arrive with Noise or not at all, rather than be patched onto one message.
 
-The ESP32 can read everything it forwards: every reading, every command, every
-configuration value, in the clear, on the internal UART. What a compromised comms
-processor learns is occupancy patterns, generator activity, energy use and
-network settings. What it cannot do is change any of them, or forge a report
-about them, or hold a key that would let it do so later.
+It arrived with Noise. Every body after a handshake is sealed (P-231), so the
+comms processor now carries ciphertext on every transport, the LAN included. Key
+agreement and encryption landed together on purpose: key agreement alone would
+still have handed the passphrase in `SetConfig`, and every reading, to the chip
+this page assumes is compromised.
 
-Integrity is the property that must hold in V1. Secrecy from our own hardware
-needs the AEAD upgrade described under pairing, and it arrives with Noise or it
-does not arrive. That is a line, drawn on purpose — not an oversight, and not
-something to be quietly fixed by adding encryption to one message.
+**The cloud reads plaintext, by the owner's decision.** TLS terminates at the
+relay, and a cloud service is an enrolled client with its own session like any
+other, so it opens what it is sent. That is what makes server-side alerting,
+summaries and a history people can read while the controller is offline possible
+at all. The alternative was encrypting readings end to end to the site's members,
+with the cloud storing ciphertext it cannot read; it moves alert generation onto
+a phone that is asleep with the app closed in exactly the case nobody is looking,
+and makes every invitation carry a data key as well as an enrolment. The product
+is an alerting service, so the cloud reads. What it cannot do is write on anybody
+else's behalf: every write is sealed under the session of the client that sent
+it, and what a cloud client may write itself is fixed by the capability mask it
+was enrolled with (P-105).
 
-The same line runs out to the cloud. TLS terminates at the relay, so the relay
-can read telemetry, which is what makes server-side alerting and fleet dashboards
-possible at all. Commands are MAC'd end to end regardless, so a compromised relay
-can never forge one. End-to-end encryption to the phone is a product decision,
-deliberately deferred.
+**What is still readable, said plainly.** The envelope is in the clear because it
+is what the comms processor routes on, and `Discover` is unauthenticated because
+no key exists yet. So the relay still sees which kind of message goes where, when,
+and how large, and anybody on the network sees a controller's `device_id`, epoch
+and whether its pairing window is open.
 
 ---
 
@@ -702,6 +885,14 @@ factory reset and by nothing else.**
 
 "And a revoke" is gone from the pairing prose. There is no `Revoke` message.
 
+One premise under this has moved. In v1 no removal could have worked at all,
+remote or physical short of a reset, because the label derived a freed slot's key
+again for whoever held it. With per-client keys, freeing a slot erases the key and
+moves its generation on (P-239), so a removed key stays removed. That is what
+lets [km43#129](https://github.com/origin89hq/km43/issues/129) reopen removal from
+an admin session on the site's own network, with owner slots protected. Until that
+is specified, what this section says is still the rule.
+
 ### Paging the snapshot
 
 A cursor over the snapshot would support the largest sites, which are the ones
@@ -729,7 +920,9 @@ than preserve it as a legacy path. The concrete fixtures now choose the bytes.
 
 ### Reserving the response MAC rather than shipping it
 
-The cheap path was to reserve the wrapper key numbers now, ship the field
+This was argued in v1, when a response was authenticated by an HMAC wrapper
+rather than sealed, and the argument is kept because it applies to any tag. The
+cheap path was to reserve the wrapper key numbers now, ship the field
 definitions, and implement verification when a controller is first granted
 authority over an output. It costs nothing while nothing implements this yet and
 it keeps every response body unchanged.
@@ -757,21 +950,25 @@ reconnect that reads as a formality is a reconnect every second afternoon, on th
 one client that is open all the time. That alone would only be annoying. The
 reason it is not acceptable is what happens when somebody skips it: an
 implementation that simply wraps looks completely normal, and the property
-`req_id` carries quietly stops holding. A response MAC covers
+`req_id` carries quietly stops holding. In v1 a response MAC covered
 `(type, session_id, req_id)` and nothing that changes over time, so a recurring
-`req_id` inside a live session is a genuine, correctly-MAC'd answer from an hour
-ago that verifies against the request being asked now — the comms processor
-answering *is the generator running* with a real *no* it recorded earlier. A rule
-whose violation looks exactly like normal operation, and whose consequence is an
-hour-old answer that verifies, is a rule that will be violated.
+`req_id` inside a live session was a genuine, correctly-MAC'd answer from an hour
+ago that verified against the request being asked now — the comms processor
+answering *is the generator running* with a real *no* it recorded earlier.
+Sealing made the same wrap worse: a request's `req_id` is its nonce (P-232), so
+a wrapped `req_id` is a ChaCha20-Poly1305 nonce used twice under one key, which
+gives away the Poly1305 key and with it every later message of the session. A
+rule whose violation looks exactly like normal operation, and whose consequence
+is a forgery that verifies, is a rule that will be violated.
 
 A `u32` deletes the rule instead of documenting it: at one request every two
 seconds it lasts two hundred and seventy years, which is longer than the copper.
 
 The timing is the other half. The envelope is fixed forever — that is P-010, and
 everything that may change belongs in a body — so the width of `req_id` was a
-decision available exactly once. It is also inside three MAC preimages, which
-freeze with the client keys the first time units are paired in cabins. This was
+decision available exactly once. It is also the request's nonce and inside
+every associated data string, which freeze with the handshake the first time
+units are paired in cabins. This was
 the last moment two bytes were free, and after it they would have cost a drive to
 every site.
 
@@ -847,7 +1044,7 @@ talking to itself is not evidence of anything.
 ### An outbound queue of encoded frames
 
 The obvious implementation of a per-session queue is a ring of frames ready to
-go: encode once, MAC once, hand it to the UART when there is room.
+go: encode once, seal once, hand it to the UART when there is room.
 
 The arithmetic kills it. Sixty-four deep across eight sessions is 512 frames, and
 at the 128-byte event frame everything else on this page is costed with, that is
@@ -856,11 +1053,11 @@ copies of records the log already holds. The same queues as `u64` references int
 the log are **4 KiB**.
 
 So a queue holds `seq` references and the frame is rendered when it is sent. The
-content is in the log by construction — an event is a record first — and the MAC
-is the same MAC either way, computed later rather than earlier: P-098 gives every
+content is in the log by construction — an event is a record first — and the seal
+costs the same either way, paid later rather than earlier: P-098 gives every
 session its own copy under its own key, so there was never a frame two sessions
-could have shared. The 0.75 ms derived above is paid once per session per event
-whichever end of the queue it happens at.
+could have shared. The cost derived above is paid once per session per event whichever end
+of the queue it happens at.
 
 What that buys is not the RAM, it is what the RAM was deciding. With frames in
 the queue, every proposal to make a queue deeper is an argument about memory
@@ -874,8 +1071,9 @@ time.
 
 ## What three review rounds taught us
 
-Three rounds of review. Each one found the same class of defect, and it is worth
-recording that it was the same class rather than tidying it into a changelog:
+Three rounds of review, all of them of v1's drafts. Each one found the same
+class of defect, and it is worth recording that it was the same class rather
+than tidying it into a changelog:
 **prose describing a property the wire format did not deliver.**
 
 **Round one.** `Hello` carried a proof "over the challenge from `Discover`", and
@@ -942,9 +1140,9 @@ that has now been wrong three times in a row.
 What the vectors do cover is the other half, and it is a real half: **two
 implementations that both compute a value and disagree about its bytes.** A key
 derivation, a preimage, a truncation, a CRC check value, a COBS block boundary.
-That disagreement is invisible on the wire — it surfaces as a `bad_proof` on a
-phone that scanned the right label — and it costs a bench day to find by
-inspection. P-001 earns its place. It is simply not the thing that has gone wrong
+That disagreement is invisible on the wire — it surfaces as a pairing refused
+with error 10 on a phone that scanned the right label, as v1's `bad_proof` did
+before it — and it costs a bench day to find by inspection. P-001 earns its place. It is simply not the thing that has gone wrong
 here yet.
 
 What catches an omission is a check over the *specification*. Three, and each one
@@ -955,7 +1153,7 @@ would have caught one of the three rounds:
    row, P-053, or P-054 — and a type resolving to none, or to two, fails.
    Generated rather than written, so an opcode allocated tomorrow appears in it
    the moment its row lands and somebody has to answer for it. A response body
-   with no `mac` field cannot survive this.
+   that nothing seals cannot survive this, as v1's with no `mac` field could not.
 2. **A reachability check: every live code is cited by some rule.** Error codes,
    outcomes, event kinds, capability bits. A number nothing produces is either a
    rule that was never written or a number that should be `withdrawn`, and both
@@ -963,8 +1161,10 @@ would have caught one of the three rounds:
    each one goes dead, rather than a review round later. A challenge that no
    message carries is the same defect one space over.
 3. **A non-disclosure check: no response carries a field derived from key
-   material.** A short list of names — `printed_secret`, `pair_key`,
-   `client_key`, `session_key`, the device key — and a rule that none of them may
+   material.** A short list of names — `printed_secret`, `pair_psk`,
+   `refusal_key`, `admit_key`, the controller's private key, the random bit
+   generator's state, a transport key; in v1 it was `pair_key`, `client_key`,
+   `session_key` and the device key — and a rule that none of them may
    appear as a field in any message definition in this repository. It is a crude
    check, and it would have caught the worst defect this protocol has had, in a
    pull request, months before there was a vector to be wrong about.
@@ -979,11 +1179,12 @@ document asked them to agree about the right things.**
 One place that risk is live right now.
 
 [`protocol/REGISTRY.md`](protocol/REGISTRY.md)'s message table carries an **Auth**
-column — `none`, `proof`, `session`, `signed`, `printed secret`, `link`. The same
-rule is in [PROTOCOL.md](PROTOCOL.md) in finer vocabulary and in normative form:
-P-052 says which messages are wrapper-authenticated and under which label, P-053
-sends the signed requests elsewhere because they carry a counter, P-054 names the
-two exceptions.
+column — `none`, `handshake`, `pair_reply`, `sealed`, `signed`,
+`sealed_or_bare`, `link`. The same rule is in [PROTOCOL.md](PROTOCOL.md) in
+finer vocabulary and in normative form: P-052 says which messages are sealed and
+by which side, P-053 gives the signed requests their own inner body because they
+carry a counter, and P-054 names what is not sealed: `Discover`, and the
+handshake messages that carry their own authentication.
 
 They agree today — somebody checked, line by line. That is the whole problem.
 Nothing *makes* them agree, and the registry is the file people edit first,

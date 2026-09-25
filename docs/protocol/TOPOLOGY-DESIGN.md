@@ -45,7 +45,7 @@ controller (dev 0) → bus → physical device → component → signal → elem
 
 Plus: presence as a hot signal against membership as a cold descriptor (fixture 6 in one sentence — liveness is cheap, inventory is rare); and the `(rev, digest)` pair in `Hello`, which is the only mechanism in any of the four that can catch a controller changing a descriptor row *without* moving its revision.
 
-**Grafted from *Three Tables and a Revision* (2nd on every lens, 1st on bounds discipline):** the whole bounds method. Two arms per page — rows **or** bytes, whichever binds first — each cap sitting under a derived ceiling with a stated margin and an assertion in `limits.rs`, in exactly the shape `MAX_LOG_PAGE_BYTES` sits under its 964 of headroom and `MAX_OPERATION` under `MAX_OPERATION_CEILING`. Also its paging discipline: rows in ascending id, a row never split, the cursor living entirely in the request so the controller holds zero resumption state.
+**Grafted from *Three Tables and a Revision* (2nd on every lens, 1st on bounds discipline):** the whole bounds method. Two arms per page — rows **or** bytes, whichever binds first — each cap sitting under a derived ceiling with a stated margin and an assertion in `limits.rs`, in exactly the shape `MAX_LOG_PAGE_BYTES` sits under its 956 of headroom and `MAX_OPERATION` under `MAX_OPERATION_CEILING`. Also its paging discipline: rows in ascending id, a row never split, the cursor living entirely in the request so the controller holds zero resumption state.
 
 **Grafted from *Slotted Profiles* (1st on the house-rules lens):** `Concern` key `elem`, which is the only way any design could say *cell 23 of pack 2 is over voltage*. Per-element validity, which the winner had only per-series — one open sense wire must not blank fifteen good cells. `cmds` on a component row, so a client draws exactly the buttons that component accepts instead of aiming a `Command` and learning from the `Ack`. A raw vendor state that cannot be mistaken for a normalized one. And its flash argument, which was the only one in four designs: the row encoder is one table-driven loop, not a codec per row kind, because generics monomorphise and the budget on this part is ~256 KB of image, not 144 KB of RAM.
 
@@ -72,14 +72,14 @@ The cold plane. Buses, devices, components, signals and parameters are five row 
 **Two conventions apply to every body below, and both are load-bearing.** P-015 makes every key REQUIRED unless it is marked *optional*, and a missing required key is error 1 — so a key that is present only under a condition is marked *optional* **and** carries the condition, because marking it neither way makes a conforming decoder refuse every row that legitimately omits it. And **`bus`, `dev`, `cmp`, `sig`, `pid` and `cid` are each one flat space across the whole controller, not per-device numbering**: `rollup` names a component of another device with a bare `u16`, a `Sel` names a `cmp` with no `dev` beside it, and P-173's canonical order is *id ascending within a kind*, none of which has an answer under per-device ids.
 
 ```text
-ReadInventory  0x0D          wrapper
+ReadInventory  0x0D          sealed
   1: rev          u32      the revision the client is assembling; 0 on the first call
   2: what         u8       1 buses · 2 devices · 3 components · 4 signals · 5 parameters
   3: from         u16      first row id to include, inclusive (P-029);
                            0 means from the beginning
   4: dev          u16      optional; what = 5 only, parameters of this device
 
-Inventory  0x8D              wrapper under session_key
+Inventory  0x8D              sealed
   1: rev          u32      the controller's current revision
   2: what         u8       echoed, so the response is self-describing
   3: rows         [ BusRow | DeviceRow | ComponentRow | SignalRow | ParamRow ]
@@ -209,7 +209,7 @@ A **parameter** is what a downstream device says about itself and does not chang
 ### Readings — `0x0E` / `0x8E`
 
 ```text
-ReadSignals  0x0E            wrapper
+ReadSignals  0x0E            sealed
   1: rev          u32      the revision the client's cache holds
   2: sel          [ Sel ]  optional; ≤ MAX_SELECTORS. Absent means every signal
   3: from         u16      first `sig` of the resolved selection to include,
@@ -222,7 +222,7 @@ Sel
   3: sig          u16      optional
                            exactly one of the three; none or two is error 1
 
-Readings  0x8E               wrapper under session_key
+Readings  0x8E               sealed
   1: seq          u64      log position these readings reflect
   2: rev          u32      the controller's current revision
   3: at           u64      optional; omitted when the clock has never been set
@@ -290,11 +290,11 @@ So `Reading::Unreadable` has to split before step 5 can encode the difference. T
 Snapshotable active state, separate from the transition events entry 10 owns.
 
 ```text
-ReadConcerns  0x0F           wrapper
+ReadConcerns  0x0F           sealed
   1: rev          u32
   2: from         u16      cid to resume from; 0 means from the beginning
 
-Concerns  0x8F               wrapper under session_key
+Concerns  0x8F               sealed
   1: rev          u32
   2: seq          u64      log position this list reflects
   3: c            [ Concern ]
@@ -344,7 +344,7 @@ Key 9 is always present and key 10 is not, for the same reason `age` beats a tim
 ### History — `0x10` / `0x90`
 
 ```text
-ReadHistory  0x10            wrapper
+ReadHistory  0x10            sealed
   1: rev          u32
   2: sig          u16      MUST NOT be a series signal — outcome 4
   3: bucket       u8       1 day · 2 hour · 3 quarter_hour
@@ -356,7 +356,7 @@ ReadHistory  0x10            wrapper
                            signal's `hist` and divided down (P-194)
   5: count        u8       buckets requested; ≤ MAX_HISTORY_POINTS, or error 1
 
-History  0x90                wrapper under session_key
+History  0x90                sealed
   1: rev          u32
   2: sig          u16
   3: bucket       u8
@@ -510,7 +510,7 @@ P-182 is the fix, and it is a coalescing rule rather than a bigger queue: at mos
 
 ### The framing correction every derivation below rests on
 
-`ENVELOPE_BYTES = 11` counts `[type, session_id, req_id, body]` **including the body's own map header**, with a one-byte `type`. `WRAPPER_BYTES = 23` counts the wrapper map, the payload `bstr` header, and the 16-byte MAC — **including that same map header**. The two double-count one byte, and every response `type` is `0x8x`, which costs one CBOR byte more than the constant assumes. The two errors cancel exactly, which is why 11 + 23 = 34 has been the right answer for every response in this document and one byte conservative for every request.
+`ENVELOPE_BYTES = 11` counts `[type, session_id, req_id, body]` **including the body's own map header**, with a one-byte `type`. `WRAPPER_BYTES = 23` counts the wrapper map, the payload `bstr` header, and the 16-byte MAC — **including that same map header**. The two double-count one byte, and every response `type` is `0x8x`, which costs one CBOR byte more than the constant assumes. The two errors cancel exactly, which is why 11 + 23 = 34 was the right answer for every response in this document, until sealing, and one byte conservative for every request.
 
 That is luck, and luck that will be spent the first time somebody corrects one constant without the other. Split them:
 
@@ -526,7 +526,19 @@ request framing   = 11 + 22     = 33
 inner body budget = 1024 − 34   = 990
 ```
 
-Every existing derivation in this document keeps its answer, including the two that look as though they should not: `MAX_OPERATION_CEILING` is untouched because a signed request has no wrapper, and `MAX_EVENT_BODY` is exact for a reason set out beside the event bounds below.
+Sealing later replaced `WRAPPER_CONTENTS_BYTES` with `SEALED_CONTROLLER_CONTENTS_BYTES` 30 and `SEALED_REQUEST_CONTENTS_BYTES` 20, so response framing is 11 + 30 + 1 = 42, request framing 31 and the inner body budget 982; the derivations below use those.
+
+The split kept every derivation's answer, including the two that looked as though they should not: `MAX_OPERATION_CEILING` was untouched because a signed request had no wrapper, and `MAX_EVENT_BODY` was exact for a reason set out beside the event bounds below.
+
+**The budget moved from 990 to 982 when bodies became sealed**, and every derivation below starts from 982. A sealed request spends 20 bytes after the envelope — key 1, the `bstr` head and the 16-byte tag — and a controller message 30, adding key 2 and its `u64` nonce at nine:
+
+```text
+request framing   = 11 + 20       = 31
+event framing     = 11 + 30       = 41
+response framing  = 11 + 30 + 1   = 42
+inner body budget = 1024 − 42     = 982
+signed operation ceiling = 1024 − 11 − 20 − 21 = 972   MAX_OPERATION = 960, margin 12
+```
 
 Every width below comes from `cbor.rs`'s shortest-form encoder: a value ≤ 23 costs one byte, 24–255 two, up to 65 535 three, up to 2³²−1 five, wider nine. A map or array header follows the same rule on its element count. Map keys ascend and the encoding is canonical, which is what makes P-173's digest well defined.
 
@@ -616,7 +628,7 @@ key 7  total      1 + 3  (u16)                        4
 key 8  outcome    1 + 1  (u8 ≤23)                     2
                                                    ────
 READINGS_HEADER_BYTES                                42
-headroom = 990 − 42                                 948
+headroom = 982 − 42                                 940
 ```
 
 ```text
@@ -631,19 +643,19 @@ Series at MAX_SERIES_LEN, every element present and stale
 ```
 
 ```text
-SAMPLE_CEILING = 948 / 20  = 47      MAX_SAMPLES = 40, margin 7
-SERIES_CEILING = 948 / 111 =  8      MAX_SERIES  =  7, margin 1
+SAMPLE_CEILING = 940 / 20  = 47      MAX_SAMPLES = 40, margin 7
+SERIES_CEILING = 940 / 111 =  8      MAX_SERIES  =  7, margin 1
 
-MAX_READINGS_BYTES = 880 under a headroom of 948, margin 68
+MAX_READINGS_BYTES = 880 under a headroom of 940, margin 60
    40 × 20 = 800 ≤ 880          the row arm binds for scalars
     7 × 111 = 777 ≤ 880          the row arm binds for series
    both at once = 1,577 > 880    the byte arm binds
 
-widest response = 34 + 42 + 880 = 956 ≤ 1024, 68 spare
-a Sample two bytes wider at the cap = 40 × 22 = 880 ≤ 948
+widest response = 42 + 42 + 880 = 964 ≤ 1024, 60 spare
+a Sample two bytes wider at the cap = 40 × 22 = 880 ≤ 940
 ```
 
-The 68 is the same margin `MAX_LOG_PAGE_BYTES` keeps under its 964 of headroom, for the same reason: a `Sample` gaining an optional key must not turn a legal response into a frame the controller builds and then refuses.
+The 60 is the same margin `MAX_LOG_PAGE_BYTES` keeps under its 956 of headroom, for the same reason: a `Sample` gaining an optional key must not turn a legal response into a frame the controller builds and then refuses.
 
 **`age` stays one field on a `Series` and P-179 says which element it describes.** Per-element age was the alternative and it costs 76 bytes net — one array of sixteen ages at 82, less the 6 the single field spent — so the widest `Series` goes 111 → 187, `SERIES_CEILING` 8 → 5, and `MAX_SERIES` below 7. The failure it was meant to fix is real — cell 3's sense wire intermittent at two hours, fifteen cells read eight seconds ago — but per-element **validity** already separates them, so the only question is what one number means. It is the age of the *oldest* element at validity 2, and an element at validity 1 has no age at all. Two stale elements of different ages both render at the older one's, which over-reports; PROTOCOL.md's own re-basing rule goes the same way, because the direction that makes an operator cautious is the safe one.
 
@@ -654,9 +666,9 @@ The 68 is the same margin `MAX_LOG_PAGE_BYTES` keeps under its 964 of headroom, 
 ```text
 map header 1 + rev 6 + what 2 + rows key/header 3 + next 4
   + total 4 + outcome 2 + digest 10                        =  32
-headroom = 990 − 32                                          958
-MAX_INVENTORY_PAGE_BYTES = 880, margin 78
-widest page = 34 + 32 + 880 = 946 ≤ 1024, 78 spare
+headroom = 982 − 32                                          950
+MAX_INVENTORY_PAGE_BYTES = 880, margin 70
+widest page = 42 + 32 + 880 = 954 ≤ 1024, 70 spare
 ```
 
 Row widths at their widest — every optional key present, every string at its cap, **and every field costed at the widest it may legally carry** — with rows per page as `min(row cap, byte cap ÷ width)`, which is P-171 applied rather than quoted.
@@ -732,16 +744,16 @@ the same walk at the reported caps, every row at its widest
 ```text
 map header 1 + rev 6 + seq 10 + c key/header 2 + next 4
   + total 4 + refused 4 + outcome 2                        =  33
-headroom = 990 − 33                                          957
+headroom = 982 − 33                                          949
 
 Concern at its widest
   map header 1 + cid 4 + dev 4 + cmp 4 + sig 4 + elem 2 + cond 4
     + sev 2 + state 2 + age 6 + since 10 + raw 6 + vns 4 + seq 10  = 63
 
-CONCERN_CEILING = 957 / 63 = 15      MAX_CONCERN_PAGE_ROWS = 12, margin 3
-MAX_CONCERN_PAGE_BYTES = 832, margin 125
+CONCERN_CEILING = 949 / 63 = 15      MAX_CONCERN_PAGE_ROWS = 12, margin 3
+MAX_CONCERN_PAGE_BYTES = 832, margin 117
    12 × 63 = 756 ≤ 832
-widest page = 34 + 33 + 832 = 899 ≤ 1024, 125 spare
+widest page = 42 + 33 + 832 = 907 ≤ 1024, 117 spare
 ```
 
 **The row arm always binds here, and the byte cap is a backstop that is never reached.** Twelve concerns at their widest are 756 bytes against 832, and at the narrowest legal `Concern` — no `sig`, no `elem`, no `since`, no `raw`, no `vns`, so 37 bytes — 832 would admit 22 where the row cap admits 12. That is stated rather than left for a client to discover, because a cap nothing can reach is a cap somebody eventually plans against. It stays in `limits.rs` as the assertion that keeps a future key on `Concern` from turning a legal page into a frame the controller builds and then refuses.
@@ -763,22 +775,22 @@ map header 1 + rev 6 + sig 4 + bucket 2 + first 6            =  19
   + stopped 2 + outcome 2 + at 10                            =  14
                                                             ────
 widest body at MAX_HISTORY_POINTS                             845
-spare = 990 − 845                                             145
-widest response = 34 + 845 = 879 ≤ 1024, 145 spare
+spare = 982 − 845                                             137
+widest response = 42 + 845 = 887 ≤ 1024, 137 spare
 
 per point = q 1 + v 5 + n 1 + reset 1/8 + src 1            8.125
 fixed     = 845 − 96 × 8.125                                   65
-POINT_CEILING = (990 − 65) / 8.125 = 113
-MAX_HISTORY_POINTS = 96, margin 17
+POINT_CEILING = (982 − 65) / 8.125 = 112
+MAX_HISTORY_POINTS = 96, margin 16
 ```
 
 **The index counts elapsed periods, not closed buckets, and that is the difference between a chart and a lie.** Under a count of *closed* buckets a controller down for three days in January closes nothing, index n+1 sits three days after index n, and a client dating the rest of the window from key 15 — the one anchor it has — plots a seventy-two-hour outage as one quarter-hour and mis-dates every point after it. That is the smooth-line lie key 7 exists against, arriving one layer up and immune to it. Counting elapsed periods puts the gap on the axis, where P-184 stops the response at it with `stopped = 3` and `next` names the far side.
 
 **And every index in one exchange is in the units the request asked for.** Keys 4 and 10 are positions in the response; keys 11 and 12 describe the store; P-193's outcome 6 then compares them — *`first` is past `newest`* — which is not a comparison at all unless they share a unit. A client asking for the last 96 days sends `first = newest − 95`, and against a controller holding its axis in quarter-hours that is 24 hours, answered or refused with both sides conforming to the words. The FRAM counter is kept at the signal's finest `hist` and divided down per request, which costs one division and removes the whole class.
 
-96 is one day of quarter-hour buckets, which is the window DEFERRED entry 3's aggregate record uses — so the client-facing page and the flash record agree about what a day is. The cursor, the two store bounds, and the move of `src` from one byte per response to one per bucket take the widest body from 730 to 845 — the stop reason is not in that list, having replaced `truncated` at the same two bytes. The 145 that remains is still a wider margin than `Readings` keeps at its own cap.
+96 is one day of quarter-hour buckets, which is the window DEFERRED entry 3's aggregate record uses — so the client-facing page and the flash record agree about what a day is. The cursor, the two store bounds, and the move of `src` from one byte per response to one per bucket take the widest body from 730 to 845 — the stop reason is not in that list, having replaced `truncated` at the same two bytes. The 137 that remains is still a wider margin than `Readings` keeps at its own cap.
 
-A series signal is refused with outcome 4 rather than answered: 96 buckets × 16 cells is about 9.2 KB against a 990-byte body, so `may be a series signal` was a sentence with no encoding behind it. It is numbered **below** `no_history` on purpose — a series signal never carries `hist` either, and P-193 returns the first outcome that applies, so the other order would make this one unreachable.
+A series signal is refused with outcome 4 rather than answered: 96 buckets × 16 cells is about 9.2 KB against a 982-byte body, so `may be a series signal` was a sentence with no encoding behind it. It is numbered **below** `no_history` on purpose — a series signal never carries `hist` either, and P-193 returns the first outcome that applies, so the other order would make this one unreachable.
 
 ### `Hello 0x81`
 
@@ -788,9 +800,13 @@ keys 1–17, both fw strings at MAX_STRING, every reported cap
   less retired key 13                                              −3
   plus keys 18–29, key bytes included                             +59
   plus one map-header byte: 28 pairs is past 23                    +1
+  plus keys 30 client_id and 31 generation, u32, key bytes 2      +14
                                                                  ────
-                                                                  270
-widest response = 34 + 270 = 304 ≤ 1024, 720 spare
+                                                                  284
+Hello 0x81 is not sealed: its body is {1: Noise message 2}, the
+report encrypted behind a 32-byte ephemeral key and a 16-byte tag
+framing = 11 + 1 (0x81) + key 1 + bstr head 3 + 32 + 16      =    64
+widest response = 64 + 284 = 348 ≤ 1024, 676 spare
 
   the +59, key byte + value byte, at each type's widest
     18 rev 1+5   19 digest 1+1+8   20 buses 1+2   21 dev 1+3
@@ -810,13 +826,13 @@ The 213 is derived here rather than carried. An earlier draft printed 207, with 
 0x0102 signal validity changed, coalesced
   body   map header 1 + rev 6 + e key/array header 3          =  10
   entry  map header 1 + sig 4 + q 3 + prev 3                  =  11
-  SWEEP_CEILING = (965 − 10) / 11 = 86    MAX_VALIDITY_SWEEP = 48, margin 38
-  at the cap  10 + 48 × 11 = 538 ≤ MAX_EVENT_BODY 965
+  SWEEP_CEILING = (957 − 10) / 11 = 86    MAX_VALIDITY_SWEEP = 48, margin 38
+  at the cap  10 + 48 × 11 = 538 ≤ MAX_EVENT_BODY 957
 
 0x0902 device presence changed, coalesced
   body   map header 1 + rev 6 + e key/array header 3          =  10
   entry  map header 1 + dev 4 + presence 2 + prev 2           =   9
-  at MAX_PRESENCE_SWEEP = MAX_DEVICES = 24  10 + 216 = 226 ≤ 965
+  at MAX_PRESENCE_SWEEP = MAX_DEVICES = 24  10 + 216 = 226 ≤ 957
 
 class A events one tick can produce, from THIS design
   0x0102                                    1
@@ -834,20 +850,20 @@ So `CLASS_A_TICK_CEILING` is the **total** across every class A kind, this desig
 
 `0x0502` is counted with `0x0501` and not separately. P-180 makes an `0x0502` mandatory as each concern leaves the table, and thirty-two per-cell concerns clearing at dawn is one tick — so a cap on raises alone leaves the clears unbounded and reproduces the burst this whole section exists to stop, arriving through the requirement that gave the lifecycle a state meaning *over*.
 
-`MAX_EVENT_BODY` is already derived in `limits.rs` as `1024 − 11 − 23 − 25 = 965`. Without the coalescing rule this design's own column reads 384 against 16, and P-098 turns that into eight closed sessions.
+`MAX_EVENT_BODY` is derived as `1024 − 41 − 1 − 25 = 957`; it was `1024 − 11 − 23 − 25 = 965` before bodies were sealed. Without the coalescing rule this design's own column reads 384 against 16, and P-098 turns that into eight closed sessions.
 
-**`MAX_EVENT_BODY` survives the split exactly, and the reason is worth writing down because it looks at first like it should not.** `Event 0x04`'s type is below `0x17`, so `RESPONSE_TYPE_EXTRA_BYTE` does not apply and its framing is `11 + 22 = 33`, not 34 — which appears to leave the constant one byte short. It does not, because `EVENT_FIXED_BYTES = 25` deliberately excludes the event record's own map header, and says so: *the map header is `ENVELOPE_BYTES`'*. The byte that `ENVELOPE_BYTES` and `WRAPPER_BYTES` double-count is precisely that map header. Two errors and an omission cancel to zero, and `1024 − 11 − 23 − 25 = 965` is exact rather than lucky.
+**`MAX_EVENT_BODY` survives the split exactly, and the reason is worth writing down because it looks at first like it should not.** `Event 0x04`'s type is below `0x17`, so `RESPONSE_TYPE_EXTRA_BYTE` does not apply and its framing is `11 + 22 = 33`, not 34 — which appears to leave the constant one byte short. It does not, because `EVENT_FIXED_BYTES = 25` deliberately excludes the event record's own map header, and says so: *the map header is `ENVELOPE_BYTES`'*. The byte that `ENVELOPE_BYTES` and `WRAPPER_BYTES` double-count is precisely that map header. Two errors and an omission cancel to zero, and `1024 − 11 − 23 − 25 = 965` was exact rather than lucky. Sealing ended that cancellation: the map header `ENVELOPE_BYTES` counts is now the sealed body's, and the event record's own header sits inside the ciphertext and is paid for separately, which is the `− 1` in 957.
 
 That is the third instance of the same pattern in this one section, and it is the argument for splitting the constants rather than against it: every one of these cancellations is correct today and none of them is written down anywhere a person correcting one constant would look.
 
 ### Every widest response against `MAX_PAYLOAD`
 
 ```text
-Readings   0x8E    34 + 42 + 880  =  956   ≤ 1024    68 spare
-Inventory  0x8D    34 + 32 + 880  =  946   ≤ 1024    78 spare
-Concerns   0x8F    34 + 33 + 832  =  899   ≤ 1024   125 spare
-History    0x90    34 + 845       =  879   ≤ 1024   145 spare
-Hello      0x81    34 + 270       =  304   ≤ 1024   720 spare
+Readings   0x8E    42 + 42 + 880  =  964   ≤ 1024    60 spare
+Inventory  0x8D    42 + 32 + 880  =  954   ≤ 1024    70 spare
+Concerns   0x8F    42 + 33 + 832  =  907   ≤ 1024   117 spare
+History    0x90    42 + 845       =  887   ≤ 1024   137 spare
+Hello      0x81    64 + 284       =  348   ≤ 1024   676 spare
 ```
 
 Each cap sits below its own derived ceiling with a stated margin, and each derivation belongs in `limits.rs` beside the others with an assertion that goes red when somebody raises a cap past what carries it. The way to watch them fail is to raise one and run `cargo test -p km43`.
@@ -865,7 +881,7 @@ Each cap sits below its own derived ceiling with a stated margin, and each deriv
 10  reported            MAX_BUSES MAX_DEVICES MAX_COMPONENTS MAX_SIGNALS
                         MAX_SERIES_ELEMENTS MAX_PARAMS MAX_CONCERNS
                         MAX_SELECTORS MAX_HISTORY_SIGNALS MAX_TOPOLOGY_DEPTH
-15  derived             ENVELOPE_BYTES WRAPPER_CONTENTS_BYTES
+15  derived             ENVELOPE_BYTES SEALED_*_CONTENTS_BYTES
                         RESPONSE_TYPE_EXTRA_BYTE INNER_BODY_BYTES
                         READINGS_HEADER_BYTES INVENTORY_HEADER_BYTES
                         CONCERNS_HEADER_BYTES SAMPLE_CEILING SERIES_CEILING
@@ -895,8 +911,8 @@ Descriptor **labels live in the configuration image in FRAM**, not in the row st
 | pending adoptions — including P-191's flap counter | 8 | 44 | 352 |
 | announced-validity byte, one per signal — what P-182 coalesces against | 384 | 0 | 0 |
 | page scratch — 880 staging + 184 row | — | — | 1,064 |
-| inner-body encode buffer | — | — | 990 |
-| | | | **45,446 B** |
+| inner-body encode buffer | — | — | 982 |
+| | | | **45,438 B** |
 
 **44.4 KB of 144 KB**, every one a fixed array sized at compile time, nothing allocated after init, no per-session subscription state, no resumption state. `MAX_SNAPSHOT_BODY` (888 B) retires with `Snapshot`, so the net is +43.5 KB.
 
@@ -1411,7 +1427,7 @@ The nineteen missed `measurement_point` and `vendor_namespace` from the lists en
 
   ***That edit did not happen, and "answers that" was too strong.*** Entry 10 now records what was actually left open. Renaming `0x0501` did not retire its four producers — P-079, P-085, P-115 and P-116 went on saying `alarm raised (0x0501)` in `PROTOCOL.md` for every commit in between — and giving the kind a `Concern` body settles the discriminator only as far as the condition registry reaches, which is not as far as *a durable write did not stick*, *the clock stepped* or *the floor was overridden at the panel*. P-115 and P-116 looked as though they additionally needed a magnitude, and `raw` travels only with a `vns` that names a third party. **They do not:** both raise their concern alongside the `time set` record P-111 requires, and that record already owes the old value and the new one, so the step is written once and the concern names only the condition. The controller-namespace trigger has not fired. Four condition values are allocated — `counter write failed`, `epoch write failed`, `clock stepped`, `floor overridden` — and `PROTOCOL.md` names them in the four requirements themselves.
 - **Channel identity across reassignment — entry 1, not settled.** P-156 makes the seam visible at both the device and the component level and refuses to plot history across either. It does not answer entry 1's actual question, which is what identity costs in the durable aggregate record — and that cost is entry 3's byte budget, which this design deliberately does not spend. The interim advice stands and now reads as *do not reuse a component id; allocate a new one*, with the reserved runtime block sized so a hot-swapping site does not run out.
-- **Security and conformance — entries 2, 4, 5, 7 and 11, untouched.** Confidentiality, rate limiting, the later Noise handshake, BLE and MQTT evidence, and spec-level checks remain exactly where they were. A complete data model still sits on all five, and this entry neither duplicates nor hides them. `req_id` admission, once entry 12, is settled in P-022 and binds the four new request types like every other: a request the window refuses is not answered and does not refresh the session under P-077.
+- **Security and conformance — entries 2, 4, 5, 7 and 11, untouched.** Confidentiality, rate limiting, the later Noise handshake, BLE and MQTT evidence, and spec-level checks remain exactly where they were. A complete data model still sits on all five, and this entry neither duplicates nor hides them. Entries 2 and 5 have since left DEFERRED.md, settled by P-226 through P-243. `req_id` admission, once entry 12, is settled in P-022 and binds the four new request types like every other: a request the window refuses is not answered and does not refresh the session under P-077.
 
 ## What the review changed
 

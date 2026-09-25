@@ -46,30 +46,29 @@ flowchart TD
   subgraph Beforeanykeyexists["Before any key exists"]
     Discover["Discover<br/>0x00 none → 0x80 none"]
   end
-  subgraph Enrolmentprintedsecretandsomebodyatthepanel["Enrolment — printed secret, and somebody at the panel"]
-    Pair["Pair<br/>0x0B pair_key → 0x8B pair_key"]
-  end
-  subgraph Handshakeprovingaclientkey["Handshake — proving a client key"]
-    Hello["Hello<br/>0x01 proof → 0x81 rsp"]
+  subgraph Handshakeagreeingkeys["Handshake — agreeing keys"]
+    Hello["Hello<br/>0x01 handshake → 0x81 handshake"]
+    Pair["Pair<br/>0x0B handshake → 0x8B pair_reply"]
+    Enrol["Enrol<br/>0x13 handshake → 0x93 sealed"]
   end
   subgraph Insession["In session"]
-    Snapshot["Snapshot<br/>0x02 wrq → 0x82 rsp"]
-    Subscribe["Subscribe<br/>0x03 wrq → 0x83 rsp"]
-    Event["Event<br/>unsolicited · 0x04 evt"]
-    ReadLog["ReadLog<br/>0x05 wrq → 0x85 rsp"]
-    GetConfig["GetConfig<br/>0x06 wrq → 0x86 rsp"]
-    SetConfig["SetConfig<br/>0x07 signed → 0x87 rsp"]
-    Command["Command<br/>0x08 signed → 0x88 rsp"]
-    Firmware["Firmware<br/>0x09 signed → 0x89 rsp"]
-    Time["Time<br/>0x0A signed → 0x8A rsp"]
-    Goodbye["Goodbye<br/>0x0C wrq → 0x8C rsp"]
-    Inventory["Inventory<br/>0x0D wrq → 0x8D rsp"]
-    Readings["Readings<br/>0x0E wrq → 0x8E rsp"]
-    Concerns["Concerns<br/>0x0F wrq → 0x8F rsp"]
-    History["History<br/>0x10 wrq → 0x90 rsp"]
-    WifiScan["WifiScan<br/>0x11 wrq → 0x91 rsp"]
-    WifiStatus["WifiStatus<br/>0x12 wrq → 0x92 rsp"]
-    Error["Error<br/>unsolicited · 0xFF rsp_or_bare"]
+    Snapshot["Snapshot<br/>0x02 sealed → 0x82 sealed"]
+    Subscribe["Subscribe<br/>0x03 sealed → 0x83 sealed"]
+    Event["Event<br/>unsolicited · 0x04 sealed"]
+    ReadLog["ReadLog<br/>0x05 sealed → 0x85 sealed"]
+    GetConfig["GetConfig<br/>0x06 sealed → 0x86 sealed"]
+    SetConfig["SetConfig<br/>0x07 signed → 0x87 sealed"]
+    Command["Command<br/>0x08 signed → 0x88 sealed"]
+    Firmware["Firmware<br/>0x09 signed → 0x89 sealed"]
+    Time["Time<br/>0x0A signed → 0x8A sealed"]
+    Goodbye["Goodbye<br/>0x0C sealed → 0x8C sealed"]
+    Inventory["Inventory<br/>0x0D sealed → 0x8D sealed"]
+    Readings["Readings<br/>0x0E sealed → 0x8E sealed"]
+    Concerns["Concerns<br/>0x0F sealed → 0x8F sealed"]
+    History["History<br/>0x10 sealed → 0x90 sealed"]
+    WifiScan["WifiScan<br/>0x11 sealed → 0x91 sealed"]
+    WifiStatus["WifiStatus<br/>0x12 sealed → 0x92 sealed"]
+    Error["Error<br/>unsolicited · 0xFF sealed_or_bare"]
   end
   subgraph TheinternalUART["The internal UART"]
     LinkUp["LinkUp<br/>0x60 → 0xE0 · either side"]
@@ -86,9 +85,8 @@ flowchart TD
     WifiScanResult["WifiScanResult<br/>0x6B → 0xEB · comms → controller"]
     WifiState["WifiState<br/>0x6C → 0xEC · comms → controller"]
   end
-  Beforeanykeyexists --> Enrolmentprintedsecretandsomebodyatthepanel
-  Enrolmentprintedsecretandsomebodyatthepanel --> Handshakeprovingaclientkey
-  Handshakeprovingaclientkey --> Insession
+  Beforeanykeyexists --> Handshakeagreeingkeys
+  Handshakeagreeingkeys --> Insession
 ```
 
 ## What is allocated, and what is left
@@ -96,24 +94,24 @@ flowchart TD
 A table of allocated numbers cannot show a gap, and a gap is the only thing somebody allocating the next number needs to see.
 
 ```text
-client requests — 0x00 to 0x5F, 18 allocated, 78 free
-  0x00  ####.### ######## ###..... ........
+client requests — 0x00 to 0x5F, 19 allocated, 77 free
+  0x00  ####.### ######## ####.... ........
   0x20  ........ ........ ........ ........
   0x40  ........ ........ ........ ........
 
 link-local requests — 0x60 to 0x7E, 13 allocated, 18 free
   0x60  ######## #####... ........ .......
 
-client responses — 0x80 to 0xDF, 18 allocated, 78 free
-  0x80  ####.### ######## ###..... ........
+client responses — 0x80 to 0xDF, 19 allocated, 77 free
+  0x80  ####.### ######## ####.... ........
   0xA0  ........ ........ ........ ........
   0xC0  ........ ........ ........ ........
 
 link-local responses — 0xE0 to 0xFE, 13 allocated, 18 free
   0xE0  ######## #####... ........ .......
 
-client errors —    1 to   32, 18 allocated, 14 free
-     1  ######## ######## ##...... ........
+client errors —    1 to   32, 19 allocated, 13 free
+     1  ######## ######## ###..... ........
 
 link-local errors —  256 to  287, 9 allocated, 23 free
    256  ######## #....... ........ ........

@@ -42,8 +42,8 @@ newer app and neither side can be updated first, so:
   retired.
 - Unknown keys are skipped, not rejected. New fields are optional; a field
   whose absence has no sane default is a new message.
-- Every message that changes anything is on the signed list, and the MAC
-  covers its type.
+- Every message that changes anything is on the signed list, and its type is
+  in the associated data it is sealed with.
 - Bump the minor for an addition and the major only when old clients cannot
   cope.
 

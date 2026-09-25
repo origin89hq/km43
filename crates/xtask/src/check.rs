@@ -569,12 +569,14 @@ impl Checks {
         }
     }
 
-    /// No response may carry a field derived from key material.
+    /// No message on the wire may carry key material.
     ///
     /// An early draft returned the client's long-term key in the pairing response,
     /// over the link, through the one component that must never hold one. The frame
     /// was well formed and a vector for it would have been perfectly reproducible —
-    /// which is why this reads the bytes rather than the description.
+    /// which is why this reads the bytes rather than the description. Every secret
+    /// the file names is looked for in every byte string that crosses a link:
+    /// bodies, envelopes, handshake messages and sealed payloads.
     fn no_response_carries_key_material(&self) -> Result<(), Failure> {
         let fail = |detail: String| Failure {
             check: "no response carries key material",
@@ -596,26 +598,45 @@ impl Checks {
                 }
             }
         }
-        if let Some(s) = doc
-            .get("inputs")
-            .and_then(|i| i.get("printed_secret"))
-            .and_then(serde_json::Value::as_str)
-        {
-            secrets.push(("printed_secret".to_owned(), s.to_owned()));
+        let inputs = doc.get("inputs");
+        for name in [
+            "printed_secret",
+            "controller_key",
+            "client_key",
+            "pairing_client_ephemeral",
+            "pairing_controller_ephemeral",
+            "hello_client_ephemeral",
+            "hello_controller_ephemeral",
+        ] {
+            if let Some(s) = inputs
+                .and_then(|i| i.get(name))
+                .and_then(serde_json::Value::as_str)
+            {
+                secrets.push((name.to_owned(), s.to_owned()));
+            }
+        }
+        if let Some(handshakes) = doc.get("handshakes").and_then(serde_json::Value::as_object) {
+            for (name, h) in handshakes {
+                for split in ["client_to_controller", "controller_to_client"] {
+                    if let Some(hex) = h.get(split).and_then(serde_json::Value::as_str) {
+                        secrets.push((format!("{name}.{split}"), hex.to_owned()));
+                    }
+                }
+            }
+        }
+
+        let mut wire = Vec::new();
+        for block in ["macs", "sealed", "bodies", "handshakes", "frame"] {
+            if let Some(value) = doc.get(block) {
+                on_the_wire(block, value, &mut wire);
+            }
         }
 
         let mut leaks = Vec::new();
-        if let Some(macs) = doc.get("macs").and_then(serde_json::Value::as_object) {
-            for (name, entry) in macs {
-                for field in ["full_body_cbor", "inner_body_cbor", "operation_cbor"] {
-                    let Some(body) = entry.get(field).and_then(serde_json::Value::as_str) else {
-                        continue;
-                    };
-                    for (secret, hex) in &secrets {
-                        if body.contains(hex.as_str()) {
-                            leaks.push(format!("{name}.{field} contains {secret}"));
-                        }
-                    }
+        for (path, bytes) in &wire {
+            for (secret, hex) in &secrets {
+                if bytes.contains(hex.as_str()) {
+                    leaks.push(format!("{path} contains {secret}"));
                 }
             }
         }
@@ -990,6 +1011,39 @@ impl Checks {
 }
 
 /// Byte offset and 1-based line of every doc code fence that opens a block.
+/// Every string under `value` that is bytes crossing a link: a field whose name
+/// says it is an encoding, a handshake message, or a sealed payload.
+fn on_the_wire(path: &str, value: &serde_json::Value, out: &mut Vec<(String, String)>) {
+    match value {
+        serde_json::Value::Object(map) => {
+            for (key, inner) in map {
+                let here = format!("{path}.{key}");
+                match inner.as_str() {
+                    Some(text)
+                        if key.ends_with("_cbor")
+                            || key == "message"
+                            || key == "sealed"
+                            || key == "pre_cobs"
+                            || key == "encoded_with_delimiter" =>
+                    {
+                        out.push((here, text.to_owned()));
+                    }
+                    _ => on_the_wire(&here, inner, out),
+                }
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for (i, inner) in items.iter().enumerate() {
+                on_the_wire(&format!("{path}[{i}]"), inner, out);
+            }
+        }
+        serde_json::Value::Null
+        | serde_json::Value::Bool(_)
+        | serde_json::Value::Number(_)
+        | serde_json::Value::String(_) => {}
+    }
+}
+
 fn fenced_doc_lines(text: &str) -> Vec<(usize, usize)> {
     let mut out = Vec::new();
     let mut at = 0usize;

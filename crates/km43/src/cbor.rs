@@ -924,6 +924,19 @@ impl<'a> CborWriter<'a> {
         self.nest.count_item()
     }
 
+    /// A byte string of `len` zero bytes, and where in the buffer they sit, for
+    /// the caller to fill once [`CborWriter::finish`] has released it. A sealed
+    /// body is encrypted where it will be sent rather than in a second buffer
+    /// the size of a frame.
+    pub fn bytes_to_fill(&mut self, len: usize) -> Result<core::ops::Range<usize>, CborError> {
+        self.open_item()?;
+        self.head(Major::Bytes, Self::argument(len)?, len)?;
+        let start = self.next;
+        self.reserve(len)?.fill(0);
+        self.nest.count_item()?;
+        Ok(start..self.next)
+    }
+
     /// A UTF-8 string. Longer than [`MAX_STRING`] is refused here rather than
     /// sent and refused there.
     pub fn text(&mut self, value: &str) -> Result<(), CborError> {

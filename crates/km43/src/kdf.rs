@@ -1,32 +1,29 @@
-//! Where the three keys come from, so nothing above this file is trusted with
-//! thirty-two bytes it made up.
+//! What the printed label is still allowed to derive, and the identifiers an
+//! enrolment is named by.
 //!
-//! Every derivation here is HKDF-SHA256 with `salt`, `IKM` and `info` passed
-//! **separately** (P-042). The draft this replaces wrote `HKDF(a | b | c)`,
-//! which assigns none of the three and still produces a perfectly good key —
-//! one no other implementation can reproduce. So the two extract arguments are
-//! two newtypes rather than two `&[u8]` in a row, and the `info` is built by a
-//! chain that cannot be started without a [`Derivation`].
+//! The label derives two keys and nothing else (P-088): the pre-shared key a
+//! pairing handshake mixes in first, and the key a pairing refusal is tagged
+//! under. In v1 it derived every client's key at every epoch, so a label
+//! photographed once held every slot for the life of the unit. Every other key
+//! now comes from a handshake or from the controller's own random bit generator
+//! ([`crate::Drbg`]), and a [`Label`] has no method that could mint one.
 //!
-//! The ladder is the other half. A [`PrintedSecret`] is not a `ClientKey` and a
-//! `ClientKey` is not a `SessionKey`: the only route to a session key runs
-//! through an [`Enrolment`], and the only route to an enrolment runs through
-//! the printed secret and P-085's `epoch`. P-088 is the same argument one step
-//! further down — the printed secret is never itself an HMAC key, because the
-//! comms processor watches every pairing exchange and a master secret that
-//! cannot be rotated must not be handed to it as an oracle.
+//! Every derivation is HKDF-SHA256 with `salt`, `IKM` and `info` passed
+//! **separately** (P-042), which is why the two extract arguments are two
+//! newtypes rather than two `&[u8]` in a row.
 //!
-//! cites: P-040, P-042, P-043, P-044, P-085, P-086, P-088
+//! cites: P-042, P-043, P-044, P-085, P-086, P-088, P-236
 
 use core::fmt;
 use core::num::NonZeroU32;
 
 use hkdf::HkdfExtract;
-use sha2::Sha256;
-use zeroize::Zeroize as _;
+use sha2::{Digest as _, Sha256};
+use subtle::ConstantTimeEq as _;
+use zeroize::{Zeroize as _, Zeroizing};
 
-use crate::envelope::SessionId;
-use crate::mac::{ClientKey, PairKey, SessionKey};
+use crate::mac::{AdmitKey, RefusalKey};
+use crate::noise::{KEY_BYTES, Psk, PublicKey};
 
 mod stored;
 pub use stored::*;
@@ -37,67 +34,38 @@ const PRINTED_SECRET_BYTES: usize = 32;
 /// P-038's `device_id`, as the 16 bytes and never their hex rendering.
 pub(crate) const DEVICE_ID_BYTES: usize = 16;
 
-/// A `challenge` and a `client_nonce` are both `bstr16`.
-const NONCE_BYTES: usize = 16;
-
-/// The session salt: the challenge and the nonce, joined with no separator.
-const SESSION_SALT_BYTES: usize = 32;
-
 /// SHA-256's digest, which is HKDF's `HashLen`.
 const DIGEST_BYTES: usize = 32;
 
-/// RFC 5869's `L`, which every derivation in this protocol asks for.
-const DERIVED_KEY_BYTES: usize = 32;
+/// P-236's fingerprint: the leftmost sixteen bytes of a SHA-256.
+pub const FINGERPRINT_BYTES: usize = 16;
 
-/// RFC 5869 §2.3's counter byte. `T(1)` is the only block [`Expand::key`]
-/// computes, which is what the assertion below holds down.
+/// RFC 5869 §2.3's counter byte. `T(1)` is the only block computed here.
 const FIRST_BLOCK: u8 = 1;
 
 const_assert!(
-    DERIVED_KEY_BYTES == DIGEST_BYTES,
-    "the expand here stops at T(1); asking for a wider key needs T(2), and the array conversion that would then fail to compile says nothing about which line to go and write"
-);
-const_assert!(
-    SESSION_SALT_BYTES == NONCE_BYTES * 2,
-    "the session salt is the two nonces joined with no separator (P-040) — one byte wider and its tail is a zero the peer never agreed to, on a key both ends have to reach independently"
+    KEY_BYTES == DIGEST_BYTES,
+    "the expand here stops at T(1); a wider key needs T(2)"
 );
 
 /// The three HKDF `info` labels of P-043's table.
-///
-/// A sibling of `mac.rs`'s `Domain` rather than three more of its variants, and
-/// deliberately: P-043 says an implementer who reads that table as nine MAC
-/// preimages derives keys that are wrong on both sides and identical to nobody.
-/// One enum spanning both kinds is that mistake made reachable —
-/// `Preimage::under(key, Domain::PairKey)` would compile — and two enums are
-/// what makes it a type error instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Derivation {
-    /// The pairing key, derived from the printed secret (P-088).
-    PairKey,
-    /// A client's long-term key, per `epoch` and per `client_id`.
-    ClientKey,
-    /// The key one session's traffic is authenticated under.
-    SessionKey,
-    /// The seed a controller mints challenges from (P-063).
-    ///
-    /// **Controller-local: no client ever derives this one.** It is here anyway
-    /// because it descends from the same device secret as the other three, and
-    /// a label of its own is what stops a challenge and a key colliding — a
-    /// challenge is published in every `Discover`, so a construction that let it
-    /// share a derivation with `pair_key` would be handing that key out.
-    Challenge,
+    /// The pairing's pre-shared key (P-088).
+    PairPsk,
+    /// The key a pairing refusal is tagged under (P-241).
+    PairRefusal,
+    /// One enrolment's admission key (P-238).
+    AdmitKey,
 }
 
 impl Derivation {
-    /// P-043's ASCII, with no trailing NUL. Private because the only thing
-    /// entitled to put one at the head of an `info` is [`Prk::expand`].
     const fn as_str(self) -> &'static str {
         match self {
-            Self::PairKey => "km43/v1/pair-key",
-            Self::ClientKey => "km43/v1/client-key",
-            Self::SessionKey => "km43/v1/session-key",
-            Self::Challenge => "km43/v1/challenge",
+            Self::PairPsk => "km43/v1/pair-psk",
+            Self::PairRefusal => "km43/v1/pair-refusal",
+            Self::AdmitKey => "km43/v1/admit-key",
         }
     }
 }
@@ -109,11 +77,9 @@ impl fmt::Display for Derivation {
 }
 
 /// P-044's 32 bytes of entropy — the decoded QR payload, never the printed
-/// text, and never an HMAC key (P-088).
+/// text, and never a key itself (P-088).
 ///
-/// No `Debug`, for the reason the keys in `mac.rs` have none: the one secret on
-/// this device that can never be rotated should not be one `?secret` away from
-/// a bench log. Cleared on drop, so a client that clears its own copy is not
+/// No `Debug`, and cleared on drop, so a client that clears its own copy is not
 /// left with this one in freed memory.
 pub struct PrintedSecret([u8; PRINTED_SECRET_BYTES]);
 
@@ -132,10 +98,6 @@ impl Drop for PrintedSecret {
 }
 
 /// P-038's sixteen bytes, as bytes and never their hex rendering.
-///
-/// A type rather than a `&[u8; 16]` because it is the `salt` of both
-/// device-level derivations, and at that call site a bare array is one swap
-/// away from being the IKM.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct DeviceId([u8; DEVICE_ID_BYTES]);
@@ -146,14 +108,19 @@ impl DeviceId {
     pub const fn new(bytes: [u8; DEVICE_ID_BYTES]) -> Self {
         Self(bytes)
     }
+
+    /// The bytes, for a prologue or a salt.
+    #[must_use]
+    pub const fn as_bytes(&self) -> &[u8; DEVICE_ID_BYTES] {
+        &self.0
+    }
 }
 
-/// P-085's factory-reset counter — the only thing on this device that can
-/// invalidate key material.
+/// P-085's factory-reset counter, and the ownership generation a site's
+/// history is keyed by.
 ///
 /// Zero is not an epoch: it starts at 1 and only ever climbs, so a zero is FRAM
-/// nobody wrote, and deriving under it mints keys the first successful write
-/// invalidates.
+/// nobody wrote.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Epoch(NonZeroU32);
@@ -172,8 +139,7 @@ impl Epoch {
         }
     }
 
-    /// The counter as it goes into a `PairAck` or a `Discover` answer (P-087),
-    /// so a client whose key no longer derives is told why.
+    /// The counter as it goes into a `Discover` answer and a prologue.
     #[must_use]
     pub const fn get(self) -> u32 {
         self.0.get()
@@ -182,9 +148,7 @@ impl Epoch {
 
 /// P-086's slot index in the client table, counting from 1.
 ///
-/// Zero is what a `PairAck` carries when nobody was enrolled, so it names no
-/// slot and there is no key at it. Refusing it here is what stops a refused
-/// pairing from deriving anything at all.
+/// Zero is what the wire carries when nobody was enrolled, so it names no slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ClientId(NonZeroU32);
@@ -200,71 +164,71 @@ impl ClientId {
         }
     }
 
-    /// The number as it goes into a `PairAck` or a `Hello` body.
+    /// The number as it goes on the wire.
     #[must_use]
     pub const fn get(self) -> u32 {
         self.0.get()
     }
 
-    /// Where this client's row sits in a table that holds one per slot.
-    ///
-    /// P-086 counts slots from one, so every such table subtracts one — and
-    /// this is stated here, once, beside the `NonZeroU32` that makes it sound.
-    /// Two tables doing the arithmetic separately are two tables that can
-    /// address different rows for the same client, and the counter store and
-    /// the capability mask are documented as sharing a FRAM row.
-    ///
-    /// The table it indexes is what bounds it: a slot past the end reads as
-    /// `None` from the `get` that uses this, and that is the only bound there
-    /// should be. `None` here is a `client_id` too large for this machine's
-    /// `usize`, which is not a case any target of this firmware has.
+    /// Where this client's row sits in a table that holds one per slot. P-086
+    /// counts from one, so every such table subtracts one, here and nowhere
+    /// else. `None` is a `client_id` too large for this machine's `usize`.
     #[must_use]
     pub fn slot(self) -> Option<usize> {
         usize::try_from(self.0.get().saturating_sub(1)).ok()
     }
 }
 
-/// The two nonces a session key is salted with, in the order the salt joins
-/// them.
+/// How many times a slot has been re-keyed (P-239). With the epoch and the
+/// `client_id` it names one enrolment and never a second.
 ///
-/// Named fields rather than two arrays in a row: swapped, both ends still
-/// derive a key, it is simply not the same key, and the symptom is every frame
-/// failing its MAC with nothing pointing at this line.
-#[derive(Debug, Clone, Copy)]
-pub struct Handshake {
-    /// The challenge the controller minted for this connection.
-    pub challenge: [u8; NONCE_BYTES],
-    /// Fresh per attempt, from the client's CSPRNG.
-    pub client_nonce: [u8; NONCE_BYTES],
-}
+/// Zero is a slot that was never written, so no enrolment carries it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct Generation(NonZeroU32);
 
-impl Handshake {
-    /// `challenge | client_nonce`, with no separator (P-040).
-    fn salt(&self) -> [u8; SESSION_SALT_BYTES] {
-        let mut salt = [0u8; SESSION_SALT_BYTES];
-        let joined = self.challenge.iter().chain(&self.client_nonce);
-        for (slot, &byte) in salt.iter_mut().zip(joined) {
-            *slot = byte;
+impl Generation {
+    /// The generation of a slot's first enrolment.
+    pub const FIRST: Self = Self(NonZeroU32::MIN);
+
+    /// The generation as it was read back, or nothing for a zero.
+    #[must_use]
+    pub const fn new(raw: u32) -> Option<Self> {
+        match NonZeroU32::new(raw) {
+            Some(generation) => Some(Self(generation)),
+            None => None,
         }
-        salt
+    }
+
+    /// The number as it goes on the wire.
+    #[must_use]
+    pub const fn get(self) -> u32 {
+        self.0.get()
+    }
+
+    /// The generation a re-key writes, or nothing when this one is the last a
+    /// `u32` holds: P-239 refuses to issue a generation twice, so a slot that
+    /// has reached the top is a slot that cannot be written again.
+    #[must_use]
+    pub const fn next(self) -> Option<Self> {
+        match self.0.checked_add(1) {
+            Some(next) => Some(Self(next)),
+            None => None,
+        }
     }
 }
 
-/// The two things one unit is born with: the `device_id` etched into it and the
-/// `printed_secret` on its label, which are exactly what P-049's QR code
-/// carries.
+/// The two things P-049's QR code carries that a key is derived from: the
+/// `device_id` and the `printed_secret`.
 ///
-/// They are held together because every key on the device descends from this
-/// pair and from nothing else, and because they are the `salt` and the `IKM` of
-/// both device-level derivations — one struct is one place for them to be the
-/// right way round. Dropping it clears the printed secret; the `device_id` is
-/// printed on the label and left alone.
-pub struct DeviceSecret {
+/// It derives the pairing's two keys and nothing else. Dropping it clears the
+/// printed secret; the `device_id` is printed on the label and left alone.
+pub struct Label {
     device_id: DeviceId,
     printed_secret: PrintedSecret,
 }
 
-impl DeviceSecret {
+impl Label {
     /// The pair a controller reads out of its own store, or a client decodes
     /// from the QR code it has just scanned.
     #[must_use]
@@ -275,116 +239,90 @@ impl DeviceSecret {
         }
     }
 
-    /// The key both pairing proofs are computed under (P-088).
-    ///
-    /// The comms processor observes every pairing exchange, so a proof MAC'd
-    /// under `printed_secret` would hand the one component this protocol calls
-    /// hostile an oracle under the secret the whole device rests on.
+    /// Which controller the label is stuck to.
     #[must_use]
-    pub fn pair_key(&self) -> PairKey {
-        PairKey::new(self.prk().expand(Derivation::PairKey).key())
+    pub const fn device_id(&self) -> DeviceId {
+        self.device_id
     }
 
-    /// The challenge for `counter`, minted without any physical entropy.
-    ///
-    /// **This part has no RNG peripheral**, so P-063's CSPRNG has to be built.
-    /// It is a PRF in counter mode: unpredictable to anybody who does not hold
-    /// the printed secret, which is everybody the threat model cares about, and
-    /// distinct for every `counter`.
-    ///
-    /// So the whole of its security rests on `counter` **never repeating for one
-    /// device**. A repeat re-mints a challenge, and a challenge that comes round
-    /// again is one a recorded `Hello` or `Pair` proof verifies against a second
-    /// time. That is why the counter has to outlive a reset, and why this takes
-    /// it as an argument rather than holding it: the thing that has to persist
-    /// belongs to whoever owns the storage.
+    /// The pre-shared key a pairing handshake mixes in first (P-088).
     #[must_use]
-    pub fn challenge(&self, counter: u64) -> [u8; NONCE_BYTES] {
-        let key = self.prk().expand(Derivation::Challenge).u64(counter).key();
-        let mut out = [0u8; NONCE_BYTES];
-        for (slot, byte) in out.iter_mut().zip(key.iter()) {
-            *slot = *byte;
-        }
-        out
+    pub fn pair_psk(&self) -> Psk {
+        Psk::new(self.derive(Derivation::PairPsk))
     }
 
-    /// One client's long-term secret, at one slot and one epoch.
-    ///
-    /// Both coordinates go into the `info` because both have to (P-085, P-086).
-    /// Drop `epoch` and a factory reset re-mints the key a stolen phone already
-    /// holds; drop `client_id` and every client on the unit shares one key.
+    /// The key a pairing refusal is tagged under (P-241).
     #[must_use]
-    pub fn enrolment(&self, epoch: Epoch, client_id: ClientId) -> Enrolment {
-        Enrolment {
-            device_id: self.device_id,
-            epoch,
-            client_id,
-            key: self
-                .prk()
-                .expand(Derivation::ClientKey)
-                .u32(epoch.get())
-                .u32(client_id.get())
-                .key(),
-        }
+    pub fn refusal_key(&self) -> RefusalKey {
+        RefusalKey::new(self.derive(Derivation::PairRefusal))
     }
 
-    /// Both device-level derivations extract under the same salt and IKM, which
-    /// is what leaves P-043's label as the only thing separating them.
-    fn prk(&self) -> Prk {
+    fn derive(&self, derivation: Derivation) -> Zeroizing<[u8; KEY_BYTES]> {
         Prk::of(Salt(&self.device_id.0), Ikm(&self.printed_secret.0))
+            .expand(derivation)
+            .key()
     }
 }
 
-/// One enrolled client's long-term secret and the controller, epoch and slot
-/// it was derived at.
-///
-/// The `client_id` rides along because the `Hello` proof names it inside the
-/// body it authenticates (P-057): taken from the enrolment that holds the key,
-/// the field and the key cannot end up naming two different clients. The
-/// `device_id` and `epoch` ride along so a [`StoredEnrolment`] can say which
-/// controller and which reset the key belongs to (P-222). The key is cleared on
-/// drop; the other three are on the wire in every `Discover` or `Hello`.
-pub struct Enrolment {
-    device_id: DeviceId,
-    epoch: Epoch,
-    client_id: ClientId,
-    key: [u8; DERIVED_KEY_BYTES],
+/// P-238's admission key from the DH both ends can compute.
+pub(crate) fn admit_key(device_id: DeviceId, shared: &[u8; KEY_BYTES]) -> AdmitKey {
+    AdmitKey::new(
+        Prk::of(Salt(&device_id.0), Ikm(shared))
+            .expand(Derivation::AdmitKey)
+            .key(),
+    )
 }
 
-impl Drop for Enrolment {
-    fn drop(&mut self) {
-        self.key.zeroize();
+/// The fingerprint of a controller key that P-236 prints on the label.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct Fingerprint([u8; FINGERPRINT_BYTES]);
+
+impl Fingerprint {
+    /// The label prefix of P-043's table, which is a hash prefix.
+    const LABEL: &'static [u8] = b"km43/v1/controller-fp";
+
+    /// `SHA-256("km43/v1/controller-fp" | CS)[0..16]`.
+    #[must_use]
+    pub fn of(controller: &PublicKey) -> Self {
+        let mut digest = Sha256::new();
+        digest.update(Self::LABEL);
+        digest.update(controller.as_bytes());
+        let full: [u8; DIGEST_BYTES] = digest.finalize().into();
+        let mut out = [0u8; FINGERPRINT_BYTES];
+        for (slot, &byte) in out.iter_mut().zip(&full) {
+            *slot = byte;
+        }
+        Self(out)
+    }
+
+    /// The sixteen bytes a label printed.
+    #[must_use]
+    pub const fn from_label(bytes: [u8; FINGERPRINT_BYTES]) -> Self {
+        Self(bytes)
+    }
+
+    /// Whether `controller` is the key this label vouches for. Constant time,
+    /// though nothing here is secret, so the comparison reads the same as
+    /// every other one in the crate.
+    #[must_use]
+    pub fn vouches_for(&self, controller: &PublicKey) -> bool {
+        bool::from(self.0.ct_eq(&Self::of(controller).0))
+    }
+
+    /// The bytes, for printing.
+    #[must_use]
+    pub const fn as_bytes(&self) -> &[u8; FINGERPRINT_BYTES] {
+        &self.0
     }
 }
 
-impl Enrolment {
-    /// Which slot this is, for the `client_id` a `Hello` body carries.
-    #[must_use]
-    pub const fn client_id(&self) -> ClientId {
-        self.client_id
-    }
-
-    /// The long-term key, handed to the MAC layer.
-    #[must_use]
-    pub const fn client_key(&self) -> ClientKey {
-        ClientKey::new(self.key)
-    }
-
-    /// The key this session's traffic is authenticated under, in both
-    /// directions.
-    ///
-    /// Salted with both nonces, so neither end fixes the key alone: a
-    /// controller whose challenge repeats and a client that replays its nonce
-    /// each still land on a fresh key unless the other end repeated too.
-    #[must_use]
-    pub fn session_key(&self, handshake: &Handshake, session: SessionId) -> SessionKey {
-        let salt = handshake.salt();
-        SessionKey::new(
-            Prk::of(Salt(&salt), Ikm(&self.key))
-                .expand(Derivation::SessionKey)
-                .u16(u16::from(session))
-                .key(),
-        )
+impl fmt::Debug for Fingerprint {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Fingerprint(")?;
+        for byte in &self.0 {
+            write!(f, "{byte:02x}")?;
+        }
+        f.write_str(")")
     }
 }
 
@@ -396,11 +334,7 @@ struct Salt<'a>(&'a [u8]);
 #[derive(Clone, Copy)]
 struct Ikm<'a>(&'a [u8]);
 
-/// The pseudorandom key of RFC 5869 §2.2 — `HMAC(salt, IKM)` — and the one
-/// place the two arguments meet.
-///
-/// Cleared on drop like the keys it produces: a device-level PRK derives every
-/// key on the unit, so it is worth as much as the printed secret it came from.
+/// RFC 5869 §2.2's pseudorandom key, cleared on drop.
 struct Prk([u8; DIGEST_BYTES]);
 
 impl Drop for Prk {
@@ -419,54 +353,22 @@ impl Prk {
     /// Opens an `info` with P-043's label, which is the only way a derivation
     /// here begins.
     fn expand(&self, derivation: Derivation) -> Expand {
-        Expand::under(self, derivation.as_str().as_bytes())
+        let mut extract = HkdfExtract::<Sha256>::new(Some(&self.0));
+        extract.input_ikm(derivation.as_str().as_bytes());
+        Expand(extract)
     }
 }
 
-/// One `info` under construction, over a PRK that is already fixed.
-///
-/// `under` puts its first argument at the head of the `info` and [`Prk::expand`]
-/// is its only caller outside the tests, so there is no reaching an integer
-/// writer without a label having gone in ahead of it.
+/// One `info` under construction.
 struct Expand(HkdfExtract<Sha256>);
 
 impl Expand {
-    fn under(prk: &Prk, label: &[u8]) -> Self {
-        let mut extract = HkdfExtract::<Sha256>::new(Some(&prk.0));
-        extract.input_ikm(label);
-        Self(extract)
-    }
-
-    /// Big-endian and fixed width because P-040 says so, and because there is
-    /// no other method here: two implementations that agree on the algorithm
-    /// and not on the byte order derive keys neither of them can explain.
-    fn u16(mut self, value: u16) -> Self {
-        self.0.input_ikm(&value.to_be_bytes());
-        self
-    }
-
-    fn u32(mut self, value: u32) -> Self {
-        self.0.input_ikm(&value.to_be_bytes());
-        self
-    }
-
-    fn u64(mut self, value: u64) -> Self {
-        self.0.input_ikm(&value.to_be_bytes());
-        self
-    }
-
-    /// RFC 5869 §2.3 at `L` = `HashLen`, which is `T(1) = HMAC(PRK, info |
-    /// 0x01)` and nothing more.
-    ///
-    /// Going through extract rather than `Hkdf::expand` is what removes a
-    /// `Result` whose only arm is `L > 255 × HashLen` — unreachable against a
-    /// fixed 32-byte array, and an error nothing can produce would have to be
-    /// carried by every caller of every derivation, which is the argument
-    /// `mac.rs` makes about `Mac::new_from_slice`. Extract *is* that HMAC; its
-    /// key is simply spelled `salt`.
-    fn key(mut self) -> [u8; DERIVED_KEY_BYTES] {
+    /// RFC 5869 §2.3 at `L` = `HashLen`: `T(1) = HMAC(PRK, info | 0x01)`.
+    /// Going through extract removes a `Result` whose only arm, `L > 255 ×
+    /// HashLen`, cannot happen against a fixed 32-byte array.
+    fn key(mut self) -> Zeroizing<[u8; KEY_BYTES]> {
         self.0.input_ikm(&[FIRST_BLOCK]);
-        self.0.finalize().0.into()
+        Zeroizing::new(self.0.finalize().0.into())
     }
 }
 
@@ -474,582 +376,99 @@ impl Expand {
 mod tests {
     use super::*;
 
-    /// **A repeated counter re-mints a challenge, and that is the whole risk.**
-    ///
-    /// A challenge that comes round again is one a recorded `Hello` or `Pair`
-    /// proof verifies against a second time. Nothing in this function can stop
-    /// that — only a counter that outlives a reset can — so the test that
-    /// matters is that the counter is genuinely what separates them.
-    #[test]
-    fn a_challenge_is_a_function_of_the_counter_and_nothing_else() {
-        let device = DeviceSecret::new(DeviceId::new([0xAB; 16]), PrintedSecret::new([0xCD; 32]));
-        assert_eq!(
-            device.challenge(7),
-            device.challenge(7),
-            "the same counter has to give the same challenge, or nothing can reason about repeats"
-        );
-        // No allocator here or on the target, so the fixture is a fixed array
-        // for the same reason the firmware's buffers are.
-        let mut seen = [[0u8; NONCE_BYTES]; 64];
-        for counter in 0..64usize {
-            let minted = device.challenge(counter as u64);
-            let earlier = seen.get(..counter).expect("the filled prefix");
-            assert!(
-                !earlier.contains(&minted),
-                "counter {counter} re-minted a challenge an earlier one had already produced"
-            );
-            if let Some(slot) = seen.get_mut(counter) {
-                *slot = minted;
-            }
-        }
-    }
-
-    /// Two units do not share a challenge sequence. They would if the
-    /// derivation forgot the device secret and leaned on the counter alone,
-    /// which is exactly the shape a tick-based stand-in has.
-    #[test]
-    fn two_devices_do_not_mint_the_same_challenges() {
-        let one = DeviceSecret::new(DeviceId::new([0x01; 16]), PrintedSecret::new([0xCD; 32]));
-        let two = DeviceSecret::new(DeviceId::new([0x02; 16]), PrintedSecret::new([0xCD; 32]));
-        let secret = DeviceSecret::new(DeviceId::new([0x01; 16]), PrintedSecret::new([0xEE; 32]));
-        for counter in 0..8u64 {
-            assert_ne!(one.challenge(counter), two.challenge(counter), "device_id");
-            assert_ne!(one.challenge(counter), secret.challenge(counter), "secret");
-        }
-    }
-
-    // **There is no test that a challenge differs from a key**, and the reason
-    // is the better guarantee: `PairKey` and `ClientKey` do not surrender their
-    // bytes, so the comparison cannot be written. What keeps them apart is
-    // `Derivation::Challenge`'s own label — the same mechanism, checked by the
-    // compiler enumerating the four rather than by a test comparing two.
-    use core::fmt::Write as _;
-
-    use crate::envelope::ReqId;
-    use crate::generated::MessageType;
-    use crate::mac::{HelloProof, Tag, Wrapped};
-
-    /// Fixtures go in as the hexadecimal the documents publish. Retyping
-    /// `0x8a, 0xee, …` by hand is how a digit moves house without anybody
-    /// noticing, and this is a `const fn` so a fixture of the wrong width fails
-    /// the build rather than a test.
-    const fn hex<const N: usize>(text: &str) -> [u8; N] {
-        let src = text.as_bytes();
-        assert!(src.len() == N * 2, "hex fixture is not the width it claims");
-        let mut out = [0u8; N];
-        let mut i = 0;
-        while i < N {
-            out[i] = (nibble(src[i * 2]) << 4) | nibble(src[i * 2 + 1]);
-            i += 1;
-        }
-        out
-    }
-
-    const fn nibble(c: u8) -> u8 {
-        match c {
-            b'0'..=b'9' => c - b'0',
-            b'a'..=b'f' => c - b'a' + 10,
-            _ => panic!("hex fixture is not lowercase hexadecimal"),
-        }
-    }
-
-    const PRINTED_SECRET: [u8; PRINTED_SECRET_BYTES] =
-        hex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f");
-    const DEVICE_ID: [u8; DEVICE_ID_BYTES] = hex("4f524947494e38392044454d4f203031");
-    const CHALLENGE: [u8; NONCE_BYTES] = hex("a0a1a2a3a4a5a6a7a8a9aaabacadaeaf");
-    const CLIENT_NONCE: [u8; NONCE_BYTES] = hex("b0b1b2b3b4b5b6b7b8b9babbbcbdbebf");
-    const CLIENT_ID: u32 = 7;
-    const SESSION: u16 = 3;
-    const REQ_ID: u32 = 17;
-
-    /// Two bodies to sign. Every test below compares one derivation against
-    /// another, never against a published answer, so the bytes are arbitrary:
-    /// what pins each derived key to `docs/protocol/vectors/v1.json` is
-    /// `tests/vectors.rs`, which reads the file.
-    const HELLO_BODY: [u8; 40] = [0x42; 40];
-    const COMMAND_ACK_BODY: [u8; 26] = [0x43; 26];
-
-    /// The device every key below descends from.
-    fn device() -> DeviceSecret {
-        DeviceSecret::new(DeviceId::new(DEVICE_ID), PrintedSecret::new(PRINTED_SECRET))
-    }
-
-    fn enrolment() -> Enrolment {
-        device().enrolment(
-            Epoch::new(1).expect("epoch 1 is what the vectors were derived at"),
-            ClientId::new(CLIENT_ID).expect("client_id 7 is a slot"),
-        )
-    }
-
-    fn handshake() -> Handshake {
-        Handshake {
-            challenge: CHALLENGE,
-            client_nonce: CLIENT_NONCE,
-        }
-    }
-
-    /// Every key type here seals its bytes on purpose — a key with an accessor
-    /// is a key in a bench log — so the only way to ask whether two derivations
-    /// agree is to have each sign one fixed body and compare the tags.
-    fn client_signs(enrolment: &Enrolment) -> [u8; Tag::LEN] {
-        *enrolment
-            .client_key()
-            .hello_proof(&HelloProof {
-                challenge: &CHALLENGE,
-                client_nonce: &CLIENT_NONCE,
-                client_id: enrolment.client_id().get(),
-                payload: &HELLO_BODY,
-            })
-            .as_bytes()
-    }
-
-    fn session_signs(key: &SessionKey) -> [u8; Tag::LEN] {
-        *key.response(&Wrapped {
-            kind: MessageType::CommandResponse,
-            session: SessionId::from(SESSION),
-            req_id: ReqId(REQ_ID),
-            payload: &COMMAND_ACK_BODY,
-        })
-        .as_bytes()
-    }
-
-    /// RFC 5869's Appendix A, which is the only thing in this file that is an
-    /// opinion from outside this repository about extract and expand.
-    ///
-    /// The published `OKM` runs longer than the 32 bytes this protocol asks for
-    /// — 42, 82 and 42 — and that costs nothing: expand emits
-    /// `T(1) | T(2) | …` and truncates, so a published `OKM` *begins* with the
-    /// `L = 32` answer. Comparing that prefix is comparing against the RFC.
-    /// Case 3 is the one that earns its place: an empty salt and an empty info
-    /// are where an implementation that quietly swapped two arguments still
-    /// looks right.
-    #[test]
-    fn extract_and_expand_are_the_ones_rfc_5869_publishes() {
-        const CASES: [RfcCase; 3] = [
-            RfcCase {
-                ikm: &[0x0b; 22],
-                salt: &hex::<13>("000102030405060708090a0b0c"),
-                info: &hex::<10>("f0f1f2f3f4f5f6f7f8f9"),
-                prk: hex("077709362c2e32df0ddc3f0dc47bba6390b6c73bb50f9c3122ec844ad7c2b3e5"),
-                okm: hex("3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf"),
-            },
-            RfcCase {
-                ikm: &hex::<80>(
-                    "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f2021222\
-                     32425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40414243444546\
-                     4748494a4b4c4d4e4f",
-                ),
-                salt: &hex::<80>(
-                    "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f8081828\
-                     38485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6\
-                     a7a8a9aaabacadaeaf",
-                ),
-                info: &hex::<80>(
-                    "b0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d\
-                     3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6\
-                     f7f8f9fafbfcfdfeff",
-                ),
-                prk: hex("06a6b88c5853361a06104c9ceb35b45cef760014904671014a193f40c15fc244"),
-                okm: hex("b11e398dc80327a1c8e7f78c596a49344f012eda2d4efad8a050cc4c19afa97c"),
-            },
-            RfcCase {
-                ikm: &[0x0b; 22],
-                salt: &[],
-                info: &[],
-                prk: hex("19ef24a32c717b167f33a91d6f648bdf96596776afdb6377ac434c1c293ccb04"),
-                okm: hex("8da4e775a563c18f715f802a063c5a31b8a11f5c5ee1879ec3454e5f3c738d2d"),
-            },
-        ];
-
-        for (index, case) in CASES.iter().enumerate() {
-            case.agrees(index.saturating_add(1));
-        }
-    }
-
-    /// One case of RFC 5869's Appendix A: the three arguments it names, and the
-    /// two answers it publishes for them.
-    struct RfcCase {
-        ikm: &'static [u8],
-        salt: &'static [u8],
-        info: &'static [u8],
-        prk: [u8; DIGEST_BYTES],
-        okm: [u8; DERIVED_KEY_BYTES],
-    }
-
-    impl RfcCase {
-        fn agrees(&self, case: usize) {
-            let prk = Prk::of(Salt(self.salt), Ikm(self.ikm));
-            assert_eq!(prk.0, self.prk, "RFC 5869 case {case} extracts differently");
-            assert_eq!(
-                Expand::under(&prk, self.info).key(),
-                self.okm,
-                "RFC 5869 case {case} expands differently"
-            );
-        }
-    }
-
-    /// P-042 as a property rather than a sentence: the two extract arguments
-    /// are two arguments, not one byte string with a comma written in it.
-    ///
-    /// Swapping them is the obvious half. The half that actually rules out the
-    /// `HKDF(a | b | c)` this replaced is the second: one fixed 48-byte string
-    /// cut in two at two different places is two derivations here and *one*
-    /// hash over a concatenation, because the concatenation cannot see where
-    /// the boundary was. An implementation that agrees with the second
-    /// assertion is one that assigned its arguments.
-    #[test]
-    fn salt_and_ikm_are_two_arguments_and_not_one_concatenation() {
-        let named = Prk::of(Salt(&DEVICE_ID), Ikm(&PRINTED_SECRET));
-        let swapped = Prk::of(Salt(&PRINTED_SECRET), Ikm(&DEVICE_ID));
-        assert_ne!(
-            named.expand(Derivation::PairKey).key(),
-            swapped.expand(Derivation::PairKey).key(),
-            "the two arguments are interchangeable, so neither is assigned"
-        );
-
-        let joined: [u8; DEVICE_ID_BYTES + PRINTED_SECRET_BYTES] = hex(
-            "4f524947494e38392044454d4f203031000102030405060708090a0b0c0d0e0f10111213141516\
-                 1718191a1b1c1d1e1f",
-        );
-        let early = joined.get(..DEVICE_ID_BYTES).expect("inside the string");
-        let late = joined.get(..DIGEST_BYTES).expect("inside the string");
-        assert_ne!(
-            Prk::of(
-                Salt(early),
-                Ikm(joined.get(DEVICE_ID_BYTES..).expect("inside the string"))
-            )
-            .expand(Derivation::PairKey)
-            .key(),
-            Prk::of(
-                Salt(late),
-                Ikm(joined.get(DIGEST_BYTES..).expect("inside the string"))
-            )
-            .expand(Derivation::PairKey)
-            .key(),
-            "one byte string cut in two places derived one key, so the salt and the IKM were concatenated"
-        );
-    }
-
-    /// One salt and one IKM under three labels are three keys. That is what
-    /// makes `pair-key`, `client-key` and `session-key` separate purposes
-    /// rather than three spellings of one, and it is what lets P-088 say the
-    /// pairing proofs are keyed by something the session traffic is not.
-    #[test]
-    fn no_two_derivations_share_a_key_under_one_salt_and_ikm() {
-        const EVERY: [Derivation; 3] = [
-            Derivation::PairKey,
-            Derivation::ClientKey,
-            Derivation::SessionKey,
-        ];
-        let prk = Prk::of(Salt(&DEVICE_ID), Ikm(&PRINTED_SECRET));
-
-        let mut keys = [[0u8; DERIVED_KEY_BYTES]; EVERY.len()];
-        for (slot, derivation) in keys.iter_mut().zip(EVERY) {
-            *slot = prk.expand(derivation).key();
-        }
-        for first in 0..EVERY.len() {
-            for second in first.saturating_add(1)..EVERY.len() {
-                assert_ne!(
-                    keys.get(first).expect("the index came from the list"),
-                    keys.get(second).expect("the index came from the list"),
-                    "{} and {} derive one key",
-                    EVERY.get(first).expect("the index came from the list"),
-                    EVERY.get(second).expect("the index came from the list"),
-                );
-            }
-        }
-    }
-
-    /// P-085: a factory reset must not re-mint the key a stolen phone holds.
-    ///
-    /// Press the button, reset, pair a new phone, and P-086 hands it slot 1
-    /// again. Without `epoch` in the `info` that phone is issued the key the
-    /// phone stolen last week already has, and the documented remedy for a
-    /// compromised client removes no access at all.
-    #[test]
-    fn a_new_epoch_does_not_re_mint_the_key_a_stolen_phone_holds() {
-        let slot = ClientId::new(1).expect("slot 1 is a slot");
-        let before = device().enrolment(Epoch::FIRST, slot);
-        let after = device().enrolment(Epoch::new(2).expect("2 is an epoch"), slot);
-
-        assert_ne!(
-            client_signs(&before),
-            client_signs(&after),
-            "one slot at two epochs derives one key, so a factory reset invalidates nothing"
-        );
-    }
-
-    /// P-086: two slots at one epoch are two clients, and two clients do not
-    /// share a key.
-    ///
-    /// Sharing one would let any enrolled phone sign as any other, and the
-    /// capability mask fixed at pairing would stop meaning anything the moment
-    /// a second client existed.
-    #[test]
-    fn two_slots_at_one_epoch_do_not_share_a_key() {
-        let first = device().enrolment(Epoch::FIRST, ClientId::new(1).expect("slot 1 is a slot"));
-        let second = device().enrolment(Epoch::FIRST, ClientId::new(2).expect("slot 2 is a slot"));
-
-        assert_ne!(client_signs(&first), client_signs(&second));
-    }
-
-    /// The other half of the two above, and the half that would go unnoticed:
-    /// the same epoch and the same slot derive the same key every time.
-    ///
-    /// A derivation that mixed in anything not in its arguments — a timer, a
-    /// counter, uninitialised memory — passes both tests above and fails the
-    /// first time a controller reboots between pairing a phone and answering
-    /// it.
-    #[test]
-    fn one_slot_at_one_epoch_derives_one_key_every_time() {
-        let slot = ClientId::new(CLIENT_ID).expect("slot 7 is a slot");
-        assert_eq!(
-            client_signs(&device().enrolment(Epoch::FIRST, slot)),
-            client_signs(&device().enrolment(Epoch::FIRST, slot))
-        );
-    }
-
-    /// Two connections are two session keys, because the challenge is in the
-    /// salt.
-    ///
-    /// Share one and a frame recorded off an earlier connection verifies on a
-    /// later one, which is the whole reason the controller mints a challenge at
-    /// all.
-    #[test]
-    fn two_challenges_do_not_derive_one_session_key() {
-        let enrolment = enrolment();
-        let session = SessionId::from(SESSION);
-        let mut later = handshake();
-        later.challenge = [0x5a; NONCE_BYTES];
-
-        assert_ne!(
-            session_signs(&enrolment.session_key(&handshake(), session)),
-            session_signs(&enrolment.session_key(&later, session))
-        );
-    }
-
-    /// The client's half of the salt has to reach the key too, or the client
-    /// contributes nothing and a controller with a stuck RNG hands every
-    /// connection the same key.
-    #[test]
-    fn two_client_nonces_do_not_derive_one_session_key() {
-        let enrolment = enrolment();
-        let session = SessionId::from(SESSION);
-        let mut other = handshake();
-        other.client_nonce = [0x5a; NONCE_BYTES];
-
-        assert_ne!(
-            session_signs(&enrolment.session_key(&handshake(), session)),
-            session_signs(&enrolment.session_key(&other, session))
-        );
-    }
-
-    /// `session_id` is in the `info`, so two sessions off one handshake are two
-    /// keys. It is the only thing separating them, since the salt and the IKM
-    /// are identical.
-    #[test]
-    fn two_session_ids_over_one_handshake_do_not_derive_one_key() {
-        let enrolment = enrolment();
-        assert_ne!(
-            session_signs(&enrolment.session_key(&handshake(), SessionId::from(SESSION))),
-            session_signs(
-                &enrolment.session_key(&handshake(), SessionId::from(SESSION.saturating_add(1)))
-            )
-        );
-    }
-
-    /// Two clients on one connection do not share a session key either: the
-    /// client key is the IKM, so the whole ladder stays under the enrolment.
-    #[test]
-    fn two_enrolments_over_one_handshake_do_not_derive_one_session_key() {
-        let device = device();
-        let first = device.enrolment(Epoch::FIRST, ClientId::new(1).expect("slot 1 is a slot"));
-        let second = device.enrolment(Epoch::FIRST, ClientId::new(2).expect("slot 2 is a slot"));
-        let session = SessionId::from(SESSION);
-
-        assert_ne!(
-            session_signs(&first.session_key(&handshake(), session)),
-            session_signs(&second.session_key(&handshake(), session))
-        );
-    }
-
-    /// The salt is the challenge and *then* the nonce, joined with nothing in
-    /// between (P-040).
-    ///
-    /// Swapped, both ends still derive a key; it is simply not the same key,
-    /// and the only symptom is every frame of the session failing its MAC.
-    #[test]
-    fn the_session_salt_is_the_challenge_and_then_the_nonce() {
-        let salt = handshake().salt();
-        assert_eq!(
-            salt.get(..NONCE_BYTES).expect("the salt holds both nonces"),
-            CHALLENGE
-        );
-        assert_eq!(
-            salt.get(NONCE_BYTES..).expect("the salt holds both nonces"),
-            CLIENT_NONCE
-        );
-
-        let swapped = Handshake {
-            challenge: CLIENT_NONCE,
-            client_nonce: CHALLENGE,
-        };
-        assert_ne!(salt, swapped.salt());
-    }
-
-    /// Zero is FRAM nobody wrote, not epoch zero. Deriving under it mints keys
-    /// at an epoch the first successful write immediately invalidates — every
-    /// client on the unit refused, with nothing pointing at the read that
-    /// failed.
-    #[test]
-    fn a_zero_epoch_is_refused_rather_than_derived_under() {
-        assert_eq!(Epoch::new(0), None);
-        assert_eq!(Epoch::new(1), Some(Epoch::FIRST));
-        assert_eq!(
-            Epoch::new(u32::MAX)
-                .expect("the top of the counter is an epoch")
-                .get(),
-            u32::MAX,
-            "an epoch does not survive the round trip through its own type"
-        );
-    }
-
-    /// Zero is the `client_id` a `PairAck` carries when nobody was enrolled, so
-    /// it names no slot. A key derived at slot zero is a key for a client that
-    /// does not exist, and P-086 counts from 1.
-    #[test]
-    fn a_zero_client_id_names_no_slot() {
-        assert_eq!(ClientId::new(0), None);
-        assert_eq!(
-            ClientId::new(1).expect("slot 1 is a slot").get(),
-            1,
-            "a slot does not survive the round trip through its own type"
-        );
-    }
-
-    /// The enrolment carries the slot it was derived at, so the `client_id` a
-    /// `Hello` body announces and the key that signs that body cannot name two
-    /// different clients.
-    #[test]
-    fn an_enrolment_reports_the_slot_its_key_was_derived_at() {
-        assert_eq!(enrolment().client_id().get(), CLIENT_ID);
-    }
-
-    /// A derivation renders as the label it puts at the head of its `info`, so
-    /// a bench log naming the derivation is naming the bytes that went in.
-    #[test]
-    fn a_derivation_renders_as_the_label_it_puts_in_the_info() {
-        let mut into = [0u8; 64];
-        let mut sink = Sink {
-            into: &mut into,
-            written: 0,
-        };
-        write!(sink, "{}", Derivation::SessionKey).expect("a label fits sixty-four bytes");
-        let written = sink.written;
-        assert_eq!(
-            into.get(..written)
-                .expect("the length came from the render"),
-            b"km43/v1/session-key"
-        );
-    }
-
-    /// Renders into a fixed buffer, since there is no `String` here.
-    struct Sink<'a> {
-        into: &'a mut [u8],
-        written: usize,
-    }
-
-    impl fmt::Write for Sink<'_> {
-        fn write_str(&mut self, text: &str) -> fmt::Result {
-            for &byte in text.as_bytes() {
-                let slot = self.into.get_mut(self.written).ok_or(fmt::Error)?;
-                *slot = byte;
-                self.written = self.written.saturating_add(1);
-            }
-            Ok(())
-        }
-    }
-
     impl crate::residue::Unpadded for PrintedSecret {}
-    impl crate::residue::Unpadded for DeviceSecret {}
-    impl crate::residue::Unpadded for Enrolment {}
-    impl crate::residue::Unpadded for Prk {}
+    impl crate::residue::Unpadded for Label {}
 
-    const_assert!(size_of::<PrintedSecret>() == PRINTED_SECRET_BYTES);
-    const_assert!(size_of::<DeviceSecret>() == DEVICE_ID_BYTES + PRINTED_SECRET_BYTES);
-    const_assert!(
-        size_of::<Enrolment>()
-            == DEVICE_ID_BYTES + size_of::<u32>() + size_of::<u32>() + DERIVED_KEY_BYTES
-    );
-    const_assert!(size_of::<Prk>() == DIGEST_BYTES);
-
-    /// The bug this closes: a client that scanned the QR code clears its own
-    /// copy of the printed secret, and ours stays in freed memory until
-    /// something happens to reuse it.
+    /// The expand is RFC 5869's with the counter byte appended, checked against
+    /// test case 1 of the RFC: a derivation that is HKDF-shaped and not HKDF
+    /// agrees with itself and nobody else.
     #[test]
-    fn a_dropped_printed_secret_leaves_only_zeros() {
+    fn the_expand_is_rfc_5869_test_case_1() {
+        let salt: [u8; 13] = core::array::from_fn(|i| u8::try_from(i).unwrap_or(0));
+        let prk = Prk::of(Salt(&salt), Ikm(&[0x0b; 22]));
+        let mut extract = HkdfExtract::<Sha256>::new(Some(&prk.0));
+        extract.input_ikm(&[0xf0, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7, 0xf8, 0xf9]);
+        let t1: [u8; 32] = *Expand(extract).key();
+        assert_eq!(
+            t1[..8],
+            [0x3c, 0xb2, 0x5f, 0x25, 0xfa, 0xac, 0xd5, 0x7a],
+            "RFC 5869 A.1's OKM begins 3cb25f25faacd57a"
+        );
+    }
+
+    /// The label's two keys differ: one label, one `info` each. A refusal key
+    /// equal to the pre-shared key would make the refusal tag an oracle on the
+    /// key that opens message 1.
+    #[test]
+    fn p_088_the_label_derives_two_distinct_keys() {
+        let label = Label::new(DeviceId::new([0xAB; 16]), PrintedSecret::new([0xCD; 32]));
+        let psk = label.derive(Derivation::PairPsk);
+        let refusal = label.derive(Derivation::PairRefusal);
+        assert_ne!(*psk, *refusal);
+    }
+
+    /// The `device_id` salts both: two units whose labels were printed with the
+    /// same secret by mistake still pair under different keys.
+    #[test]
+    fn the_device_id_salts_the_label_keys() {
+        let one = Label::new(DeviceId::new([0x01; 16]), PrintedSecret::new([0xCD; 32]));
+        let two = Label::new(DeviceId::new([0x02; 16]), PrintedSecret::new([0xCD; 32]));
+        assert_ne!(
+            *one.derive(Derivation::PairPsk),
+            *two.derive(Derivation::PairPsk)
+        );
+    }
+
+    /// A fingerprint vouches for its own key and for no other, including one
+    /// that differs in a single bit.
+    #[test]
+    fn p_236_a_fingerprint_vouches_for_one_key() {
+        let key = PublicKey::from_bytes([0x42; KEY_BYTES]);
+        let fp = Fingerprint::of(&key);
+        assert!(fp.vouches_for(&key));
+        let mut other = [0x42; KEY_BYTES];
+        other[31] ^= 1;
+        assert!(!fp.vouches_for(&PublicKey::from_bytes(other)));
+        assert!(!Fingerprint::from_label([0; FINGERPRINT_BYTES]).vouches_for(&key));
+    }
+
+    /// A generation climbs and stops at the top rather than wrapping to a
+    /// value an earlier enrolment already had.
+    #[test]
+    fn p_239_a_generation_never_wraps() {
+        assert_eq!(
+            Generation::FIRST.next().map(Generation::get),
+            Some(2),
+            "one re-key after the first enrolment"
+        );
+        let last = Generation::new(u32::MAX).expect("non-zero");
+        assert_eq!(last.next(), None);
+        assert_eq!(Generation::new(0), None, "zero is a slot never written");
+    }
+
+    /// Zero is refused for all three identifiers: an unwritten epoch, no slot,
+    /// a slot never written.
+    #[test]
+    fn a_zero_names_nothing() {
+        assert_eq!(Epoch::new(0), None);
+        assert_eq!(ClientId::new(0), None);
+        assert_eq!(Generation::new(0), None);
+        assert_eq!(ClientId::new(1).and_then(ClientId::slot), Some(0));
+    }
+
+    /// The printed secret is the one thing on the label that is secret; a
+    /// dropped copy leaves nothing behind, and neither does a dropped label.
+    #[test]
+    fn p_088_a_dropped_printed_secret_leaves_nothing_behind() {
         let residue: [u8; 32] = crate::residue::after_drop(PrintedSecret::new([0xCD; 32]));
         assert_eq!(residue, [0; 32]);
-    }
-
-    /// The printed secret is cleared through the struct that holds it, with no
-    /// `Drop` of the holder's own. The `device_id` surviving is the check that
-    /// the bytes read back are the value's: a read of the wrong memory would
-    /// find no `0xCD` either.
-    #[test]
-    fn dropping_a_device_secret_clears_the_printed_secret_inside_it() {
-        let device = DeviceSecret::new(DeviceId::new([0xAB; 16]), PrintedSecret::new([0xCD; 32]));
-        let residue: [u8; 48] = crate::residue::after_drop(device);
+        let residue: [u8; 48] = crate::residue::after_drop(Label::new(
+            DeviceId::new([0xAB; 16]),
+            PrintedSecret::new([0xCD; 32]),
+        ));
         assert!(
             !residue.contains(&0xCD),
-            "printed secret survived: {residue:02x?}"
+            "the printed secret survived: {residue:02x?}"
         );
-        assert!(
-            residue.windows(16).any(|window| window == [0xAB; 16]),
-            "not the value's memory: {residue:02x?}"
-        );
-    }
-
-    /// An enrolment is where a client's long-term key lives between a pairing
-    /// and every later `Hello`. Only the `device_id`, the epoch's one non-zero
-    /// byte and the `client_id`'s may survive; a key cleared halfway leaves
-    /// more.
-    #[test]
-    fn a_dropped_enrolment_keeps_its_coordinates_and_loses_its_key() {
-        let device = DeviceSecret::new(DeviceId::new([0xAB; 16]), PrintedSecret::new([0xCD; 32]));
-        let client_id = ClientId::new(7).expect("seven is a slot");
-        let enrolment = device.enrolment(Epoch::FIRST, client_id);
-        assert!(
-            enrolment.key.iter().filter(|&&b| b != 0).count() > 1,
-            "the fixture's key has to be distinguishable from a cleared one"
-        );
-        let residue: [u8; 56] = crate::residue::after_drop(enrolment);
-        assert!(
-            residue.windows(16).any(|window| window == [0xAB; 16]),
-            "not the value's memory: {residue:02x?}"
-        );
-        // The compiler chooses the field order, so the epoch's 1 and the
-        // `client_id`'s 7 are looked for in either order.
-        let mut survivors = residue.iter().filter(|&&b| b != 0 && b != 0xAB);
-        let pair = (survivors.next(), survivors.next());
-        assert!(
-            pair == (Some(&1), Some(&7)) || pair == (Some(&7), Some(&1)),
-            "not the epoch and the client_id: {residue:02x?}"
-        );
-        assert_eq!(survivors.next(), None, "key bytes survived: {residue:02x?}");
-    }
-
-    /// The PRK is the extract of the printed secret, and every key on the unit
-    /// expands from it. It lives only for the length of one derivation, which is
-    /// long enough to leave it on the stack of every call that made one.
-    #[test]
-    fn a_dropped_prk_leaves_only_zeros() {
-        let prk = Prk::of(Salt(&[0xAB; 16]), Ikm(&[0xCD; 32]));
-        assert_ne!(
-            prk.0, [0; 32],
-            "the fixture has to be distinguishable from a cleared one"
-        );
-        let residue: [u8; 32] = crate::residue::after_drop(prk);
-        assert_eq!(residue, [0; 32]);
     }
 }

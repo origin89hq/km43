@@ -11,21 +11,19 @@ use std::str::FromStr;
 
 /// How a message is authenticated.
 ///
-/// There is no tenth variant: a `protocol.toml` naming a rule that does not
+/// There is no eighth variant: a `protocol.toml` naming a rule that does not
 /// exist fails to parse, at the line that names it. What each one means is
 /// [`Auth::summary`], which the TypeScript bindings print beside every opcode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Auth {
     None,
-    Proof,
-    Wrq,
-    Rsp,
-    Evt,
+    Handshake,
+    PairReply,
+    Sealed,
     Signed,
-    PairKey,
     Link,
-    RspOrBare,
+    SealedOrBare,
 }
 
 impl Auth {
@@ -33,29 +31,28 @@ impl Auth {
     pub fn summary(self) -> &'static str {
         match self {
             Self::None => "Unauthenticated: no key exists yet (P-054).",
-            Self::Proof => {
-                "A proof carried inside the body, so the body is decoded before it verifies."
+            Self::Handshake => {
+                "Carries a Noise handshake message, authenticated by the handshake itself \
+                 (P-054, P-057)."
             }
-            Self::Wrq => {
-                "Wrapped under `session_key` with the `km43/v1/wrq` label. Read-only, so it \
-                 carries no counter (P-052)."
+            Self::PairReply => {
+                "Noise message 2 when the pairing proceeds, otherwise a refusal tagged under \
+                 the label's refusal key (P-241)."
             }
-            Self::Rsp => "Wrapped under `session_key` with the `km43/v1/rsp` label (P-052).",
-            Self::Evt => "Wrapped under `session_key` with the `km43/v1/evt` label (P-052).",
+            Self::Sealed => {
+                "Sealed under the session's keys with ChaCha20-Poly1305 (P-231). Read-only, \
+                 so it carries no counter (P-052)."
+            }
             Self::Signed => {
-                "A signed body carrying the client's counter. Every write is one (P-053)."
-            }
-            Self::PairKey => {
-                "MAC'd under `pair_key`, derived from the printed secret, because no session \
-                 exists yet (P-054)."
+                "Sealed like every request, with the client's counter inside. Every write is \
+                 one (P-053)."
             }
             Self::Link => {
                 "Controller to comms processor, unauthenticated by design: the link is \
                  internal to the board."
             }
-            Self::RspOrBare => {
-                "Wrapped with the `km43/v1/rsp` label when the sender holds a session, bare \
-                 when it does not (P-142)."
+            Self::SealedOrBare => {
+                "Sealed when the sender holds a session, bare when it does not (P-142)."
             }
         }
     }
@@ -65,14 +62,12 @@ impl fmt::Display for Auth {
     fn fmt(&self, w: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match self {
             Self::None => "none",
-            Self::Proof => "proof",
-            Self::Wrq => "wrq",
-            Self::Rsp => "rsp",
-            Self::Evt => "evt",
+            Self::Handshake => "handshake",
+            Self::PairReply => "pair_reply",
+            Self::Sealed => "sealed",
             Self::Signed => "signed",
-            Self::PairKey => "pair_key",
             Self::Link => "link",
-            Self::RspOrBare => "rsp_or_bare",
+            Self::SealedOrBare => "sealed_or_bare",
         };
         w.write_str(s)
     }
@@ -707,8 +702,8 @@ pub struct Code {
 pub struct ErrorCode {
     pub code: u16,
     pub meaning: String,
-    /// Whether a receiver will read this code out of a bare body.
-    pub macd: bool,
+    /// Whether a receiver refuses to read this code out of a bare body.
+    pub sealed: bool,
     pub status: Status,
 }
 
@@ -1125,7 +1120,7 @@ impl Registry {
     /// So is [`Self::BIT_POSITIONS`], and for a sharper reason: its numbers are
     /// places in a `u16` rather than values on a wire. `Bit 0` is not `0x0000`,
     /// and the two `0x0000`s in `PROTOCOL.md` are a CRC xorout and a zero word
-    /// in a MAC preimage. Excluded by name rather than by a guess about the
+    /// in an associated data string. Excluded by name rather than by a guess about the
     /// numbers, and the name is checked to still exist so that renaming the
     /// space fails here instead of quietly covering nothing.
     pub fn names_by_number(&self) -> Result<BTreeMap<u16, BTreeSet<String>>> {
@@ -1646,8 +1641,8 @@ mod names {
 
     /// **A bit position is not a wire number, and `Bit 0` is not `0x0000`.**
     ///
-    /// The two `0x0000`s in `PROTOCOL.md` are a CRC xorout and a zero word in a
-    /// MAC preimage. Sweep the capability mask with the rest and the check
+    /// The two `0x0000`s in `PROTOCOL.md` are a CRC xorout and a zero word in an
+    /// associated data string. Sweep the capability mask with the rest and the check
     /// reports both of them on its first run.
     #[test]
     fn a_bit_position_is_not_swept_as_a_number() {

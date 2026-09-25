@@ -308,7 +308,7 @@ mod tests {
         assert_eq!(nested("SignalRow").as_deref(), Some("SignalRow"));
         assert_eq!(nested("Sample").as_deref(), Some("Sample"));
         // A message heading carries an opcode, and is not a nested type.
-        assert_eq!(nested("Inventory  0x8D              wrapper"), None);
+        assert_eq!(nested("Inventory  0x8D              sealed"), None);
         // A key line is indented.
         assert_eq!(nested("  1: sig          u16"), None);
         assert_eq!(nested(""), None);

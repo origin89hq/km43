@@ -199,7 +199,7 @@ impl Bindings {
             );
         }
 
-        o.push_str(&self.rust_error_macd());
+        o.push_str(&self.rust_error_sealed());
         o.push_str(&self.rust_event_class());
         o.push_str(&self.rust_link_and_capability());
 
@@ -422,7 +422,7 @@ impl Bindings {
         o
     }
 
-    /// The receiver's MAC'd column, which is registry data and belongs in one
+    /// The receiver's sealed column, which is registry data and belongs in one
     /// place. `rust` was 126 lines with this inlined, and the lint describing
     /// the fix is the lint that fired.
     fn rust_event_class(&self) -> String {
@@ -471,18 +471,18 @@ impl Bindings {
         o
     }
 
-    fn rust_error_macd(&self) -> String {
+    fn rust_error_sealed(&self) -> String {
         let mut o = String::new();
         o.push_str(
             "/// Whether a receiver may read this code out of a **bare** body.\n\
              ///\n\
-             /// The registry's MAC'd column, which is the receiver's check and never\n\
+             /// The registry's sealed column, which is the receiver's check and never\n\
              /// the sender's: P-142 decides the shape by whether the *sender* holds\n\
              /// a session, so a rule read off this column would be one the cases\n\
              /// with no session cannot obey. What it says is what a receiver will\n\
              /// accept, and a bare body carrying a code marked here is discarded\n\
              /// under P-051 rather than acted on. Sorted, so a lookup can bisect.\n\
-             pub const ERROR_NEEDS_A_MAC: &[(u16, bool)] = &[\n",
+             pub const ERROR_NEEDS_A_SEAL: &[(u16, bool)] = &[\n",
         );
         let mut coded: Vec<_> = self
             .registry
@@ -492,17 +492,17 @@ impl Bindings {
             .collect();
         coded.sort_by_key(|e| e.code);
         for e in coded {
-            let _ = writeln!(o, "    ({}, {}),", e.code, e.macd);
+            let _ = writeln!(o, "    ({}, {}),", e.code, e.sealed);
         }
         o.push_str(
             "];\n\n\
              impl ErrorCode {\n    \
                  /// Whether a receiver refuses to read this code out of a bare body.\n    \
                  #[must_use]\n    \
-                 pub fn needs_a_mac(self) -> bool {\n        \
-                     ERROR_NEEDS_A_MAC\n            \
+                 pub fn needs_a_seal(self) -> bool {\n        \
+                     ERROR_NEEDS_A_SEAL\n            \
                          .binary_search_by_key(&(self as u16), |&(c, _)| c)\n            \
-                         .ok()\n            .and_then(|i| ERROR_NEEDS_A_MAC.get(i))\n            .is_some_and(|&(_, m)| m)\n    \
+                         .ok()\n            .and_then(|i| ERROR_NEEDS_A_SEAL.get(i))\n            .is_some_and(|&(_, m)| m)\n    \
                  }\n\
              }\n\n",
         );
@@ -807,7 +807,7 @@ impl Bindings {
                 .map(|e| Member {
                     name: variant(&e.meaning),
                     number: e.code,
-                    doc: error_doc(&e.meaning, e.macd),
+                    doc: error_doc(&e.meaning, e.sealed),
                 }),
         );
         Ok(o)
@@ -1144,21 +1144,21 @@ fn message_members(m: &Message) -> [Option<Member>; 2] {
     [request, response]
 }
 
-/// An error code's meaning and what the MAC'd column says about it.
+/// An error code's meaning and what the sealed column says about it.
 ///
 /// The column is the receiver's check, never the sender's: P-142 wraps an
 /// `Error` whenever the sender holds a session, whatever the code. Reading it
 /// as *this code travels bare* would tell a client to reject a valid wrapped
 /// error, or a controller to send an unauthenticated one inside a session.
-fn error_doc(meaning: &str, macd: bool) -> String {
-    let rule = if macd {
-        "A receiver accepts it only inside a MAC'd body, and discards a bare one \
+fn error_doc(meaning: &str, sealed: bool) -> String {
+    let rule = if sealed {
+        "A receiver accepts it only inside a sealed body, and discards a bare one \
          carrying it (P-051)."
     } else {
         "A receiver may also accept it from a bare body."
     };
     format!(
-        "{} {rule} Whether it arrives wrapped is decided by whether the sender holds \
+        "{} {rule} Whether it arrives sealed is decided by whether the sender holds \
          a session, not by the code (P-142).",
         sentence(meaning)
     )
@@ -1602,7 +1602,7 @@ mod tests {
         );
     }
 
-    /// The MAC'd column says what a receiver accepts bare. It was once rendered
+    /// The sealed column says what a receiver accepts bare. It was once rendered
     /// as *a receiver reads it out of a bare body*, which a client could take
     /// as licence to reject the wrapped form P-142 requires inside a session.
     #[test]
@@ -1614,12 +1614,12 @@ mod tests {
         );
         assert!(bare.contains("(P-142)"), "{bare}");
 
-        let macd = error_doc("Counter not fresh", true);
+        let sealed = error_doc("Counter not fresh", true);
         assert!(
-            macd.contains("discards a bare one carrying it (P-051)"),
-            "{macd}"
+            sealed.contains("discards a bare one carrying it (P-051)"),
+            "{sealed}"
         );
-        assert!(macd.contains("(P-142)"), "{macd}");
+        assert!(sealed.contains("(P-142)"), "{sealed}");
 
         assert!(error_doc("", false).starts_with(". A receiver"));
     }
@@ -1644,8 +1644,8 @@ mod tests {
             name: "Hello".to_owned(),
             request: Some(crate::registry::Opcode(0x01)),
             response: Some(crate::registry::Opcode(0x81)),
-            auth_request: Some(Auth::Proof),
-            auth_response: Some(Auth::Rsp),
+            auth_request: Some(Auth::Handshake),
+            auth_response: Some(Auth::Handshake),
             status: Status::Live,
             since: crate::registry::Version { major: 1, minor: 0 },
         };
@@ -1657,7 +1657,7 @@ mod tests {
             "{}",
             request.doc
         );
-        assert!(request.doc.contains("Auth `proof`"), "{}", request.doc);
+        assert!(request.doc.contains("Auth `handshake`"), "{}", request.doc);
         assert!(
             response.doc.contains("{@link MessageType.Hello}"),
             "{}",
@@ -1669,7 +1669,7 @@ mod tests {
             request: None,
             response: Some(crate::registry::Opcode(0x04)),
             auth_request: None,
-            auth_response: Some(Auth::Evt),
+            auth_response: Some(Auth::Sealed),
             ..hello
         };
         let [None, Some(only)] = message_members(&event) else {
