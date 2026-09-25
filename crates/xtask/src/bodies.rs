@@ -154,6 +154,7 @@ fn nested(line: &str) -> Option<String> {
     let word = words.next()?;
     (!line.starts_with(char::is_whitespace)
         && words.next().is_none()
+        && word.starts_with(|c: char| c.is_ascii_uppercase())
         && word.chars().all(|c| c.is_ascii_alphanumeric()))
     .then(|| word.to_ascii_lowercase())
 }
