@@ -761,7 +761,12 @@ is the caller. A `CS` the caller chose is a key whose private half the caller
 may hold, and the caller can then tag any statement it likes. The manufacturing
 station keeps each unit's `controller_fp` and nothing else (P-235), and 16 bytes
 are enough: the verifier hashes the offered `CS` and compares it with the record
-before it spends a DH. The vector set publishes the forgery this refuses with a
+before it spends a DH. The record is only as good as its path to the verifier,
+so P-249 says it comes from the station over an authenticated channel, is never
+rewritten once held, and that a unit with no record is refused. How the station
+delivers it, whether an operator import or a feed signed by a station key, is
+the station's to choose (origin89hq/firmware#171); what the verifier may accept
+is fixed here. The vector set publishes the forgery this refuses with a
 tag that really verifies under the impostor's key, so a test cannot pass by
 refusing it for the wrong reason.
 

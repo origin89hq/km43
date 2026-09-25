@@ -1168,6 +1168,17 @@ impl VouchInputs {
     }
 }
 
+/// What differs between the published verification cases: the verifier's
+/// epoch and binding, its manufacturing record, and what the caller presents.
+#[derive(Clone)]
+struct VouchCase {
+    epoch: u32,
+    binding: Vec<u8>,
+    record: Option<Vec<u8>>,
+    presented: [u8; 32],
+    tag: Vec<u8>,
+}
+
 /// A run of thirty-two bytes from `first`, wrapping.
 fn run(first: u8) -> [u8; 32] {
     let mut out = [0u8; 32];
@@ -1556,49 +1567,45 @@ impl Builder {
     /// accepted claim, published to say that nothing in the bytes refuses it.
     fn vouch_verification(&self) -> Result<Value> {
         let impostor = run(0x50);
-        let other_binding = run(0xD1).to_vec();
-        let earlier = self.epoch;
         let later = self
             .epoch
             .checked_add(1)
             .context("the published epoch has a successor")?;
-        let honest = self.vouch_tag(&self.controller_key, earlier, &self.vouch.binding)?;
-        let forged = self.vouch_tag(&impostor, earlier, &self.vouch.binding)?;
-        let real = noise::public(&self.controller_key);
-        let case = |epoch: u32,
-                    binding: &[u8],
-                    presented: &[u8; 32],
-                    tag: &[u8],
-                    verdict: &str,
-                    why: &str| {
-            obj(vec![
-                ("device_id", json!(hex(&self.device_id))),
-                ("epoch", json!(epoch)),
-                ("nonce", json!(hex(&self.vouch.nonce))),
-                ("binding", json!(hex(binding))),
-                ("controller_fp", json!(hex(&self.controller_fp()))),
-                ("controller_public", json!(hex(presented))),
-                ("client_id", json!(self.client_id)),
-                ("generation", json!(self.generation)),
-                ("tag", json!(hex(tag))),
-                ("verdict", json!(verdict)),
-                ("why", json!(why)),
-            ])
+        let honest = VouchCase {
+            epoch: self.epoch,
+            binding: self.vouch.binding.clone(),
+            record: Some(self.controller_fp()),
+            presented: noise::public(&self.controller_key),
+            tag: self.vouch_tag(&self.controller_key, self.epoch, &self.vouch.binding)?,
+        };
+        let forged = VouchCase {
+            presented: noise::public(&impostor),
+            tag: self.vouch_tag(&impostor, self.epoch, &self.vouch.binding)?,
+            ..honest.clone()
+        };
+        let another_account = VouchCase {
+            binding: run(0xD1).to_vec(),
+            ..honest.clone()
+        };
+        let earlier_epoch = VouchCase {
+            epoch: later,
+            ..honest.clone()
+        };
+        let no_record = VouchCase {
+            record: None,
+            ..honest.clone()
         };
         Ok(obj(vec![
             (
                 "note",
                 json!(
-                    "device_id, epoch, nonce and binding are the verifier's own records (P-247 step 2); controller_fp is the manufacturing record's; controller_public, client_id, generation and tag are what the caller presents. The verifier's private key is inputs.verifier_key."
+                    "device_id, epoch, nonce and binding are the verifier's own records (P-247 step 2); controller_fp is the manufacturing record's (P-249), null where the verifier holds none; controller_public, client_id, generation and tag are what the caller presents. The verifier's private key is inputs.verifier_key."
                 ),
             ),
             ("impostor_key", json!(hex(&impostor))),
             (
                 "accepted",
-                case(
-                    earlier,
-                    &self.vouch.binding,
-                    &real,
+                self.vouch_case(
                     &honest,
                     "accept",
                     "the vouch in macs.vouch, presented once by the account it was issued to",
@@ -1606,10 +1613,7 @@ impl Builder {
             ),
             (
                 "replayed_nonce",
-                case(
-                    earlier,
-                    &self.vouch.binding,
-                    &real,
+                self.vouch_case(
                     &honest,
                     "refuse at step 1",
                     "the accepted claim again: the tag still verifies, and only the nonce recorded as spent refuses it",
@@ -1617,38 +1621,54 @@ impl Builder {
             ),
             (
                 "another_account",
-                case(
-                    earlier,
-                    &other_binding,
-                    &real,
-                    &honest,
+                self.vouch_case(
+                    &another_account,
                     "refuse at step 4",
                     "the accepted tag presented under another account's binding, which the verifier tags in its place",
                 ),
             ),
             (
                 "earlier_epoch",
-                case(
-                    later,
-                    &self.vouch.binding,
-                    &real,
-                    &honest,
+                self.vouch_case(
+                    &earlier_epoch,
                     "refuse at step 4",
                     "a tag minted while the controller was at the published epoch, presented to link the next one",
                 ),
             ),
             (
                 "wrong_controller_key",
-                case(
-                    earlier,
-                    &self.vouch.binding,
-                    &noise::public(&impostor),
+                self.vouch_case(
                     &forged,
                     "refuse at step 3",
                     "the caller chose the controller key and holds impostor_key: its tag verifies under that key, and only controller_fp refuses it",
                 ),
             ),
+            (
+                "no_manufacturing_record",
+                self.vouch_case(
+                    &no_record,
+                    "refuse at step 3",
+                    "the honest claim, for a device_id whose record has not reached the verifier: controller_fp is null, and nothing the caller offers stands in for it (P-249)",
+                ),
+            ),
         ]))
+    }
+
+    /// One published verification case, with the fields every case shares.
+    fn vouch_case(&self, case: &VouchCase, verdict: &str, why: &str) -> Value {
+        obj(vec![
+            ("device_id", json!(hex(&self.device_id))),
+            ("epoch", json!(case.epoch)),
+            ("nonce", json!(hex(&self.vouch.nonce))),
+            ("binding", json!(hex(&case.binding))),
+            ("controller_fp", json!(case.record.as_deref().map(hex))),
+            ("controller_public", json!(hex(&case.presented))),
+            ("client_id", json!(self.client_id)),
+            ("generation", json!(self.generation)),
+            ("tag", json!(hex(&case.tag))),
+            ("verdict", json!(verdict)),
+            ("why", json!(why)),
+        ])
     }
 
     /// `ReadLog 0x05`: from 1216, at most 64. One function so the body

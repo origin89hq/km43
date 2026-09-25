@@ -651,13 +651,19 @@ pub const REQUIREMENTS: &[Requirement] = &[
         id: "P-247",
         document: "docs/PROTOCOL.md",
         section: "Vouching for an enrolment",
-        statement: "A verifier MUST check a vouch in this order, and MUST refuse at the first step that fails: 1. The nonce is one it issued, less than `VOUCH_NONCE_TTL` (10 minutes) before, to the account now presenting it, and not presented before. The verifier MUST record the nonce as spent before any later step, whether or not the vouch then verifies. 2. It builds the statement from its own records: `device_id` and `epoch` from the generation the caller asks to link, and the nonce, binding and verifier key it issued together. Only `client_id`, `generation`, `CS` and the tag come from the caller. 3. `CS` hashes to the `controller_fp` (P-236) that the manufacturing record holds for that `device_id`. The fingerprint MUST come from that record and never from the caller, and this check comes before any DH. 4. `X25519(vs, CS)` is not all zero, and the tag it computes over the statement equals the tag presented, compared in constant time.",
+        statement: "A verifier MUST check a vouch in this order, and MUST refuse at the first step that fails: 1. The nonce is one it issued, less than `VOUCH_NONCE_TTL` (10 minutes) before, to the account now presenting it, and not presented before. The verifier MUST record the nonce as spent before any later step, whether or not the vouch then verifies. 2. It builds the statement from its own records: `device_id` and `epoch` from the generation the caller asks to link, and the nonce, binding and verifier key it issued together. Only `client_id`, `generation`, `CS` and the tag come from the caller. 3. The verifier holds a manufacturing record for that `device_id` (P-249), and `CS` hashes to the `controller_fp` (P-236) it holds. The fingerprint MUST come from that record and never from the caller, and this check comes before any DH. A `device_id` with no record is refused here. 4. `X25519(vs, CS)` is not all zero, and the tag it computes over the statement equals the tag presented, compared in constant time.",
     },
     Requirement {
         id: "P-248",
         document: "docs/PROTOCOL.md",
         section: "Vouching for an enrolment",
         statement: "A verifier MUST draw each nonce from a CSPRNG and issue it once.",
+    },
+    Requirement {
+        id: "P-249",
+        document: "docs/PROTOCOL.md",
+        section: "Vouching for an enrolment",
+        statement: "A verifier's manufacturing records MUST come from the manufacturing station, over a channel that authenticates the station, and never from a caller, a `Discover`, a label, or anything a controller transmits.",
     },
     Requirement {
         id: "P-093",

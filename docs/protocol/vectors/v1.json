@@ -139,7 +139,7 @@
     }
   },
   "vouch_verification": {
-    "note": "device_id, epoch, nonce and binding are the verifier's own records (P-247 step 2); controller_fp is the manufacturing record's; controller_public, client_id, generation and tag are what the caller presents. The verifier's private key is inputs.verifier_key.",
+    "note": "device_id, epoch, nonce and binding are the verifier's own records (P-247 step 2); controller_fp is the manufacturing record's (P-249), null where the verifier holds none; controller_public, client_id, generation and tag are what the caller presents. The verifier's private key is inputs.verifier_key.",
     "impostor_key": "505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f",
     "accepted": {
       "device_id": "4f524947494e38392044454d4f203031",
@@ -205,6 +205,19 @@
       "tag": "6089d6d37ec441ddebf5e244e1413a9f",
       "verdict": "refuse at step 3",
       "why": "the caller chose the controller key and holds impostor_key: its tag verifies under that key, and only controller_fp refuses it"
+    },
+    "no_manufacturing_record": {
+      "device_id": "4f524947494e38392044454d4f203031",
+      "epoch": 1,
+      "nonce": "b0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+      "binding": "d0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeef",
+      "controller_fp": null,
+      "controller_public": "79a631eede1bf9c98f12032cdeadd0e7a079398fc786b88cc846ec89af85a51a",
+      "client_id": 7,
+      "generation": 1,
+      "tag": "5fd32d375484c3f47d844790551a1164",
+      "verdict": "refuse at step 3",
+      "why": "the honest claim, for a device_id whose record has not reached the verifier: controller_fp is null, and nothing the caller offers stands in for it (P-249)"
     }
   },
   "handshakes": {

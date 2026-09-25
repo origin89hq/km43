@@ -2061,9 +2061,10 @@ first step that fails:
    the generation the caller asks to link, and the nonce, binding and verifier
    key it issued together. Only `client_id`, `generation`, `CS` and the tag
    come from the caller.
-3. `CS` hashes to the `controller_fp` (P-236) that the manufacturing record
-   holds for that `device_id`. The fingerprint MUST come from that record and
-   never from the caller, and this check comes before any DH.
+3. The verifier holds a manufacturing record for that `device_id` (P-249), and
+   `CS` hashes to the `controller_fp` (P-236) it holds. The fingerprint MUST
+   come from that record and never from the caller, and this check comes
+   before any DH. A `device_id` with no record is refused here.
 4. `X25519(vs, CS)` is not all zero, and the tag it computes over the statement
    equals the tag presented, compared in constant time.
 
@@ -2083,6 +2084,21 @@ was issued with.
 The bound is what keeps the spent-nonce record finite: a record older than the
 time-to-live refuses nothing a fresh check would not. A binding shared by two
 accounts would let one link a generation on the other's vouch.
+
+**P-249** — A verifier's manufacturing records MUST come from the manufacturing
+station, over a channel that authenticates the station, and never from a caller,
+a `Discover`, a label, or anything a controller transmits. Each record pairs one
+`device_id` with its `controller_fp`, and a fingerprint is fixed for the life of
+the unit (P-235): a delivery that would change the fingerprint held for a
+`device_id` MUST be refused and reported to a person, never applied.
+
+The record is not secret; every label prints it. What the verifier needs is
+that the station wrote it. A fingerprint taken from anywhere the caller can
+reach lets the caller present a key it holds, and step 3 then passes a forgery.
+Refusing a change bounds what a compromised delivery channel can do: it can add
+records for units not yet recorded, but it cannot move a unit already recorded
+onto a key the attacker holds. A unit whose record has not yet reached the
+verifier cannot be linked until it does, which is a delay and not a hole.
 
 ---
 

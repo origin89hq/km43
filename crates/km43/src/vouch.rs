@@ -421,6 +421,9 @@ pub struct VouchClaim {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum VouchRefusal {
+    /// The verifier holds no manufacturing record for this `device_id`
+    /// (P-249). Nothing the caller could offer stands in for one.
+    NoRecord,
     /// `CS` does not hash to the manufacturing record's fingerprint. The
     /// caller may hold its private half, so its tag proves nothing.
     WrongController,
@@ -435,6 +438,7 @@ pub enum VouchRefusal {
 impl fmt::Display for VouchRefusal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
+            Self::NoRecord => "no manufacturing record names this device",
             Self::WrongController => "the controller key is not the one this device was made with",
             Self::LowOrderController => "the controller key is a low-order point",
             Self::TagMismatch => "the tag does not vouch for this statement",
@@ -471,16 +475,18 @@ impl Vouched {
 }
 
 impl VouchIssue {
-    /// P-247 steps 2 to 4. `printed` is the fingerprint the manufacturing
-    /// record holds for this `device_id`, never one the caller supplied; step
-    /// 1, the nonce, is the caller's to have done first, since only the
-    /// verifier's store knows what it issued.
+    /// P-247 steps 2 to 4. `record` is the fingerprint the manufacturing
+    /// record holds for this `device_id` (P-249), or `None` when the verifier
+    /// holds none, never one the caller supplied. Step 1, the nonce, is the
+    /// caller's to have done first, since only the verifier's store knows what
+    /// it issued.
     pub fn verify(
         &self,
         verifier: &StaticKey,
-        printed: &Fingerprint,
+        record: Option<&Fingerprint>,
         claim: &VouchClaim,
     ) -> Result<Vouched, VouchRefusal> {
+        let printed = record.ok_or(VouchRefusal::NoRecord)?;
         if !printed.vouches_for(&claim.controller) {
             return Err(VouchRefusal::WrongController);
         }
@@ -577,7 +583,7 @@ mod tests {
         let vouched = issue(0xD0, 4)
             .verify(
                 &verifier(),
-                &printed(),
+                Some(&printed()),
                 &claim(answer, controller().public()),
             )
             .expect("an honest vouch verifies");
@@ -636,7 +642,7 @@ mod tests {
         assert_eq!(
             issue(0xD1, 1).verify(
                 &verifier(),
-                &printed(),
+                Some(&printed()),
                 &claim(answer, controller().public())
             ),
             Err(VouchRefusal::TagMismatch)
@@ -653,7 +659,7 @@ mod tests {
         assert_eq!(
             issue(0xD0, 2).verify(
                 &verifier(),
-                &printed(),
+                Some(&printed()),
                 &claim(answer, controller().public())
             ),
             Err(VouchRefusal::TagMismatch)
@@ -670,13 +676,30 @@ mod tests {
         let claim = claim(forged, impostor.public());
         assert!(
             issue(0xD0, 1)
-                .verify(&verifier(), &Fingerprint::of(&impostor.public()), &claim)
+                .verify(
+                    &verifier(),
+                    Some(&Fingerprint::of(&impostor.public())),
+                    &claim
+                )
                 .is_ok(),
             "without the record, the forgery passes: this is what step 3 is for"
         );
         assert_eq!(
-            issue(0xD0, 1).verify(&verifier(), &printed(), &claim),
+            issue(0xD0, 1).verify(&verifier(), Some(&printed()), &claim),
             Err(VouchRefusal::WrongController)
+        );
+    }
+
+    /// A unit whose record has not reached the verifier cannot be linked, and
+    /// the fingerprint a caller would happily supply for it is not accepted in
+    /// its place. Without the `Option`, a verifier with no record reaches for a
+    /// default, and the only fingerprint to hand is the caller's.
+    #[test]
+    fn p_249_a_device_with_no_manufacturing_record_is_refused() {
+        let answer = request(0xD0).answer(&controller(), DEVICE, epoch(1), slot());
+        assert_eq!(
+            issue(0xD0, 1).verify(&verifier(), None, &claim(answer, controller().public())),
+            Err(VouchRefusal::NoRecord)
         );
     }
 
@@ -688,7 +711,7 @@ mod tests {
         let mut moved = claim(answer, controller().public());
         moved.client_id = ClientId::new(1).expect("non-zero");
         assert_eq!(
-            issue(0xD0, 1).verify(&verifier(), &printed(), &moved),
+            issue(0xD0, 1).verify(&verifier(), Some(&printed()), &moved),
             Err(VouchRefusal::TagMismatch)
         );
     }
@@ -703,7 +726,7 @@ mod tests {
                 let mut flipped = good;
                 flipped.tag[byte] ^= 1 << bit;
                 assert_eq!(
-                    issue(0xD0, 1).verify(&verifier(), &printed(), &flipped),
+                    issue(0xD0, 1).verify(&verifier(), Some(&printed()), &flipped),
                     Err(VouchRefusal::TagMismatch)
                 );
             }

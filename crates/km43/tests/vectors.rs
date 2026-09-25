@@ -3259,8 +3259,12 @@ fn verify_published_case(name: &str) -> Result<km43::Vouched, km43::VouchRefusal
         generation: Generation::new(u32_in(case, "generation")).expect("a generation"),
         tag: fixed_in("tag").try_into().expect("16 bytes"),
     };
-    let printed = Fingerprint::from_label(fixed_in("controller_fp").try_into().expect("16 bytes"));
-    issue.verify(&verifier_key(), &printed, &claim)
+    // `null` when the verifier holds no record, which the scan reads as no
+    // string under the key.
+    let record = strings_of(case, "controller_fp")
+        .first()
+        .map(|hex| Fingerprint::from_label(unhex(hex).try_into().expect("16 bytes")));
+    issue.verify(&verifier_key(), record.as_ref(), &claim)
 }
 
 /// **Every published verdict is the one this verifier reaches.** The issue
@@ -3294,6 +3298,11 @@ fn p_247_every_published_vouch_case_gets_its_published_verdict() {
             "wrong_controller_key",
             "refuse at step 3",
             VouchRefusal::WrongController,
+        ),
+        (
+            "no_manufacturing_record",
+            "refuse at step 3",
+            VouchRefusal::NoRecord,
         ),
     ] {
         let case = object_in(object("vouch_verification"), name);
@@ -3344,7 +3353,7 @@ fn p_247_the_published_impostor_tag_verifies_under_the_impostors_own_key() {
         issue
             .verify(
                 &verifier_key(),
-                &Fingerprint::of(&impostor.public()),
+                Some(&Fingerprint::of(&impostor.public())),
                 &claim
             )
             .is_ok()
