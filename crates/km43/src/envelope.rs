@@ -803,9 +803,17 @@ mod tests {
     /// P-143: a `type` nobody allocated is error 2 and bare, not error 1 and not
     /// silence. The frame parsed perfectly — it simply says nothing — and a
     /// client that hears nothing waits out its own timeout with an empty screen.
+    /// Every byte the registry leaves free, rather than a list of free ones:
+    /// the list went stale the day `Clients` took 0x14.
     #[test]
     fn an_unallocated_type_is_error_2_rather_than_dropped_or_called_malformed() {
-        for opcode in [0x14u8, 0x15, 0x1f, 0x5f, 0x7f, 0x94, 0xdf] {
+        let free = (0u8..=0xFF).filter(|&opcode| {
+            let link_local = (0x60..=0x7E).contains(&opcode) || (0xE0..=0xFE).contains(&opcode);
+            !link_local && MessageType::try_from(opcode).is_err()
+        });
+        let mut seen = 0;
+        for opcode in free {
+            seen += 1;
             let bytes = with_type(opcode);
             assert_eq!(
                 refused(&bytes),
@@ -818,6 +826,7 @@ mod tests {
             );
             assert_eq!(EnvelopeError::UnknownType(opcode).refusal().code(), 2);
         }
+        assert!(seen > 0, "no byte is free, so nothing was refused");
         // And the refusals that are error 1, so the three codes are pinned to
         // the three conditions rather than to whichever one was written last.
         assert_eq!(EnvelopeError::WrongLength.refusal().code(), 1);

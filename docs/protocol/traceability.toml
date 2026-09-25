@@ -1108,7 +1108,15 @@
 # FRAM. P-082 now says a retry carries a new `req_id` rather than a new counter;
 # a test of it needs the dedup table and the window side by side, and the
 # table is the controller's.
-uncovered = 141
+#
+# 141 -> 149. PROTOCOL.md gained roles, invites and removal, P-244 through
+# P-252, for km43#129. P-251 arrived covered: the invite's commitment, proof,
+# confirmation and digits are in invite.rs, and tests/vectors.rs drives them
+# against the generator's. The other eight are rules about a client table, a
+# pending-invite table and a proposal budget that the crate does not model yet;
+# invite.rs cited P-246 and P-249 in its header while testing only P-251's
+# cryptography, and that header claim was removed rather than counted.
+uncovered = 149
 
 # P-045 is the shape this file is for. Nothing can drive an implementation into
 # transmitting a key it does not have, so the thing that stands behind it reads

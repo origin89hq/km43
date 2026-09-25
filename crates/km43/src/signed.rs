@@ -15,14 +15,17 @@ use crate::generated::{ErrorCode, MessageType};
 use crate::limits::MAX_OPERATION;
 use crate::sealed::{Opened, RequestSealer, SealError};
 
-/// The four types P-053 signs, read off the `type` rather than passed in, so a
-/// `Time` cannot be sent as a `Command`.
+/// The seven types P-053 signs, read off the `type` rather than passed in, so a
+/// `Time` cannot be sent as a `Command` nor a `Remove` as an `Approve`.
 const fn signs(kind: MessageType) -> bool {
     match kind {
         MessageType::SetConfig
         | MessageType::Command
         | MessageType::Firmware
-        | MessageType::Time => true,
+        | MessageType::Time
+        | MessageType::Invite
+        | MessageType::Approve
+        | MessageType::Remove => true,
         MessageType::Discover
         | MessageType::DiscoverResponse
         | MessageType::Hello
@@ -56,6 +59,11 @@ const fn signs(kind: MessageType) -> bool {
         | MessageType::EnrolResponse
         | MessageType::Goodbye
         | MessageType::GoodbyeResponse
+        | MessageType::Clients
+        | MessageType::ClientsResponse
+        | MessageType::InviteResponse
+        | MessageType::ApproveResponse
+        | MessageType::RemoveResponse
         | MessageType::ErrorResponse => false,
     }
 }

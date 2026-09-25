@@ -802,6 +802,17 @@ const L_ADMIT_KEY: &[u8] = b"km43/v1/admit-key";
 const L_PAIR_REFUSED: &[u8] = b"km43/v1/pair-refused";
 const L_HELLO_ADMIT: &[u8] = b"km43/v1/hello-admit";
 const L_CONTROLLER_FP: &[u8] = b"km43/v1/controller-fp";
+const L_INVITE_PROOF: &[u8] = b"km43/v1/invite-proof";
+const L_INVITE_CONFIRM: &[u8] = b"km43/v1/invite-confirm";
+const L_INVITE_COMMIT: &[u8] = b"km43/v1/invite-commit";
+const L_INVITE_SAS: &[u8] = b"km43/v1/invite-sas";
+
+/// The invite the vectors publish: an admin proposed by the enrolled client,
+/// for an invitee whose key and nonce are runs like every other input here.
+/// The role is `admin` (P-244), and the slot the approval writes is 2.
+const INVITE_ROLE: u8 = 2;
+const INVITE_SLOT: u32 = 2;
+const INVITE_SLOT_GENERATION: u32 = 1;
 
 /// The one suite (P-226), carried in `Pair` and `Hello` and in every prologue.
 const SUITE: u8 = 1;
@@ -3538,8 +3549,8 @@ impl Builder {
         obj(pairs)
     }
 
-    fn derived_keys(&self) -> Value {
-        obj(vec![
+    fn derived_keys(&self) -> Result<Value> {
+        Ok(obj(vec![
             (
                 "pair_psk",
                 key_entry(
@@ -3570,7 +3581,17 @@ impl Builder {
                     &self.admit_key,
                 ),
             ),
-        ])
+            (
+                "invite_admit_key",
+                key_entry(
+                    &self.device_id,
+                    &self.invite_admit_ikm(),
+                    L_ADMIT_KEY,
+                    "'km43/v1/admit-key'",
+                    &self.invite_admit_key()?,
+                ),
+            ),
+        ]))
     }
 
     /// The public halves, and the fingerprint the label carries.
@@ -3604,8 +3625,170 @@ impl Builder {
         ])
     }
 
+    /// The invitee's static key, a run like every other private key here.
+    fn invitee_key() -> [u8; 32] {
+        run(0xA0)
+    }
+
+    /// `N_c`, which the controller draws when the invite is proposed.
+    fn invite_controller_nonce() -> [u8; 16] {
+        let mut out = [0u8; 16];
+        for (slot, byte) in out.iter_mut().zip(0xD0u8..) {
+            *slot = byte;
+        }
+        out
+    }
+
+    /// `N_i`, the invitee's nonce, secret until it holds `N_c`.
+    fn invite_reveal() -> [u8; 16] {
+        let mut out = [0u8; 16];
+        for (slot, byte) in out.iter_mut().zip(0x30u8..) {
+            *slot = byte;
+        }
+        out
+    }
+
+    /// Computed from the invitee's end: its key against the controller's
+    /// public half. [`Self::invite`] checks the other end agrees.
+    fn invite_admit_ikm(&self) -> [u8; 32] {
+        noise::agree(&Self::invitee_key(), &noise::public(&self.controller_key))
+    }
+
+    fn invite_admit_key(&self) -> Result<Vec<u8>> {
+        hkdf(&self.device_id, &self.invite_admit_ikm(), L_ADMIT_KEY, 32)
+    }
+
+    /// P-251's 126 bytes, field by field in the order the spec prints them.
+    fn invite_transcript(&self) -> Vec<u8> {
+        [
+            self.device_id.as_slice(),
+            &noise::public(&self.controller_key),
+            &self.epoch.to_be_bytes(),
+            &[SUITE],
+            &[INVITE_ROLE],
+            &self.client_id.to_be_bytes(),
+            &self.generation.to_be_bytes(),
+            &noise::public(&Self::invitee_key()),
+            &Self::invite_controller_nonce(),
+            &Self::invite_reveal(),
+        ]
+        .concat()
+    }
+
+    fn invite_proof_preimage(&self) -> Vec<u8> {
+        [L_INVITE_PROOF, self.invite_transcript().as_slice()].concat()
+    }
+
+    fn invite_confirm_preimage(&self) -> Vec<u8> {
+        [
+            L_INVITE_CONFIRM,
+            self.invite_transcript().as_slice(),
+            &INVITE_SLOT.to_be_bytes(),
+            &INVITE_SLOT_GENERATION.to_be_bytes(),
+        ]
+        .concat()
+    }
+
+    fn invite_proof(&self) -> Result<(&'static str, Value)> {
+        Ok((
+            "invite_proof",
+            MacVector::new(
+                DerivedKey::InviteAdmit,
+                self.invite_proof_preimage(),
+                "'km43/v1/invite-proof' | transcript[126]",
+            )
+            .with("transcript", hex(&self.invite_transcript()))
+            .finish(&self.invite_admit_key()?)?,
+        ))
+    }
+
+    fn invite_confirm(&self) -> Result<(&'static str, Value)> {
+        Ok((
+            "invite_confirm",
+            MacVector::new(
+                DerivedKey::InviteAdmit,
+                self.invite_confirm_preimage(),
+                "'km43/v1/invite-confirm' | transcript[126] | client_id:u32be | generation:u32be",
+            )
+            .with("transcript", hex(&self.invite_transcript()))
+            .with("client_id", INVITE_SLOT)
+            .with("generation", INVITE_SLOT_GENERATION)
+            .finish(&self.invite_admit_key()?)?,
+        ))
+    }
+
+    /// Everything an invite is computed from, the commitment and the digits.
+    /// The MACs are under `macs`, beside the other two.
+    fn invite(&self) -> Result<Value> {
+        let invitee = noise::public(&Self::invitee_key());
+        if self.invite_admit_ikm() != noise::agree(&self.controller_key, &invitee) {
+            bail!("the two ends of the invite's admission DH disagree");
+        }
+        let transcript = self.invite_transcript();
+        if transcript.len() != 126 {
+            bail!("P-251's transcript is 126 bytes, not {}", transcript.len());
+        }
+        let commit_input = [L_INVITE_COMMIT, invitee.as_slice(), &Self::invite_reveal()].concat();
+        let sas_input = [L_INVITE_SAS, transcript.as_slice()].concat();
+        let sas_hash = Sha256::digest(&sas_input);
+        let first: [u8; 4] = sas_hash
+            .get(..4)
+            .and_then(|b| b.try_into().ok())
+            .context("a SHA-256 has four bytes")?;
+        let digits = u32::from_be_bytes(first) % 1_000_000;
+        Ok(obj(vec![
+            ("invitee_key", json!(hex(&Self::invitee_key()))),
+            ("invitee_public", json!(hex(&invitee))),
+            ("role", json!(INVITE_ROLE)),
+            ("inviter", json!(self.client_id)),
+            ("inviter_generation", json!(self.generation)),
+            (
+                "controller_nonce",
+                json!(hex(&Self::invite_controller_nonce())),
+            ),
+            ("reveal", json!(hex(&Self::invite_reveal()))),
+            ("transcript", json!(hex(&transcript))),
+            (
+                "transcript_readable",
+                json!(
+                    "device_id[16] | controller_public[32] | epoch:u32be | suite:u8 | role:u8 | inviter:u32be | inviter_generation:u32be | invitee_public[32] | controller_nonce[16] | reveal[16]"
+                ),
+            ),
+            (
+                "commitment",
+                obj(vec![
+                    ("input", json!(hex(&commit_input))),
+                    (
+                        "input_readable",
+                        json!("'km43/v1/invite-commit' | invitee_public[32] | reveal[16]"),
+                    ),
+                    ("out", json!(hex(&Sha256::digest(&commit_input)))),
+                ]),
+            ),
+            (
+                "digits",
+                obj(vec![
+                    ("input", json!(hex(&sas_input))),
+                    (
+                        "input_readable",
+                        json!("'km43/v1/invite-sas' | transcript[126]"),
+                    ),
+                    ("first4", json!(hex(&first))),
+                    ("out", json!(format!("{digits:06}"))),
+                ]),
+            ),
+            ("client_id", json!(INVITE_SLOT)),
+            ("generation", json!(INVITE_SLOT_GENERATION)),
+        ]))
+    }
+
     fn document(&self) -> Result<Value> {
-        let macs = vec![self.pair_refusal()?, self.hello_admit()?];
+        let macs = vec![
+            self.pair_refusal()?,
+            self.hello_admit()?,
+            self.invite_proof()?,
+            self.invite_confirm()?,
+        ];
         let (crc_v, cobs_v) = edge_cases()?;
         let cobs_input = MAX_PAYLOAD
             .checked_add(2)
@@ -3635,9 +3818,10 @@ impl Builder {
                     ("max_frame_including_delimiter", json!(max_frame)),
                 ]),
             ),
-            ("derived_keys", self.derived_keys()),
+            ("derived_keys", self.derived_keys()?),
             ("keys", self.keys()),
             ("macs", obj(macs)),
+            ("invite", self.invite()?),
             ("handshakes", self.handshakes()?),
             ("sealed", self.sealed()?),
             ("bodies", self.bodies()?),
@@ -3708,6 +3892,7 @@ fn conventions() -> Value {
 enum DerivedKey {
     Refusal,
     Admit,
+    InviteAdmit,
 }
 
 impl std::fmt::Display for DerivedKey {
@@ -3715,6 +3900,7 @@ impl std::fmt::Display for DerivedKey {
         w.write_str(match self {
             Self::Refusal => "refusal_key",
             Self::Admit => "admit_key",
+            Self::InviteAdmit => "invite_admit_key",
         })
     }
 }

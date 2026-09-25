@@ -85,6 +85,14 @@
       "info_readable": "'km43/v1/admit-key'",
       "L": 32,
       "out": "d867f24faa5844c88aaabaeecaea56de89fdc49fb6cf9e4e31b653b59fd158fd"
+    },
+    "invite_admit_key": {
+      "salt": "4f524947494e38392044454d4f203031",
+      "ikm": "b52d6135428972abd805ef1a50a3ecd24feb7bb3c4643b462849a78ac7796e56",
+      "info": "6b6d34332f76312f61646d69742d6b6579",
+      "info_readable": "'km43/v1/admit-key'",
+      "L": 32,
+      "out": "3dbda5ad0e0b42e0732fd07941b595543b3627cdc217cb6e3b1a8c8130791e05"
     }
   },
   "keys": {
@@ -114,7 +122,47 @@
       "preimage_readable": "'km43/v1/hello-admit' | prologue[57] | handshake",
       "out16": "16cdf33d939ec319db928a6286159d36",
       "full_body_cbor": "a30101025874358072d6365880d1aeea329adf9121383851ed21a28e3b75e965d0d2cd166254968f2291d3613cc849096610c38b3e37a05a058711298511051608f385fbf0d1068ade0fa4b536c800e0c8178c64156894aafde61b369cf7c53475072d0b4cf33ef10fda9694acdbb8e13038d341306109265565035016cdf33d939ec319db928a6286159d36"
+    },
+    "invite_proof": {
+      "key": "invite_admit_key",
+      "transcript": "4f524947494e38392044454d4f20303179a631eede1bf9c98f12032cdeadd0e7a079398fc786b88cc846ec89af85a51a0000000101020000000700000001605a725d2a4adfeeb1a29e17edd621c1b7593ee8cdbc44ac6c4ab6e2f805d23cd0d1d2d3d4d5d6d7d8d9dadbdcdddedf303132333435363738393a3b3c3d3e3f",
+      "preimage": "6b6d34332f76312f696e766974652d70726f6f664f524947494e38392044454d4f20303179a631eede1bf9c98f12032cdeadd0e7a079398fc786b88cc846ec89af85a51a0000000101020000000700000001605a725d2a4adfeeb1a29e17edd621c1b7593ee8cdbc44ac6c4ab6e2f805d23cd0d1d2d3d4d5d6d7d8d9dadbdcdddedf303132333435363738393a3b3c3d3e3f",
+      "preimage_readable": "'km43/v1/invite-proof' | transcript[126]",
+      "out16": "b04b871bc4a777fbcf7a92cf879f5647"
+    },
+    "invite_confirm": {
+      "key": "invite_admit_key",
+      "transcript": "4f524947494e38392044454d4f20303179a631eede1bf9c98f12032cdeadd0e7a079398fc786b88cc846ec89af85a51a0000000101020000000700000001605a725d2a4adfeeb1a29e17edd621c1b7593ee8cdbc44ac6c4ab6e2f805d23cd0d1d2d3d4d5d6d7d8d9dadbdcdddedf303132333435363738393a3b3c3d3e3f",
+      "client_id": 2,
+      "generation": 1,
+      "preimage": "6b6d34332f76312f696e766974652d636f6e6669726d4f524947494e38392044454d4f20303179a631eede1bf9c98f12032cdeadd0e7a079398fc786b88cc846ec89af85a51a0000000101020000000700000001605a725d2a4adfeeb1a29e17edd621c1b7593ee8cdbc44ac6c4ab6e2f805d23cd0d1d2d3d4d5d6d7d8d9dadbdcdddedf303132333435363738393a3b3c3d3e3f0000000200000001",
+      "preimage_readable": "'km43/v1/invite-confirm' | transcript[126] | client_id:u32be | generation:u32be",
+      "out16": "79b18489914a1396020b84af8abbcb69"
     }
+  },
+  "invite": {
+    "invitee_key": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+    "invitee_public": "605a725d2a4adfeeb1a29e17edd621c1b7593ee8cdbc44ac6c4ab6e2f805d23c",
+    "role": 2,
+    "inviter": 7,
+    "inviter_generation": 1,
+    "controller_nonce": "d0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+    "reveal": "303132333435363738393a3b3c3d3e3f",
+    "transcript": "4f524947494e38392044454d4f20303179a631eede1bf9c98f12032cdeadd0e7a079398fc786b88cc846ec89af85a51a0000000101020000000700000001605a725d2a4adfeeb1a29e17edd621c1b7593ee8cdbc44ac6c4ab6e2f805d23cd0d1d2d3d4d5d6d7d8d9dadbdcdddedf303132333435363738393a3b3c3d3e3f",
+    "transcript_readable": "device_id[16] | controller_public[32] | epoch:u32be | suite:u8 | role:u8 | inviter:u32be | inviter_generation:u32be | invitee_public[32] | controller_nonce[16] | reveal[16]",
+    "commitment": {
+      "input": "6b6d34332f76312f696e766974652d636f6d6d6974605a725d2a4adfeeb1a29e17edd621c1b7593ee8cdbc44ac6c4ab6e2f805d23c303132333435363738393a3b3c3d3e3f",
+      "input_readable": "'km43/v1/invite-commit' | invitee_public[32] | reveal[16]",
+      "out": "4f7b7d5dce5264d6271c53ca2bd4976d6e29738bdf5bff6c1bac57f13b459a30"
+    },
+    "digits": {
+      "input": "6b6d34332f76312f696e766974652d7361734f524947494e38392044454d4f20303179a631eede1bf9c98f12032cdeadd0e7a079398fc786b88cc846ec89af85a51a0000000101020000000700000001605a725d2a4adfeeb1a29e17edd621c1b7593ee8cdbc44ac6c4ab6e2f805d23cd0d1d2d3d4d5d6d7d8d9dadbdcdddedf303132333435363738393a3b3c3d3e3f",
+      "input_readable": "'km43/v1/invite-sas' | transcript[126]",
+      "first4": "d2a774d0",
+      "out": "189776"
+    },
+    "client_id": 2,
+    "generation": 1
   },
   "handshakes": {
     "pairing": {

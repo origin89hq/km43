@@ -78,6 +78,14 @@ impl EmptyBody {
             | MessageType::PairResponse
             | MessageType::Enrol
             | MessageType::EnrolResponse
+            | MessageType::Clients
+            | MessageType::ClientsResponse
+            | MessageType::Invite
+            | MessageType::InviteResponse
+            | MessageType::Approve
+            | MessageType::ApproveResponse
+            | MessageType::Remove
+            | MessageType::RemoveResponse
             | MessageType::ErrorResponse => false,
         }
     }

@@ -108,7 +108,11 @@ impl Direction {
             | MessageType::Concerns
             | MessageType::History
             | MessageType::WifiScan
-            | MessageType::WifiStatus => Some(Self::Request),
+            | MessageType::WifiStatus
+            | MessageType::Clients
+            | MessageType::Invite
+            | MessageType::Approve
+            | MessageType::Remove => Some(Self::Request),
             MessageType::EnrolResponse
             | MessageType::SubscribeResponse
             | MessageType::EventResponse
@@ -125,6 +129,10 @@ impl Direction {
             | MessageType::HistoryResponse
             | MessageType::WifiScanResponse
             | MessageType::WifiStatusResponse
+            | MessageType::ClientsResponse
+            | MessageType::InviteResponse
+            | MessageType::ApproveResponse
+            | MessageType::RemoveResponse
             | MessageType::ErrorResponse => Some(Self::Controller),
             MessageType::Discover
             | MessageType::DiscoverResponse

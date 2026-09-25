@@ -15,15 +15,16 @@ use km43::{
     ConcernsBody, ConcernsHeader, ConcernsOutcome, ConcernsPage, Condition, DeviceId, Discovery,
     ElementAt, EnrolAnswer, Enrolment, Entropy, Envelope, Epoch, ErrorBody, ErrorBodyError,
     ErrorCode, Event, EventKind, Fingerprint, Generation, Header, HelloArrival, HelloOffer,
-    HelloPending, HelloReport, Id, Incoming, InventoryHeader, InventoryOutcome, Label, LogEntry,
-    LogPage, LogSeq, MAX_DISCOVER_BODY, MAX_FRAME, MAX_HELLO_REPORT, MAX_LOG_PAGE_BYTES,
-    MAX_PAYLOAD, MAX_SERIES_LEN, MessageType, Outcome, Page, PairArrival, PairOffer, PairPending,
-    PairRefusal, PairReply, PanicSite, Part, PresenceChanged, PrintedSecret, Prologue,
-    PrologueFields, Provenance, ReadConcerns, ReadInventory, ReadLog, ReadSignals, ReadingsBody,
-    ReadingsHeader, ReadingsOutcome, ReadingsPage, ReqId, Row, RowKind, RowSlots, SAMPLE_MAX_BYTES,
-    SERIES_MAX_BYTES, Sample, Sealed, Sel, Series, SessionId, Severity, SignalQuality, Signed,
-    SignedWrite, StateSeq, StaticKey, Subject, Suite, TopologyChangeReason, TopologyChanged,
-    Validity, ValidityChanged, Value, VendorCode, VendorNamespace, Version,
+    HelloPending, HelloReport, Id, Incoming, InventoryHeader, InventoryOutcome, Invitation,
+    InviteDetails, InviteNonce, InviteeStart, Label, LogEntry, LogPage, LogSeq, MAX_DISCOVER_BODY,
+    MAX_FRAME, MAX_HELLO_REPORT, MAX_LOG_PAGE_BYTES, MAX_PAYLOAD, MAX_SERIES_LEN, MessageType,
+    Outcome, Page, PairArrival, PairOffer, PairPending, PairRefusal, PairReply, PanicSite, Part,
+    PresenceChanged, PrintedSecret, Prologue, PrologueFields, Provenance, PublicKey, ReadConcerns,
+    ReadInventory, ReadLog, ReadSignals, ReadingsBody, ReadingsHeader, ReadingsOutcome,
+    ReadingsPage, ReqId, Role, Row, RowKind, RowSlots, SAMPLE_MAX_BYTES, SERIES_MAX_BYTES, Sample,
+    Sealed, Sel, Series, SessionId, Severity, SignalQuality, Signed, SignedWrite, StateSeq,
+    StaticKey, Subject, Suite, TopologyChangeReason, TopologyChanged, Validity, ValidityChanged,
+    Value, VendorCode, VendorNamespace, Version,
 };
 
 #[cfg(feature = "vectors")]
@@ -3149,4 +3150,93 @@ fn the_published_config_messages_carry_the_registry_opcodes() {
             .expect("a byte");
         assert_eq!(published, kind as u8, "{name}");
     }
+}
+
+/// P-251 against the generator: the transcript, the commitment, the digits,
+/// the proof and the confirmation, each through the public API from the
+/// published inputs. The four formulas were written twice, once here and once
+/// in xtask, and a transcript field in a different order in one of them is an
+/// invitee that can never be approved by a controller built from the other.
+#[test]
+fn p_251_an_invite_computes_the_published_transcript_digits_and_tags() {
+    let invite = object("invite");
+    let start = InviteeStart::new(
+        Entropy::new(hex_in(invite, "invitee_key").try_into().expect("32 bytes")),
+        hex_in(invite, "reveal").try_into().expect("16 bytes"),
+    );
+    let invitee_public = hex_in(invite, "invitee_public");
+    assert_eq!(start.public().as_bytes().as_slice(), invitee_public);
+    let commitment = start.commitment();
+    assert_eq!(
+        commitment.0.as_slice(),
+        hex_in(object_in(invite, "commitment"), "out"),
+        "the commitment moved"
+    );
+
+    let details = InviteDetails {
+        device_id: DeviceId::new(fixed("device_id")),
+        controller: controller_key().public(),
+        epoch: Epoch::new(input_number("epoch")).expect("an epoch"),
+        suite: Suite::X25519ChachapolySha256,
+        role: Role::try_from(u8::try_from(u32_in(invite, "role")).expect("a byte"))
+            .expect("a role"),
+        inviter: ClientId::new(u32_in(invite, "inviter")).expect("a slot"),
+        inviter_generation: Generation::new(u32_in(invite, "inviter_generation"))
+            .expect("a generation"),
+        nonce: InviteNonce(
+            hex_in(invite, "controller_nonce")
+                .try_into()
+                .expect("16 bytes"),
+        ),
+    };
+    let invitee = start.receive(&details).expect("contributory");
+    let digits = strings_of(object_in(invite, "digits"), "out");
+    let digits = digits.first().expect("the digits are published");
+    assert_eq!(digits.len(), 6, "the digits are printed six wide");
+    assert_eq!(
+        invitee.sas().get(),
+        digits.parse::<u32>().expect("decimal"),
+        "the digits moved"
+    );
+    let proof = invitee.proof();
+    assert_eq!(
+        proof.as_bytes().as_slice(),
+        hex_in(object_in(object("macs"), "invite_proof"), "out16"),
+        "the proof moved"
+    );
+
+    let seen = Invitation {
+        device_id: details.device_id,
+        controller: details.controller,
+        epoch: details.epoch,
+        suite: details.suite,
+        role: details.role,
+        inviter: details.inviter,
+        inviter_generation: details.inviter_generation,
+        invitee: PublicKey::from_bytes(invitee_public.try_into().expect("32 bytes")),
+        nonce: details.nonce,
+        reveal: invitee.reveal(),
+    };
+    assert_eq!(
+        seen.transcript().as_slice(),
+        hex_in(invite, "transcript"),
+        "the transcript moved"
+    );
+    let verified = seen
+        .verify(&commitment, proof.as_bytes(), &controller_key())
+        .expect("the published proof verifies at the controller");
+    let slot = ClientId::new(u32_in(invite, "client_id")).expect("a slot");
+    let generation = Generation::new(u32_in(invite, "generation")).expect("a generation");
+    let confirm = verified.confirm(slot, generation);
+    let published = hex_in(object_in(object("macs"), "invite_confirm"), "out16");
+    assert_eq!(
+        confirm.as_bytes().as_slice(),
+        published,
+        "the confirmation moved"
+    );
+    let kept = invitee
+        .digits_matched()
+        .keep(&published, slot, generation)
+        .expect("the published confirmation is kept");
+    assert_eq!(kept.slot(), Some((slot, generation)));
 }
