@@ -1132,7 +1132,10 @@
 # pending-invite table and a proposal budget that the crate does not model yet;
 # invite.rs cited P-252 and P-255 in its header while testing only P-257's
 # cryptography, and that header claim was removed rather than counted.
-uncovered = 153
+# 153 -> 152: P-246 is retired. It made a controller announce `Vouch` with
+# capability bit 9 so a client could tell it from one built before `Vouch`,
+# and nothing had shipped that could be that older controller.
+uncovered = 152
 
 # P-045 is the shape this file is for. Nothing can drive an implementation into
 # transmitting a key it does not have, so the thing that stands behind it reads

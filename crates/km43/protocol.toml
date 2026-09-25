@@ -2680,10 +2680,12 @@ number = 8
 name = "wifi scan and join status"
 status = "live"
 
+# Retired with P-246 before any controller set it: every controller speaking
+# this version answers Vouch, so there is nothing for a client to detect.
 [[codes.capability_bit]]
 number = 9
 name = "vouch answered"
-status = "live"
+status = "retired"
 
 [[codes.capability_bit]]
 range = "10–31"

@@ -1156,16 +1156,15 @@ a client must not assume an unset bit is a failure, only an absence.
 | 6 | AC metering on the generator | live |
 | 7 | any behaviour is in shadow mode | live |
 | 8 | wifi scan and join status | live |
-| 9 | vouch answered | live |
+| 9 | vouch answered | retired |
 | 10–31 | unallocated | — |
 
 Bit 8 says the controller answers `WifiScan 0x11` and `WifiStatus 0x12`
 (P-216). A client that does not see it offers manual SSID entry and nothing
 else.
 
-Bit 9 says the controller answers `Vouch 0x14` (P-246). A client that does not
-see it cannot link the generation to a site until the controller's firmware is
-updated.
+Bit 9 is retired. It announced `Vouch 0x14` (P-246), and every controller
+speaking this version answers `Vouch`.
 
 Bit 7 is deliberately coarse. A client that wants to know *which* behaviour is
 shadowed reads the config sections; the bit exists so an app can put a banner up

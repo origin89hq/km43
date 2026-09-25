@@ -2056,10 +2056,10 @@ answer outcome 2 `bad_verifier` with keys 2 to 5 absent. A low-order `VS` makes
 `vouch_key` a constant anybody can compute, and a tag under it vouches for
 nothing.
 
-**P-246** — A controller MUST set capability bit 9 in `Hello 0x81` exactly when
-it answers `Vouch`, and a client MUST NOT send `Vouch` to a controller that does
-not set it. As with P-216, error 2 cannot say the message is unsupported,
-because the comms processor can forge it (P-055).
+**P-246 is retired.** It set capability bit 9 so a client could tell a
+controller that answers `Vouch` from one built before it. Nothing had shipped
+without it, so there was no older controller to tell apart, and every
+controller speaking this version answers `Vouch`.
 
 **P-247** — A verifier MUST check a vouch in this order, and MUST refuse at the
 first step that fails:
