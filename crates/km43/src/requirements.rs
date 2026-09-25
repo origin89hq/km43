@@ -501,7 +501,7 @@ pub const REQUIREMENTS: &[Requirement] = &[
         id: "P-064",
         document: "docs/PROTOCOL.md",
         section: "Pair — `0x0B` / `0x8B`, and Enrol — `0x13` / `0x93`",
-        statement: "Message 2 goes only to a peer whose message 1 opened, while the window is open and there is a free slot or a slot with this `label`, and carries outcome 6 `proceed`.",
+        statement: "Message 2 goes only to a peer whose message 1 opened, while the window is open and P-240's step 2 or 3 would allocate, which is the condition P-241 refuses on, and carries outcome 6 `proceed`.",
     },
     Requirement {
         id: "P-242",
@@ -555,7 +555,7 @@ pub const REQUIREMENTS: &[Requirement] = &[
         id: "P-238",
         document: "docs/PROTOCOL.md",
         section: "Hello — `0x01` / `0x81`",
-        statement: "Each slot holds an admission key, and each `Hello` carries a tag under it: `admit_key = HKDF(salt = device_id, ikm = X25519(is, CS), = X25519(cs, IS) info = \"km43/v1/admit-key\", L = 32) admit = HMAC(admit_key, \"km43/v1/hello-admit\" | prologue | handshake)[0..16]` The controller computes `admit_key` once, when it writes the slot, and stores it there (P-239); the client computes it from its own key and the pinned controller key.",
+        statement: "Each slot holds an admission key, and each `Hello` carries a tag under it: `admit_key = HKDF(salt = device_id, ikm = X25519(is, CS), info = \"km43/v1/admit-key\", L = 32) admit = HMAC(admit_key, \"km43/v1/hello-admit\" | prologue | handshake)[0..16]` The `ikm` is one value computed from either end: the client computes `X25519(is, CS)`, and the controller the equal `X25519(cs, IS)`.",
     },
     Requirement {
         id: "P-070",

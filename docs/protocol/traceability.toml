@@ -1084,8 +1084,10 @@
 # `sealed.rs`, P-071, P-080 and P-105.
 #
 # Two new rules stay up, and they are owed rather than untestable. P-235 says
-# the controller key is generated at manufacture and never recorded; that is the
-# factory tool's and the firmware's to prove. P-243 says key agreement never
+# the controller key is generated at manufacture into the controller's own
+# protected storage, leaves the station only as its fingerprint, and survives a
+# factory reset; the first two are the factory tool's to prove and the last the
+# firmware's. P-243 says key agreement never
 # delays the control loop; that is an executor question on the controller, and
 # the cost that makes it matter is measured in the PR that brought it.
 #

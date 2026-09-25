@@ -1551,8 +1551,8 @@ the comms processor substitutes a challenge of its own choosing, and the one inp
 to the prologue the controller is supposed to own is chosen by the untrusted party.
 
 **P-064** — Message 2 goes only to a peer whose message 1 opened, while the window
-is open and there is a free slot or a slot with this `label`, and carries outcome
-6 `proceed`. The
+is open and P-240's step 2 or 3 would allocate, which is the condition P-241
+refuses on, and carries outcome 6 `proceed`. The
 client MUST check the static key it carries against the label (P-236), and MUST
 persist its own static key and that controller key before it sends `Enrol 0x13`.
 
@@ -1608,7 +1608,13 @@ slot: it takes the new client key, a new generation, a counter of 0 and a
 capability mask re-fixed from this `client_kind`, exactly as a first enrolment,
 and carries nothing of the old enrolment over. Every session bound to the slot
 MUST be unbound before the slot is rewritten. Message 1 carries no client key, so
-at message 1 only steps 2 to 4 can be evaluated (P-241); at message 3, step 1 wins.
+at message 1 only steps 2 to 4 can be evaluated, and P-241 and P-064 admit to
+message 2 exactly when step 2 or 3 would allocate. Step 1 is reached only by a
+pairing that got that far, and at message 3 it wins over the slot steps 2 and 3
+would have given. An install that kept its key but changed its label, against a
+full table with no slot under the new label, is refused `table_full` at message 1
+and never sends `Enrol 0x13`; its old slot is left as it was, and it pairs again
+under the label that slot holds.
 A slot that origin89hq/km43#129's roles protect is never a step 3 candidate.
 
 A reclaim now revokes: the old install's key is erased with the slot, where in v1
@@ -1767,14 +1773,16 @@ it:
 
 ```text
 admit_key = HKDF(salt = device_id,
-                 ikm  = X25519(is, CS),            = X25519(cs, IS)
+                 ikm  = X25519(is, CS),
                  info = "km43/v1/admit-key",
                  L    = 32)
 
 admit     = HMAC(admit_key, "km43/v1/hello-admit" | prologue | handshake)[0..16]
 ```
 
-The controller computes `admit_key` once, when it writes the slot, and stores it
+The `ikm` is one value computed from either end: the client computes
+`X25519(is, CS)`, and the controller the equal `X25519(cs, IS)`. The controller
+computes `admit_key` once, when it writes the slot, and stores it
 there (P-239); the client computes it from its own key and the pinned controller
 key. On a `Hello 0x01` the controller MUST, before any DH, compare `admit` in
 constant time against the tag under each occupied slot's key. No match is bare
