@@ -60,7 +60,11 @@ impl MessageType {
             | Self::History
             | Self::WifiScan
             | Self::WifiStatus
-            | Self::Vouch => Admits::OnlyWithSession,
+            | Self::Vouch
+            | Self::Clients
+            | Self::Invite
+            | Self::Approve
+            | Self::Remove => Admits::OnlyWithSession,
             Self::DiscoverResponse
             | Self::HelloResponse
             | Self::SubscribeResponse
@@ -81,6 +85,10 @@ impl MessageType {
             | Self::WifiScanResponse
             | Self::WifiStatusResponse
             | Self::VouchResponse
+            | Self::ClientsResponse
+            | Self::InviteResponse
+            | Self::ApproveResponse
+            | Self::RemoveResponse
             | Self::ErrorResponse => Admits::NotARequest,
         }
     }

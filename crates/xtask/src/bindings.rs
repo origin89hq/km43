@@ -557,7 +557,7 @@ impl Bindings {
             .collect();
         if !bits.is_empty() {
             o.push_str(
-                "/// The per-client capability mask, fixed at enrolment.\n\
+                "/// The per-client capability mask, fixed by the role.\n\
                  ///\n\
                  /// Not a wire discriminant: an unallocated bit is a capability\n\
                  /// nobody has defined yet, not a value to reject.\n\
@@ -642,10 +642,10 @@ impl Bindings {
         o
     }
 
-    /// The mask each `client_kind` is handed at enrolment, folded out of the
+    /// The mask each role is handed, folded out of the
     /// same `granted_to` lists that render the grid in REGISTRY.md.
     ///
-    /// A grant list, so a `client_kind` allocated later and mentioned by no row
+    /// A grant list, so a role allocated later and mentioned by no row
     /// comes out holding nothing. Folded the other way it would come out holding
     /// everything, and the bit it would arrive with is firmware push.
     ///
@@ -654,14 +654,14 @@ impl Bindings {
     /// firmware and the controller lets. The bits are in the order of the
     /// constants directly above, lowest first.
     fn granted(&self, width: usize) -> String {
-        let Some(kinds) = self.registry.enums.get("client_kind") else {
+        let Some(kinds) = self.registry.enums.get("role") else {
             return String::new();
         };
         let mut o = String::from(
-            "\n    /// The mask this `client_kind` is handed at enrolment.\n    \
+            "\n    /// The mask this role is handed.\n    \
              ///\n    \
-             /// No message raises one and no message lowers one: either is a\n    \
-             /// re-pair, which means somebody standing at the button.\n    \
+             /// A slot's mask is its role's and nothing else: no message\n    \
+             /// raises one and no message lowers one.\n    \
              ///\n    \
              /// Left unformatted: a kind list long enough to wrap would be\n    \
              /// rewritten by `cargo fmt` into something this generator does not\n    \
@@ -669,8 +669,8 @@ impl Bindings {
              /// both be green and the fix is not obvious from either.\n    \
              #[rustfmt::skip]\n    \
              #[must_use]\n    \
-             pub const fn granted(kind: ClientKind) -> Self {\n        \
-             match kind {\n",
+             pub const fn granted(role: Role) -> Self {\n        \
+             match role {\n",
         );
         // Kinds that come out with the same mask share an arm, in first-seen
         // order. Three arms with identical bodies is what a reader has to
@@ -686,7 +686,7 @@ impl Bindings {
                 .filter_map(|c| c.bit)
                 .filter_map(|bit| 1u16.checked_shl(u32::from(bit)))
                 .fold(0u16, |mask, bit| mask | bit);
-            let pattern = format!("ClientKind::{}", variant(&kind.name));
+            let pattern = format!("Role::{}", variant(&kind.name));
             match arms.iter_mut().find(|(seen, _)| *seen == mask) {
                 Some((_, patterns)) => patterns.push(pattern),
                 None => arms.push((mask, vec![pattern])),
@@ -695,8 +695,9 @@ impl Bindings {
         for (mask, patterns) in &arms {
             let _ = writeln!(
                 o,
-                "            {} => Self(0b{mask:0width$b}),",
-                patterns.join(" | ")
+                "            {} => Self(0b{}),",
+                patterns.join(" | "),
+                nibbles(*mask, width)
             );
         }
         o.push_str("        }\n    }\n");
@@ -1395,9 +1396,39 @@ fn js(s: &str) -> String {
     serde_json::to_string(s).unwrap_or_else(|_| "\"\"".to_owned())
 }
 
+/// A mask in binary, `width` digits wide and grouped in fours from the right,
+/// the way clippy's `unreadable_literal` wants a literal of five digits or more.
+fn nibbles(mask: u16, width: usize) -> String {
+    let digits = format!("{mask:0width$b}");
+    let mut out = String::with_capacity(digits.len() + digits.len() / 4);
+    for (index, digit) in digits.chars().enumerate() {
+        if index > 0 && (digits.len() - index) % 4 == 0 {
+            out.push('_');
+        }
+        out.push(digit);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A mask of eight bits or more comes out grouped, or clippy's pedantic
+    /// `unreadable_literal` fires on the generated file and the gate is red.
+    #[test]
+    fn a_wide_mask_is_grouped_in_fours_from_the_right() {
+        assert_eq!(nibbles(0b0111_1101, 8), "0111_1101");
+        assert_eq!(nibbles(0b1_0000_0001, 9), "1_0000_0001");
+    }
+
+    /// Four digits or fewer need no separator, and an empty mask keeps its width.
+    #[test]
+    fn a_narrow_or_empty_mask_is_left_alone() {
+        assert_eq!(nibbles(0b101, 4), "0101");
+        assert_eq!(nibbles(0, 8), "0000_0000");
+        assert_eq!(nibbles(0, 1), "0");
+    }
 
     /// Open and closed are different shapes in the generated code, and the difference is
     /// what a decoder does with a number nobody has allocated: a newtype carries it, an

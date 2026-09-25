@@ -230,6 +230,42 @@ auth_response = "sealed"
 status = "live"
 since = "1.0"
 
+[[messages]]
+request = 0x15
+response = 0x95
+name = "Invite"
+auth_request = "signed"
+auth_response = "sealed"
+status = "live"
+since = "1.0"
+
+[[messages]]
+request = 0x16
+response = 0x96
+name = "Approve"
+auth_request = "signed"
+auth_response = "sealed"
+status = "live"
+since = "1.0"
+
+[[messages]]
+request = 0x17
+response = 0x97
+name = "Remove"
+auth_request = "signed"
+auth_response = "sealed"
+status = "live"
+since = "1.0"
+
+[[messages]]
+request = 0x18
+response = 0x98
+name = "Clients"
+auth_request = "sealed"
+auth_response = "sealed"
+status = "live"
+since = "1.0"
+
 [[message_ranges]]
 request_lo = 0x60
 request_hi = 0x7E
@@ -361,6 +397,12 @@ status = "live"
 code = 19
 meaning = "Unsupported suite"
 sealed = false
+status = "live"
+
+[[errors]]
+code = 20
+meaning = "Role not permitted"
+sealed = true
 status = "live"
 
 [[error_ranges]]
@@ -1689,44 +1731,65 @@ reaches_client = false
 status = "live"
 
 # The per-client capability mask. P-105 is the rule; this allocates the bits and
-# the row each client_kind is handed.
+# the row each role is handed. The mask follows the role and nothing else.
 [[client_capability]]
 bit = 0
 name = "write_config"
 may = "write configuration at all"
-granted_to = ["app", "browser", "cloud", "cli"]
+granted_to = ["owner", "admin"]
 status = "live"
 
 [[client_capability]]
 bit = 1
 name = "write_network_and_cloud"
 may = "write the **network** (`0x0020`) and **cloud** (`0x0021`) sections, and refresh a `WifiScan`"
-granted_to = ["app", "browser", "cli"]
+granted_to = ["owner"]
 status = "live"
 
 [[client_capability]]
 bit = 2
 name = "send_command"
 may = "send `Command 0x08`"
-granted_to = ["app", "browser", "cloud", "cli"]
+granted_to = ["owner", "admin"]
 status = "live"
 
 [[client_capability]]
 bit = 3
 name = "set_clock"
 may = "set the clock with `Time 0x0A`"
-granted_to = ["app", "browser", "cli"]
+granted_to = ["owner", "admin"]
 status = "live"
 
 [[client_capability]]
 bit = 4
 name = "push_firmware"
 may = "push firmware with `Firmware 0x09`"
-granted_to = ["app", "browser", "cli"]
+granted_to = ["owner", "admin"]
 status = "live"
 
 [[client_capability]]
-range = "5–15"
+bit = 5
+name = "read_private"
+may = "read the **network** (`0x0020`) and **cloud** (`0x0021`) sections with `GetConfig`, the scan list with `WifiScan`, and the client table with `Clients 0x18`"
+granted_to = ["owner", "admin"]
+status = "live"
+
+[[client_capability]]
+bit = 6
+name = "invite"
+may = "propose an admin with `Invite 0x15`, and remove an admin with `Remove 0x17`"
+granted_to = ["owner", "admin"]
+status = "live"
+
+[[client_capability]]
+bit = 7
+name = "approve"
+may = "approve or decline any invite with `Approve 0x16`, propose an owner or a viewer, and remove a viewer"
+granted_to = ["owner"]
+status = "live"
+
+[[client_capability]]
+range = "8–15"
 may = "unallocated"
 
 
@@ -1890,6 +1953,126 @@ name = "bad_verifier"
 status = "live"
 meaning = "The verifier key is a low-order point, so no tag under it could vouch for anything (P-245)"
 
+
+[[outcomes.invite]]
+value = 1
+name = "proposed"
+status = "live"
+meaning = "The invite is pending, and `nonce` names it until an owner approves or declines it or it expires (P-252)"
+
+[[outcomes.invite]]
+value = 2
+name = "unauthorised"
+status = "live"
+meaning = "This client's role may not propose this role (P-251)"
+
+[[outcomes.invite]]
+value = 3
+name = "invites_full"
+status = "live"
+meaning = "The pending-invite table has no row this inviter may take. Nothing is evicted (P-253)"
+
+[[outcomes.invite]]
+value = 4
+name = "known_key"
+status = "live"
+meaning = "An occupied slot already holds this key (P-252)"
+
+[[outcomes.invite]]
+value = 5
+name = "table_full"
+status = "live"
+meaning = "No row could be allocated to this role now, so an approval would fail (P-258)"
+
+[[outcomes.invite]]
+value = 6
+name = "no_budget"
+status = "live"
+meaning = "This admin slot has proposed its limit of invites without an owner approving one (P-254)"
+
+[[outcomes.approve]]
+value = 1
+name = "enrolled"
+status = "live"
+meaning = "The invitee's key is in a slot, and `confirm` proves the controller wrote it (P-255)"
+
+[[outcomes.approve]]
+value = 2
+name = "declined"
+status = "live"
+meaning = "The invite is withdrawn and nothing was enrolled (P-255)"
+
+[[outcomes.approve]]
+value = 3
+name = "unauthorised"
+status = "live"
+meaning = "Only an owner approves, and only an owner or the invite's own inviter declines (P-255)"
+
+[[outcomes.approve]]
+value = 4
+name = "unknown_invite"
+status = "live"
+meaning = "No live invite has this nonce: it was consumed, it expired, or the controller rebooted (P-253)"
+
+[[outcomes.approve]]
+value = 5
+name = "inviter_gone"
+status = "live"
+meaning = "The slot that proposed it no longer holds that enrolment, or its role may no longer propose this role (P-255)"
+
+[[outcomes.approve]]
+value = 6
+name = "refused"
+status = "live"
+meaning = "The reveal does not match the commitment, or the proof does not verify. The invite is consumed (P-255)"
+
+[[outcomes.approve]]
+value = 7
+name = "known_key"
+status = "live"
+meaning = "An occupied slot already holds this key. The invite is consumed (P-255)"
+
+[[outcomes.approve]]
+value = 8
+name = "table_full"
+status = "live"
+meaning = "No row can be allocated to this role. The invite stays pending (P-258)"
+
+[[outcomes.approve]]
+value = 9
+name = "not_stored"
+status = "live"
+meaning = "The slot could not be written durably. The invite stays pending and a class A concern was raised (P-255)"
+
+[[outcomes.remove]]
+value = 1
+name = "removed"
+status = "live"
+meaning = "The enrolment is gone: its sessions are unbound and its generation has moved on (P-256)"
+
+[[outcomes.remove]]
+value = 2
+name = "gone"
+status = "live"
+meaning = "That enrolment no longer holds the slot. Nothing changed (P-256)"
+
+[[outcomes.remove]]
+value = 3
+name = "protected"
+status = "live"
+meaning = "An owner slot, or a viewer slot for a sender that is not an owner. Nothing changed (P-256)"
+
+[[outcomes.remove]]
+value = 4
+name = "unauthorised"
+status = "live"
+meaning = "This client's role may not remove anybody (P-251)"
+
+[[outcomes.remove]]
+value = 5
+name = "not_stored"
+status = "live"
+meaning = "The slot could not be written durably and a class A concern was raised (P-256)"
 
 [[outcomes.firmware]]
 value = 1
@@ -2279,11 +2462,23 @@ status = "reserved"
 kind = 1539
 name = "client enrolled"
 class = "A"
-status = "reserved"
+status = "live"
 
 [[events]]
 kind = 1540
 name = "time set"
+class = "A"
+status = "live"
+
+[[events]]
+kind = 1541
+name = "client removed"
+class = "A"
+status = "live"
+
+[[events]]
+kind = 1542
+name = "invite proposed"
 class = "A"
 status = "live"
 
@@ -2668,6 +2863,31 @@ name = "cloud"
 [[enums.client_kind]]
 value = 4
 name = "cli"
+
+[[enums.role]]
+value = 1
+name = "owner"
+meaning = "Paired first in the physical window, or approved as an owner by an owner. Never removed by a message"
+
+[[enums.role]]
+value = 2
+name = "admin"
+meaning = "Everyone else a person enrols. May propose admins and remove admins"
+
+[[enums.role]]
+value = 3
+name = "viewer"
+meaning = "Reads the site and writes nothing. The cloud's identity; only an owner adds or removes one"
+
+[[enums.invite_decision]]
+value = 1
+name = "approve"
+meaning = "Enrol the invitee's key"
+
+[[enums.invite_decision]]
+value = 2
+name = "decline"
+meaning = "Withdraw the invite"
 
 # The key agreement and cipher a pairing or a session runs (P-226). One suite,
 # and a slot pins the one it enrolled under.

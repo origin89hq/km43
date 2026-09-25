@@ -1124,7 +1124,15 @@
 # and that a recorded fingerprint never changes are the station's and the
 # cloud's, owed by origin89hq/firmware#177 and origin89hq/cloud#3, so it takes
 # a clause below and stays up.
-uncovered = 145
+#
+# 145 -> 153. PROTOCOL.md gained roles, invites and removal, P-250 through
+# P-258, for km43#129. P-257 arrived covered: the invite's commitment, proof,
+# confirmation and digits are in invite.rs, and tests/vectors.rs drives them
+# against the generator's. The other eight are rules about a client table, a
+# pending-invite table and a proposal budget that the crate does not model yet;
+# invite.rs cited P-252 and P-255 in its header while testing only P-257's
+# cryptography, and that header claim was removed rather than counted.
+uncovered = 153
 
 # P-045 is the shape this file is for. Nothing can drive an implementation into
 # transmitting a key it does not have, so the thing that stands behind it reads

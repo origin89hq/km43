@@ -11,14 +11,15 @@
 //! is the only opinion.
 
 use km43::{
-    BootReason, Bucket, CapabilityBit, ClientCapability, ClientConnected, ClientDisconnected,
-    ClientKind, CloseConnection, CloseReason, Command, CommandKind, CommsRelease, CommsReleaseOp,
-    ConcernState, Concerns, ConfigSection, ControlOwner, Direction, DisconnectReason, ErrorCode,
-    EventKind, Firmware, GeneratorSelector, GeneratorState, History, HistorySource,
-    HistoryStopReason, Inventory, InventoryKind, LinkDirection, LinkErrorCode, LinkMessageType,
-    LinkTransport, MessageType, MetricKind, NetConfig, NetConfigOp, Pair, Presence, Provenance,
-    Quality, Readings, SetConfig, Severity, Shape, SignalDomain, Time, TimeOffer, TimeSource,
-    TopologyChangeReason, Transport, Unit, Validity, Vtype,
+    Approve, BootReason, Bucket, CapabilityBit, ClientCapability, ClientConnected,
+    ClientDisconnected, ClientKind, CloseConnection, CloseReason, Command, CommandKind,
+    CommsRelease, CommsReleaseOp, ConcernState, Concerns, ConfigSection, ControlOwner, Direction,
+    DisconnectReason, ErrorCode, EventKind, Firmware, GeneratorSelector, GeneratorState, History,
+    HistorySource, HistoryStopReason, Inventory, InventoryKind, Invite, InviteDecision,
+    LinkDirection, LinkErrorCode, LinkMessageType, LinkTransport, MessageType, MetricKind,
+    NetConfig, NetConfigOp, Pair, Presence, Provenance, Quality, Readings, Remove, Role, SetConfig,
+    Severity, Shape, SignalDomain, Time, TimeOffer, TimeSource, TopologyChangeReason, Transport,
+    Unit, Validity, Vtype,
 };
 use std::collections::BTreeSet;
 
@@ -217,78 +218,78 @@ fn capability_rows() -> Vec<(u16, Vec<String>)> {
     rows
 }
 
-/// Every client kind, as its wire value and its registry name. The variant
-/// the value decodes to must carry that name, or the grant checks below would
-/// compare `cloud`'s column against whichever variant took its number.
-fn client_kinds() -> Vec<(ClientKind, String)> {
-    blocks("enums.client_kind")
+/// Every role, as its wire value and its registry name. The variant the value
+/// decodes to must carry that name, or the grant checks below would compare
+/// `viewer`'s column against whichever variant took its number.
+fn roles() -> Vec<(Role, String)> {
+    blocks("enums.role")
         .iter()
-        .filter(|k| !is_gone(k.status()))
-        .map(|k| {
-            let value = u8::try_from(k.number("value").expect("a kind has a value"))
-                .expect("a client kind is a byte");
-            let kind = ClientKind::try_from(value)
-                .unwrap_or_else(|()| panic!("client kind {value} is allocated and has no variant"));
-            let name = k.field("name").expect("a kind has a name").to_owned();
+        .filter(|r| !is_gone(r.status()))
+        .map(|r| {
+            let value = u8::try_from(r.number("value").expect("a role has a value"))
+                .expect("a role is a byte");
+            let role = Role::try_from(value)
+                .unwrap_or_else(|()| panic!("role {value} is allocated and has no variant"));
+            let name = r.field("name").expect("a role has a name").to_owned();
             assert_eq!(
-                format!("{kind:?}"),
+                format!("{role:?}"),
                 generated_name(&name),
-                "client kind {value} is {name} in the registry"
+                "role {value} is {name} in the registry"
             );
-            (kind, name)
+            (role, name)
         })
         .collect()
 }
 
-/// `granted` is the `granted_to` column folded per kind, and the cloud row is
-/// the one that differs: a generator that gave every kind the same mask is a
-/// cloud client the document says cannot push firmware, pushing firmware.
+/// `granted` is the `granted_to` column folded per role, and the viewer row is
+/// the one that differs: a generator that gave every role the same mask is a
+/// viewer the document says cannot push firmware, pushing firmware.
 #[test]
-fn granted_folds_the_registry_s_granted_to_column_for_every_client_kind() {
+fn granted_folds_the_registry_s_granted_to_column_for_every_role() {
     let rows = capability_rows();
     let mut masks = Vec::new();
-    for (kind, name) in client_kinds() {
+    for (role, name) in roles() {
         let mask = rows
             .iter()
-            .filter(|(_, kinds)| kinds.contains(&name))
+            .filter(|(_, roles)| roles.contains(&name))
             .fold(0u16, |mask, (bit, _)| mask | (1 << bit));
         assert_eq!(
-            ClientCapability::granted(kind),
+            ClientCapability::granted(role),
             ClientCapability(mask),
-            "{kind:?} is granted {mask:#07b} by the registry"
+            "{role:?} is granted {mask:#07b} by the registry"
         );
         masks.push(mask);
     }
     assert!(
         masks.iter().any(|m| masks.iter().any(|n| n != m)),
-        "every kind has the same mask, so the fold is not reading the column"
+        "every role has the same mask, so the fold is not reading the column"
     );
 }
 
-/// `allows` answers each bit the way the registry grants it, kind by kind,
+/// `allows` answers each bit the way the registry grants it, role by role,
 /// and the multi-bit case both ways: the whole granted mask is allowed, and a
-/// mask carrying one bit the kind lacks is refused with it.
+/// mask carrying one bit the role lacks is refused with it.
 #[test]
 fn allows_agrees_with_the_registry_bit_by_bit_and_refuses_a_mask_with_one_bit_too_many() {
     let rows = capability_rows();
     let mut refused_one = false;
-    for (kind, name) in client_kinds() {
-        let granted = ClientCapability::granted(kind);
+    for (role, name) in roles() {
+        let granted = ClientCapability::granted(role);
         assert!(
             granted.allows(granted),
-            "{kind:?} does not allow its own mask"
+            "{role:?} does not allow its own mask"
         );
-        for (bit, kinds) in &rows {
+        for (bit, roles) in &rows {
             let one = ClientCapability(1 << bit);
             assert_eq!(
                 granted.allows(one),
-                kinds.contains(&name),
-                "{kind:?} and bit {bit} disagree with the registry"
+                roles.contains(&name),
+                "{role:?} and bit {bit} disagree with the registry"
             );
-            if !kinds.contains(&name) {
+            if !roles.contains(&name) {
                 assert!(
                     !granted.allows(ClientCapability(granted.0 | one.0)),
-                    "{kind:?} allows a mask carrying bit {bit}, which it was never granted"
+                    "{role:?} allows a mask carrying bit {bit}, which it was never granted"
                 );
                 refused_one = true;
             }
@@ -296,7 +297,7 @@ fn allows_agrees_with_the_registry_bit_by_bit_and_refuses_a_mask_with_one_bit_to
     }
     assert!(
         refused_one,
-        "no kind lacks any bit, so the refusal was never exercised"
+        "no role lacks any bit, so the refusal was never exercised"
     );
 }
 
@@ -304,7 +305,7 @@ fn allows_agrees_with_the_registry_bit_by_bit_and_refuses_a_mask_with_one_bit_to
 /// is not one a client can hold. Both ends of the range and everything
 /// between, since a mask with bit 9 set passes a check of bit 5.
 #[test]
-fn no_client_kind_is_granted_any_bit_the_registry_has_not_allocated() {
+fn no_role_is_granted_any_bit_the_registry_has_not_allocated() {
     let (first, last) = blocks("client_capability")
         .iter()
         .find_map(|c| {
@@ -316,14 +317,14 @@ fn no_client_kind_is_granted_any_bit_the_registry_has_not_allocated() {
         first <= last,
         "the unallocated range {first}–{last} is empty"
     );
-    for (kind, _) in client_kinds() {
+    for (role, _) in roles() {
         for bit in first..=last {
             let one = 1u16
                 .checked_shl(u32::from(bit))
                 .unwrap_or_else(|| panic!("bit {bit} does not fit a u16 mask"));
             assert!(
-                !ClientCapability::granted(kind).allows(ClientCapability(one)),
-                "{kind:?} holds bit {bit}, which the registry leaves unallocated"
+                !ClientCapability::granted(role).allows(ClientCapability(one)),
+                "{role:?} holds bit {bit}, which the registry leaves unallocated"
             );
         }
     }
@@ -572,6 +573,12 @@ closed_set!(
 );
 
 closed_set!(
+    approve_outcome_matches_the_registry,
+    Approve,
+    u8,
+    numbers("outcomes.approve", "value", "name", unless_gone)
+);
+closed_set!(
     command_outcome_matches_the_registry,
     Command,
     u8,
@@ -602,6 +609,12 @@ closed_set!(
     numbers("outcomes.inventory", "value", "name", unless_gone)
 );
 closed_set!(
+    invite_outcome_matches_the_registry,
+    Invite,
+    u8,
+    numbers("outcomes.invite", "value", "name", unless_gone)
+);
+closed_set!(
     pair_outcome_matches_the_registry,
     Pair,
     u8,
@@ -612,6 +625,12 @@ closed_set!(
     Readings,
     u8,
     numbers("outcomes.readings", "value", "name", unless_gone)
+);
+closed_set!(
+    remove_outcome_matches_the_registry,
+    Remove,
+    u8,
+    numbers("outcomes.remove", "value", "name", unless_gone)
 );
 closed_set!(
     set_config_outcome_matches_the_registry,
@@ -687,6 +706,12 @@ closed_set!(
     numbers("enums.history_stop_reason", "value", "name", unless_gone)
 );
 closed_set!(
+    invite_decision_matches_the_registry,
+    InviteDecision,
+    u8,
+    numbers("enums.invite_decision", "value", "name", unless_gone)
+);
+closed_set!(
     inventory_kind_matches_the_registry,
     InventoryKind,
     u8,
@@ -697,6 +722,12 @@ closed_set!(
     Presence,
     u8,
     numbers("enums.presence", "value", "name", unless_gone)
+);
+closed_set!(
+    role_matches_the_registry,
+    Role,
+    u8,
+    numbers("enums.role", "value", "name", unless_gone)
 );
 closed_set!(
     provenance_matches_the_registry,

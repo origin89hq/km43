@@ -69,6 +69,10 @@ flowchart TD
     WifiScan["WifiScan<br/>0x11 sealed → 0x91 sealed"]
     WifiStatus["WifiStatus<br/>0x12 sealed → 0x92 sealed"]
     Vouch["Vouch<br/>0x14 sealed → 0x94 sealed"]
+    Invite["Invite<br/>0x15 signed → 0x95 sealed"]
+    Approve["Approve<br/>0x16 signed → 0x96 sealed"]
+    Remove["Remove<br/>0x17 signed → 0x97 sealed"]
+    Clients["Clients<br/>0x18 sealed → 0x98 sealed"]
     Error["Error<br/>unsolicited · 0xFF sealed_or_bare"]
   end
   subgraph TheinternalUART["The internal UART"]
@@ -95,24 +99,24 @@ flowchart TD
 A table of allocated numbers cannot show a gap, and a gap is the only thing somebody allocating the next number needs to see.
 
 ```text
-client requests — 0x00 to 0x5F, 20 allocated, 76 free
-  0x00  ####.### ######## #####... ........
+client requests — 0x00 to 0x5F, 24 allocated, 72 free
+  0x00  ####.### ######## ######## #.......
   0x20  ........ ........ ........ ........
   0x40  ........ ........ ........ ........
 
 link-local requests — 0x60 to 0x7E, 13 allocated, 18 free
   0x60  ######## #####... ........ .......
 
-client responses — 0x80 to 0xDF, 20 allocated, 76 free
-  0x80  ####.### ######## #####... ........
+client responses — 0x80 to 0xDF, 24 allocated, 72 free
+  0x80  ####.### ######## ######## #.......
   0xA0  ........ ........ ........ ........
   0xC0  ........ ........ ........ ........
 
 link-local responses — 0xE0 to 0xFE, 13 allocated, 18 free
   0xE0  ######## #####... ........ .......
 
-client errors —    1 to   32, 19 allocated, 13 free
-     1  ######## ######## ###..... ........
+client errors —    1 to   32, 20 allocated, 12 free
+     1  ######## ######## ####.... ........
 
 link-local errors —  256 to  287, 9 allocated, 23 free
    256  ######## #....... ........ ........
@@ -143,7 +147,7 @@ flowchart LR
   events --> e3["0x03xx · 2 allocated · 2 class A"]
   events --> e4["0x04xx · 1 allocated · 1 class A"]
   events --> e5["0x05xx · 2 allocated · 2 class A"]
-  events --> e6["0x06xx · 4 allocated · 4 class A"]
+  events --> e6["0x06xx · 6 allocated · 6 class A"]
   events --> e7["0x07xx · 2 allocated · 2 class A"]
   events --> e8["0x08xx · 6 allocated · 6 class A"]
   events --> e9["0x09xx · 2 allocated · 2 class A"]

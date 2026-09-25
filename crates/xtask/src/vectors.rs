@@ -804,6 +804,17 @@ const L_HELLO_ADMIT: &[u8] = b"km43/v1/hello-admit";
 const L_VOUCH_KEY: &[u8] = b"km43/v1/vouch-key";
 const L_VOUCH: &[u8] = b"km43/v1/vouch";
 const L_CONTROLLER_FP: &[u8] = b"km43/v1/controller-fp";
+const L_INVITE_PROOF: &[u8] = b"km43/v1/invite-proof";
+const L_INVITE_CONFIRM: &[u8] = b"km43/v1/invite-confirm";
+const L_INVITE_COMMIT: &[u8] = b"km43/v1/invite-commit";
+const L_INVITE_SAS: &[u8] = b"km43/v1/invite-sas";
+
+/// The invite the vectors publish: an admin proposed by the enrolled client,
+/// for an invitee whose key and nonce are runs like every other input here.
+/// The role is `admin` (P-250), and the slot the approval writes is 2.
+const INVITE_ROLE: u8 = 2;
+const INVITE_SLOT: u32 = 2;
+const INVITE_SLOT_GENERATION: u32 = 1;
 
 /// The one suite (P-226), carried in `Pair` and `Hello` and in every prologue.
 const SUITE: u8 = 1;
@@ -859,6 +870,11 @@ enum Msg {
     Pair = 0x0B,
     WifiScan = 0x11,
     Enrol = 0x13,
+    Vouch = 0x14,
+    Invite = 0x15,
+    Approve = 0x16,
+    Remove = 0x17,
+    Clients = 0x18,
     Discover = 0x80,
     Hello = 0x81,
     LogPage = 0x85,
@@ -870,8 +886,11 @@ enum Msg {
     WifiScanAnswer = 0x91,
     WifiStatusAnswer = 0x92,
     EnrolAnswer = 0x93,
-    Vouch = 0x14,
     VouchAnswer = 0x94,
+    InviteAck = 0x95,
+    ApproveAck = 0x96,
+    RemoveAck = 0x97,
+    ClientsAnswer = 0x98,
     Error = 0xFF,
 }
 
@@ -2991,6 +3010,9 @@ impl Builder {
         .chain(self.handshake_payload_entries()?)
         .chain([Self::readlog_entry()?, Self::logpage_entry()?])
         .chain(Self::time_entries()?)
+        .chain(self.clients_entries()?)
+        .chain(Self::invite_entries()?)
+        .chain(self.approval_entries()?)
         .chain(Self::wifi_entries()?)
         .chain(self.vouch_entries()?)
         .chain(Self::config_section_entries()?)
@@ -3178,6 +3200,165 @@ impl Builder {
             ))
         })
         .collect()
+    }
+
+    /// `Clients 0x18` and its answer while `inviteack_0x95`'s invite is
+    /// pending: the enrolled client as the site's owner, and one invite row
+    /// carrying every transcript field `invite` publishes that the controller
+    /// holds, which is what an owner computes the digits from (P-257).
+    fn clients_entries(&self) -> Result<Vec<(&'static str, Value)>> {
+        const REQUEST: &str = "this is the inner body; on the wire it is sealed (P-231) under the session's client-to-controller key, its nonce the req_id, as sealed.readlog_request is";
+        let owner = cmap! {
+            1 => Cb::U(u64::from(self.client_id)),
+            2 => Cb::U(u64::from(self.generation)),
+            3 => Cb::U(1),
+            4 => Cb::U(ClientKind::App as u64),
+            5 => Cb::T(self.label.to_owned()),
+        };
+        let pending = cmap! {
+            1 => Cb::B(Self::invite_controller_nonce().to_vec()),
+            2 => Cb::U(u64::from(INVITE_ROLE)),
+            3 => Cb::B(noise::public(&Self::invitee_key()).to_vec()),
+            4 => Cb::U(u64::from(self.client_id)),
+            5 => Cb::U(u64::from(self.generation)),
+            6 => Cb::U(ClientKind::App as u64),
+            7 => Cb::T("site manager".to_owned()),
+            8 => Cb::U(3599),
+            9 => Cb::U(u64::from(SUITE)),
+        };
+        typed_bodies(vec![
+            (
+                "clients_0x18",
+                Msg::Clients,
+                REQUEST,
+                Cb::M(BTreeMap::new()),
+                None,
+                "an empty map: the list takes no arguments",
+            ),
+            (
+                "clients_0x98",
+                Msg::ClientsAnswer,
+                SEALED_ANSWER,
+                cmap! { 1 => Cb::A(vec![owner]), 2 => Cb::A(vec![pending]) },
+                Some("{1:clients, 2:invites}"),
+                "the enrolled client in slot 7 as role 1 owner, and invite_0x15 pending with 3599 s left: nonce, role, invitee, inviter and suite are the transcript's",
+            ),
+        ])
+    }
+
+    /// The invite's proposal and its answers, carrying the values `invite`
+    /// publishes: that invitee under that commitment, and the answer naming it
+    /// by that nonce. A refusal beside them names nothing.
+    fn invite_entries() -> Result<Vec<(&'static str, Value)>> {
+        let invitee = noise::public(&Self::invitee_key()).to_vec();
+        let commitment =
+            Sha256::digest([L_INVITE_COMMIT, invitee.as_slice(), &Self::invite_reveal()].concat())
+                .to_vec();
+        typed_bodies(vec![
+            (
+                "invite_0x15",
+                Msg::Invite,
+                SIGNED_OPERATION,
+                cmap! {
+                    1 => Cb::U(u64::from(INVITE_ROLE)),
+                    2 => Cb::B(invitee),
+                    3 => Cb::B(commitment),
+                    4 => Cb::U(ClientKind::App as u64),
+                    5 => Cb::T("site manager".to_owned()),
+                },
+                Some("{1:role, 2:invitee, 3:commitment, 4:client_kind, 5:label}"),
+                "role 2 admin for invite.invitee_public, committed to invite.reveal: invite.commitment.out; client_kind 1 app, label site manager",
+            ),
+            (
+                "inviteack_0x95",
+                Msg::InviteAck,
+                SEALED_ANSWER,
+                cmap! { 1 => Cb::U(1), 2 => Cb::B(Self::invite_controller_nonce().to_vec()) },
+                Some("{1:outcome, 2:nonce}"),
+                "outcome 1 proposed, nonce invite.controller_nonce: the invite's name from here on",
+            ),
+            (
+                "invite_refused_0x95",
+                Msg::InviteAck,
+                SEALED_ANSWER,
+                cmap! { 1 => Cb::U(6) },
+                None,
+                "outcome 6 no_budget, and no key 2: a refusal names no invite",
+            ),
+        ])
+    }
+
+    /// The approval of that invite, carrying the reveal and `macs.invite_proof`,
+    /// and the answer carrying `macs.invite_confirm` for slot 2; a decline and
+    /// a refusal beside them; and the removal of the slot the approval wrote.
+    fn approval_entries(&self) -> Result<Vec<(&'static str, Value)>> {
+        let nonce = Self::invite_controller_nonce().to_vec();
+        let key = self.invite_admit_key()?;
+        let proof = t16(hmac(&key, &self.invite_proof_preimage())?);
+        let confirm = t16(hmac(&key, &self.invite_confirm_preimage())?);
+        typed_bodies(vec![
+            (
+                "approve_0x16",
+                Msg::Approve,
+                SIGNED_OPERATION,
+                cmap! {
+                    1 => Cb::B(nonce.clone()),
+                    2 => Cb::U(1),
+                    3 => Cb::B(Self::invite_reveal().to_vec()),
+                    4 => Cb::B(proof),
+                },
+                Some("{1:nonce, 2:decision, 3:reveal, 4:proof}"),
+                "an owner approving inviteack_0x95's invite: decision 1 approve, the reveal and macs.invite_proof.out16",
+            ),
+            (
+                "approve_decline_0x16",
+                Msg::Approve,
+                SIGNED_OPERATION,
+                cmap! { 1 => Cb::B(nonce), 2 => Cb::U(2) },
+                None,
+                "decision 2 decline: no key 3 and no key 4",
+            ),
+            (
+                "approveack_0x96",
+                Msg::ApproveAck,
+                SEALED_ANSWER,
+                cmap! {
+                    1 => Cb::U(1),
+                    2 => Cb::U(u64::from(INVITE_SLOT)),
+                    3 => Cb::U(u64::from(INVITE_SLOT_GENERATION)),
+                    4 => Cb::B(confirm),
+                },
+                Some("{1:outcome, 2:client_id, 3:generation, 4:confirm}"),
+                "outcome 1 enrolled in slot 2 at generation 1, confirmed by macs.invite_confirm.out16",
+            ),
+            (
+                "approve_refused_0x96",
+                Msg::ApproveAck,
+                SEALED_ANSWER,
+                cmap! { 1 => Cb::U(6) },
+                None,
+                "outcome 6 refused: no slot, no generation and no confirmation",
+            ),
+            (
+                "remove_0x17",
+                Msg::Remove,
+                SIGNED_OPERATION,
+                cmap! {
+                    1 => Cb::U(u64::from(INVITE_SLOT)),
+                    2 => Cb::U(u64::from(INVITE_SLOT_GENERATION)),
+                },
+                Some("{1:client_id, 2:generation}"),
+                "removing the enrolment approveack_0x96 wrote: slot 2, generation 1",
+            ),
+            (
+                "removeack_0x97",
+                Msg::RemoveAck,
+                SEALED_ANSWER,
+                cmap! { 1 => Cb::U(1) },
+                Some("{1:outcome}"),
+                "outcome 1 removed",
+            ),
+        ])
     }
 
     /// `Time 0x0A`'s operation body and `TimeAck 0x8A` twice: an accepted set
@@ -3830,8 +4011,8 @@ impl Builder {
         obj(pairs)
     }
 
-    fn derived_keys(&self) -> Value {
-        obj(vec![
+    fn derived_keys(&self) -> Result<Value> {
+        Ok(obj(vec![
             (
                 "pair_psk",
                 key_entry(
@@ -3863,6 +4044,16 @@ impl Builder {
                 ),
             ),
             (
+                "invite_admit_key",
+                key_entry(
+                    &self.device_id,
+                    &self.invite_admit_ikm(),
+                    L_ADMIT_KEY,
+                    "'km43/v1/admit-key'",
+                    &self.invite_admit_key()?,
+                ),
+            ),
+            (
                 "vouch_key",
                 key_entry(
                     &self.device_id,
@@ -3872,7 +4063,7 @@ impl Builder {
                     &self.vouch.key,
                 ),
             ),
-        ])
+        ]))
     }
 
     /// The public halves, and the fingerprint the label carries.
@@ -3916,8 +4107,171 @@ impl Builder {
         ])
     }
 
+    /// The invitee's static key, a run like every other private key here.
+    fn invitee_key() -> [u8; 32] {
+        run(0xA0)
+    }
+
+    /// `N_c`, which the controller draws when the invite is proposed.
+    fn invite_controller_nonce() -> [u8; 16] {
+        let mut out = [0u8; 16];
+        for (slot, byte) in out.iter_mut().zip(0xD0u8..) {
+            *slot = byte;
+        }
+        out
+    }
+
+    /// `N_i`, the invitee's nonce, secret until it holds `N_c`.
+    fn invite_reveal() -> [u8; 16] {
+        let mut out = [0u8; 16];
+        for (slot, byte) in out.iter_mut().zip(0x30u8..) {
+            *slot = byte;
+        }
+        out
+    }
+
+    /// Computed from the invitee's end: its key against the controller's
+    /// public half. [`Self::invite`] checks the other end agrees.
+    fn invite_admit_ikm(&self) -> [u8; 32] {
+        noise::agree(&Self::invitee_key(), &noise::public(&self.controller_key))
+    }
+
+    fn invite_admit_key(&self) -> Result<Vec<u8>> {
+        hkdf(&self.device_id, &self.invite_admit_ikm(), L_ADMIT_KEY, 32)
+    }
+
+    /// P-257's 126 bytes, field by field in the order the spec prints them.
+    fn invite_transcript(&self) -> Vec<u8> {
+        [
+            self.device_id.as_slice(),
+            &noise::public(&self.controller_key),
+            &self.epoch.to_be_bytes(),
+            &[SUITE],
+            &[INVITE_ROLE],
+            &self.client_id.to_be_bytes(),
+            &self.generation.to_be_bytes(),
+            &noise::public(&Self::invitee_key()),
+            &Self::invite_controller_nonce(),
+            &Self::invite_reveal(),
+        ]
+        .concat()
+    }
+
+    fn invite_proof_preimage(&self) -> Vec<u8> {
+        [L_INVITE_PROOF, self.invite_transcript().as_slice()].concat()
+    }
+
+    fn invite_confirm_preimage(&self) -> Vec<u8> {
+        [
+            L_INVITE_CONFIRM,
+            self.invite_transcript().as_slice(),
+            &INVITE_SLOT.to_be_bytes(),
+            &INVITE_SLOT_GENERATION.to_be_bytes(),
+        ]
+        .concat()
+    }
+
+    fn invite_proof(&self) -> Result<(&'static str, Value)> {
+        Ok((
+            "invite_proof",
+            MacVector::new(
+                DerivedKey::InviteAdmit,
+                self.invite_proof_preimage(),
+                "'km43/v1/invite-proof' | transcript[126]",
+            )
+            .with("transcript", hex(&self.invite_transcript()))
+            .finish(&self.invite_admit_key()?)?,
+        ))
+    }
+
+    fn invite_confirm(&self) -> Result<(&'static str, Value)> {
+        Ok((
+            "invite_confirm",
+            MacVector::new(
+                DerivedKey::InviteAdmit,
+                self.invite_confirm_preimage(),
+                "'km43/v1/invite-confirm' | transcript[126] | client_id:u32be | generation:u32be",
+            )
+            .with("transcript", hex(&self.invite_transcript()))
+            .with("client_id", INVITE_SLOT)
+            .with("generation", INVITE_SLOT_GENERATION)
+            .finish(&self.invite_admit_key()?)?,
+        ))
+    }
+
+    /// Everything an invite is computed from, the commitment and the digits.
+    /// The MACs are under `macs`, beside the other two.
+    fn invite(&self) -> Result<Value> {
+        let invitee = noise::public(&Self::invitee_key());
+        if self.invite_admit_ikm() != noise::agree(&self.controller_key, &invitee) {
+            bail!("the two ends of the invite's admission DH disagree");
+        }
+        let transcript = self.invite_transcript();
+        if transcript.len() != 126 {
+            bail!("P-257's transcript is 126 bytes, not {}", transcript.len());
+        }
+        let commit_input = [L_INVITE_COMMIT, invitee.as_slice(), &Self::invite_reveal()].concat();
+        let sas_input = [L_INVITE_SAS, transcript.as_slice()].concat();
+        let sas_hash = Sha256::digest(&sas_input);
+        let first: [u8; 4] = sas_hash
+            .get(..4)
+            .and_then(|b| b.try_into().ok())
+            .context("a SHA-256 has four bytes")?;
+        let digits = u32::from_be_bytes(first) % 1_000_000;
+        Ok(obj(vec![
+            ("invitee_key", json!(hex(&Self::invitee_key()))),
+            ("invitee_public", json!(hex(&invitee))),
+            ("role", json!(INVITE_ROLE)),
+            ("inviter", json!(self.client_id)),
+            ("inviter_generation", json!(self.generation)),
+            (
+                "controller_nonce",
+                json!(hex(&Self::invite_controller_nonce())),
+            ),
+            ("reveal", json!(hex(&Self::invite_reveal()))),
+            ("transcript", json!(hex(&transcript))),
+            (
+                "transcript_readable",
+                json!(
+                    "device_id[16] | controller_public[32] | epoch:u32be | suite:u8 | role:u8 | inviter:u32be | inviter_generation:u32be | invitee_public[32] | controller_nonce[16] | reveal[16]"
+                ),
+            ),
+            (
+                "commitment",
+                obj(vec![
+                    ("input", json!(hex(&commit_input))),
+                    (
+                        "input_readable",
+                        json!("'km43/v1/invite-commit' | invitee_public[32] | reveal[16]"),
+                    ),
+                    ("out", json!(hex(&Sha256::digest(&commit_input)))),
+                ]),
+            ),
+            (
+                "digits",
+                obj(vec![
+                    ("input", json!(hex(&sas_input))),
+                    (
+                        "input_readable",
+                        json!("'km43/v1/invite-sas' | transcript[126]"),
+                    ),
+                    ("first4", json!(hex(&first))),
+                    ("out", json!(format!("{digits:06}"))),
+                ]),
+            ),
+            ("client_id", json!(INVITE_SLOT)),
+            ("generation", json!(INVITE_SLOT_GENERATION)),
+        ]))
+    }
+
     fn document(&self) -> Result<Value> {
-        let macs = vec![self.pair_refusal()?, self.hello_admit()?, self.vouch_mac()?];
+        let macs = vec![
+            self.pair_refusal()?,
+            self.hello_admit()?,
+            self.vouch_mac()?,
+            self.invite_proof()?,
+            self.invite_confirm()?,
+        ];
         let (crc_v, cobs_v) = edge_cases()?;
         let cobs_input = MAX_PAYLOAD
             .checked_add(2)
@@ -3947,10 +4301,11 @@ impl Builder {
                     ("max_frame_including_delimiter", json!(max_frame)),
                 ]),
             ),
-            ("derived_keys", self.derived_keys()),
+            ("derived_keys", self.derived_keys()?),
             ("keys", self.keys()),
             ("macs", obj(macs)),
             ("vouch_verification", self.vouch_verification()?),
+            ("invite", self.invite()?),
             ("handshakes", self.handshakes()?),
             ("sealed", self.sealed()?),
             ("bodies", self.bodies()?),
@@ -3960,6 +4315,39 @@ impl Builder {
             ("link_local", Self::link()?),
         ]))
     }
+}
+
+const SIGNED_OPERATION: &str = "this is the operation body; on the wire it is the inner body of the write, sealed like every request, as sealed.signed_request is";
+const SEALED_ANSWER: &str = "this is the inner body; on the wire it is sealed (P-231) under the session's controller-to-client key, as sealed.response is";
+
+/// One published body under a message type: its name, type, how it travels,
+/// the CBOR, the fields in the spec's words and what its values mean.
+type TypedBody = (
+    &'static str,
+    Msg,
+    &'static str,
+    Cb,
+    Option<&'static str>,
+    &'static str,
+);
+
+fn typed_bodies(rows: Vec<TypedBody>) -> Result<Vec<(&'static str, Value)>> {
+    rows.into_iter()
+        .map(|(name, kind, authentication, body, readable, meaning)| {
+            let bytes = cbor(&body)?;
+            Ok((
+                name,
+                obj(vec![
+                    ("type", json!(kind as u8)),
+                    ("authentication", json!(authentication)),
+                    ("body_readable", json!(readable)),
+                    ("values_readable", json!(meaning)),
+                    ("body_cbor", json!(hex(&bytes))),
+                    ("body_len", json!(bytes.len())),
+                ]),
+            ))
+        })
+        .collect()
 }
 
 /// Which way a sealed message travels, which decides its body's shape: a
@@ -4022,6 +4410,7 @@ enum DerivedKey {
     Refusal,
     Admit,
     Vouch,
+    InviteAdmit,
 }
 
 impl std::fmt::Display for DerivedKey {
@@ -4030,6 +4419,7 @@ impl std::fmt::Display for DerivedKey {
             Self::Refusal => "refusal_key",
             Self::Admit => "admit_key",
             Self::Vouch => "vouch_key",
+            Self::InviteAdmit => "invite_admit_key",
         })
     }
 }

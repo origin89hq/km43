@@ -284,13 +284,13 @@ impl Codegen {
         t
     }
 
-    /// One column per client kind, in the order the registry allocates them, so
-    /// adding a kind cannot leave a column nobody filled in.
+    /// One column per role, in the order the registry allocates them, so
+    /// adding a role cannot leave a column nobody filled in.
     fn client_capability(&self) -> String {
         let kinds: Vec<&str> = self
             .registry
             .enums
-            .get("client_kind")
+            .get("role")
             .map(|k| k.iter().map(|e| e.name.as_str()).collect())
             .unwrap_or_default();
 
@@ -520,6 +520,11 @@ pub fn heading_for(key: &str) -> String {
         "boot_reason" => "## Boot reasons",
         "time_source" => "## Time sources",
         "client_kind" => "## Client kinds",
+        "role" => "## Roles",
+        "invite_decision" => "## Invite decisions",
+        "invite" => "## Invite outcomes",
+        "approve" => "## Approve outcomes",
+        "remove" => "## Remove outcomes",
         "suite" => "## Suites",
         "config_section" => "## Config sections",
         "behaviour_key" => "## Behaviour section keys",

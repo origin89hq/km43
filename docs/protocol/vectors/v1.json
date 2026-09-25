@@ -89,6 +89,14 @@
       "L": 32,
       "out": "d867f24faa5844c88aaabaeecaea56de89fdc49fb6cf9e4e31b653b59fd158fd"
     },
+    "invite_admit_key": {
+      "salt": "4f524947494e38392044454d4f203031",
+      "ikm": "b52d6135428972abd805ef1a50a3ecd24feb7bb3c4643b462849a78ac7796e56",
+      "info": "6b6d34332f76312f61646d69742d6b6579",
+      "info_readable": "'km43/v1/admit-key'",
+      "L": 32,
+      "out": "3dbda5ad0e0b42e0732fd07941b595543b3627cdc217cb6e3b1a8c8130791e05"
+    },
     "vouch_key": {
       "salt": "4f524947494e38392044454d4f203031",
       "ikm": "b52d6135428972abd805ef1a50a3ecd24feb7bb3c4643b462849a78ac7796e56",
@@ -136,6 +144,22 @@
       "preimage_readable": "'km43/v1/vouch' | device_id[16] | epoch:u32be | client_id:u32be | generation:u32be | nonce[16] | binding[32]",
       "out16": "5fd32d375484c3f47d844790551a1164",
       "full_body_cbor": "a5010102010307040105505fd32d375484c3f47d844790551a1164"
+    },
+    "invite_proof": {
+      "key": "invite_admit_key",
+      "transcript": "4f524947494e38392044454d4f20303179a631eede1bf9c98f12032cdeadd0e7a079398fc786b88cc846ec89af85a51a0000000101020000000700000001605a725d2a4adfeeb1a29e17edd621c1b7593ee8cdbc44ac6c4ab6e2f805d23cd0d1d2d3d4d5d6d7d8d9dadbdcdddedf303132333435363738393a3b3c3d3e3f",
+      "preimage": "6b6d34332f76312f696e766974652d70726f6f664f524947494e38392044454d4f20303179a631eede1bf9c98f12032cdeadd0e7a079398fc786b88cc846ec89af85a51a0000000101020000000700000001605a725d2a4adfeeb1a29e17edd621c1b7593ee8cdbc44ac6c4ab6e2f805d23cd0d1d2d3d4d5d6d7d8d9dadbdcdddedf303132333435363738393a3b3c3d3e3f",
+      "preimage_readable": "'km43/v1/invite-proof' | transcript[126]",
+      "out16": "b04b871bc4a777fbcf7a92cf879f5647"
+    },
+    "invite_confirm": {
+      "key": "invite_admit_key",
+      "transcript": "4f524947494e38392044454d4f20303179a631eede1bf9c98f12032cdeadd0e7a079398fc786b88cc846ec89af85a51a0000000101020000000700000001605a725d2a4adfeeb1a29e17edd621c1b7593ee8cdbc44ac6c4ab6e2f805d23cd0d1d2d3d4d5d6d7d8d9dadbdcdddedf303132333435363738393a3b3c3d3e3f",
+      "client_id": 2,
+      "generation": 1,
+      "preimage": "6b6d34332f76312f696e766974652d636f6e6669726d4f524947494e38392044454d4f20303179a631eede1bf9c98f12032cdeadd0e7a079398fc786b88cc846ec89af85a51a0000000101020000000700000001605a725d2a4adfeeb1a29e17edd621c1b7593ee8cdbc44ac6c4ab6e2f805d23cd0d1d2d3d4d5d6d7d8d9dadbdcdddedf303132333435363738393a3b3c3d3e3f0000000200000001",
+      "preimage_readable": "'km43/v1/invite-confirm' | transcript[126] | client_id:u32be | generation:u32be",
+      "out16": "79b18489914a1396020b84af8abbcb69"
     }
   },
   "vouch_verification": {
@@ -219,6 +243,30 @@
       "verdict": "refuse at step 3",
       "why": "the honest claim, for a device_id whose record has not reached the verifier: controller_fp is null, and nothing the caller offers stands in for it (P-249)"
     }
+  },
+  "invite": {
+    "invitee_key": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+    "invitee_public": "605a725d2a4adfeeb1a29e17edd621c1b7593ee8cdbc44ac6c4ab6e2f805d23c",
+    "role": 2,
+    "inviter": 7,
+    "inviter_generation": 1,
+    "controller_nonce": "d0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+    "reveal": "303132333435363738393a3b3c3d3e3f",
+    "transcript": "4f524947494e38392044454d4f20303179a631eede1bf9c98f12032cdeadd0e7a079398fc786b88cc846ec89af85a51a0000000101020000000700000001605a725d2a4adfeeb1a29e17edd621c1b7593ee8cdbc44ac6c4ab6e2f805d23cd0d1d2d3d4d5d6d7d8d9dadbdcdddedf303132333435363738393a3b3c3d3e3f",
+    "transcript_readable": "device_id[16] | controller_public[32] | epoch:u32be | suite:u8 | role:u8 | inviter:u32be | inviter_generation:u32be | invitee_public[32] | controller_nonce[16] | reveal[16]",
+    "commitment": {
+      "input": "6b6d34332f76312f696e766974652d636f6d6d6974605a725d2a4adfeeb1a29e17edd621c1b7593ee8cdbc44ac6c4ab6e2f805d23c303132333435363738393a3b3c3d3e3f",
+      "input_readable": "'km43/v1/invite-commit' | invitee_public[32] | reveal[16]",
+      "out": "4f7b7d5dce5264d6271c53ca2bd4976d6e29738bdf5bff6c1bac57f13b459a30"
+    },
+    "digits": {
+      "input": "6b6d34332f76312f696e766974652d7361734f524947494e38392044454d4f20303179a631eede1bf9c98f12032cdeadd0e7a079398fc786b88cc846ec89af85a51a0000000101020000000700000001605a725d2a4adfeeb1a29e17edd621c1b7593ee8cdbc44ac6c4ab6e2f805d23cd0d1d2d3d4d5d6d7d8d9dadbdcdddedf303132333435363738393a3b3c3d3e3f",
+      "input_readable": "'km43/v1/invite-sas' | transcript[126]",
+      "first4": "d2a774d0",
+      "out": "189776"
+    },
+    "client_id": 2,
+    "generation": 1
   },
   "handshakes": {
     "pairing": {
@@ -721,6 +769,94 @@
       "body_readable": null,
       "values_readable": "outcome 2 rejected on a controller whose clock was never set, so key 2 is absent rather than 0",
       "body_cbor": "a10102",
+      "body_len": 3
+    },
+    "clients_0x18": {
+      "type": 24,
+      "authentication": "this is the inner body; on the wire it is sealed (P-231) under the session's client-to-controller key, its nonce the req_id, as sealed.readlog_request is",
+      "body_readable": null,
+      "values_readable": "an empty map: the list takes no arguments",
+      "body_cbor": "a0",
+      "body_len": 1
+    },
+    "clients_0x98": {
+      "type": 152,
+      "authentication": "this is the inner body; on the wire it is sealed (P-231) under the session's controller-to-client key, as sealed.response is",
+      "body_readable": "{1:clients, 2:invites}",
+      "values_readable": "the enrolled client in slot 7 as role 1 owner, and invite_0x15 pending with 3599 s left: nonce, role, invitee, inviter and suite are the transcript's",
+      "body_cbor": "a20181a50107020103010401056d6b69746368656e2070686f6e650281a90150d0d1d2d3d4d5d6d7d8d9dadbdcdddedf0202035820605a725d2a4adfeeb1a29e17edd621c1b7593ee8cdbc44ac6c4ab6e2f805d23c040705010601076c73697465206d616e6167657208190e0f0901",
+      "body_len": 111
+    },
+    "invite_0x15": {
+      "type": 21,
+      "authentication": "this is the operation body; on the wire it is the inner body of the write, sealed like every request, as sealed.signed_request is",
+      "body_readable": "{1:role, 2:invitee, 3:commitment, 4:client_kind, 5:label}",
+      "values_readable": "role 2 admin for invite.invitee_public, committed to invite.reveal: invite.commitment.out; client_kind 1 app, label site manager",
+      "body_cbor": "a50102025820605a725d2a4adfeeb1a29e17edd621c1b7593ee8cdbc44ac6c4ab6e2f805d23c0358204f7b7d5dce5264d6271c53ca2bd4976d6e29738bdf5bff6c1bac57f13b459a300401056c73697465206d616e61676572",
+      "body_len": 89
+    },
+    "inviteack_0x95": {
+      "type": 149,
+      "authentication": "this is the inner body; on the wire it is sealed (P-231) under the session's controller-to-client key, as sealed.response is",
+      "body_readable": "{1:outcome, 2:nonce}",
+      "values_readable": "outcome 1 proposed, nonce invite.controller_nonce: the invite's name from here on",
+      "body_cbor": "a201010250d0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+      "body_len": 21
+    },
+    "invite_refused_0x95": {
+      "type": 149,
+      "authentication": "this is the inner body; on the wire it is sealed (P-231) under the session's controller-to-client key, as sealed.response is",
+      "body_readable": null,
+      "values_readable": "outcome 6 no_budget, and no key 2: a refusal names no invite",
+      "body_cbor": "a10106",
+      "body_len": 3
+    },
+    "approve_0x16": {
+      "type": 22,
+      "authentication": "this is the operation body; on the wire it is the inner body of the write, sealed like every request, as sealed.signed_request is",
+      "body_readable": "{1:nonce, 2:decision, 3:reveal, 4:proof}",
+      "values_readable": "an owner approving inviteack_0x95's invite: decision 1 approve, the reveal and macs.invite_proof.out16",
+      "body_cbor": "a40150d0d1d2d3d4d5d6d7d8d9dadbdcdddedf02010350303132333435363738393a3b3c3d3e3f0450b04b871bc4a777fbcf7a92cf879f5647",
+      "body_len": 57
+    },
+    "approve_decline_0x16": {
+      "type": 22,
+      "authentication": "this is the operation body; on the wire it is the inner body of the write, sealed like every request, as sealed.signed_request is",
+      "body_readable": null,
+      "values_readable": "decision 2 decline: no key 3 and no key 4",
+      "body_cbor": "a20150d0d1d2d3d4d5d6d7d8d9dadbdcdddedf0202",
+      "body_len": 21
+    },
+    "approveack_0x96": {
+      "type": 150,
+      "authentication": "this is the inner body; on the wire it is sealed (P-231) under the session's controller-to-client key, as sealed.response is",
+      "body_readable": "{1:outcome, 2:client_id, 3:generation, 4:confirm}",
+      "values_readable": "outcome 1 enrolled in slot 2 at generation 1, confirmed by macs.invite_confirm.out16",
+      "body_cbor": "a4010102020301045079b18489914a1396020b84af8abbcb69",
+      "body_len": 25
+    },
+    "approve_refused_0x96": {
+      "type": 150,
+      "authentication": "this is the inner body; on the wire it is sealed (P-231) under the session's controller-to-client key, as sealed.response is",
+      "body_readable": null,
+      "values_readable": "outcome 6 refused: no slot, no generation and no confirmation",
+      "body_cbor": "a10106",
+      "body_len": 3
+    },
+    "remove_0x17": {
+      "type": 23,
+      "authentication": "this is the operation body; on the wire it is the inner body of the write, sealed like every request, as sealed.signed_request is",
+      "body_readable": "{1:client_id, 2:generation}",
+      "values_readable": "removing the enrolment approveack_0x96 wrote: slot 2, generation 1",
+      "body_cbor": "a201020201",
+      "body_len": 5
+    },
+    "removeack_0x97": {
+      "type": 151,
+      "authentication": "this is the inner body; on the wire it is sealed (P-231) under the session's controller-to-client key, as sealed.response is",
+      "body_readable": "{1:outcome}",
+      "values_readable": "outcome 1 removed",
+      "body_cbor": "a10101",
       "body_len": 3
     },
     "wifiscan_0x11": {

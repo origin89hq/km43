@@ -1,21 +1,24 @@
-//! The three HMAC tags on this wire: the pairing refusal (P-241), the `Hello`
-//! admission tag (P-238) and the vouch (P-244). The first two are checked
-//! before any key agreement, which is the whole reason they are HMACs and not
-//! Noise messages: a DH costs this controller a quarter of a second, and these
-//! are the two places a peer that has proved nothing gets an answer. The vouch
-//! is an HMAC because its reader is a verifier off this wire, long after the
-//! session that asked for it.
+//! The HMAC tags on this wire: the pairing refusal (P-241), the `Hello`
+//! admission tag (P-238), the vouch (P-244), and an invite's proof and
+//! confirmation (P-257). The first two are checked before any key agreement,
+//! which is the whole reason they are HMACs and not Noise messages: a DH costs
+//! this controller a quarter of a second, and those are the two places a peer
+//! that has proved nothing gets an answer. The vouch is an HMAC because its
+//! reader is a verifier off this wire, long after the session that asked for
+//! it; the invite's two because the invitee and the controller have no session
+//! between them, only the relay.
 //!
 //! A preimage cannot be started without its label, because `Preimage::under`
 //! is the only constructor and it takes a [`Domain`] (P-043). And a key cannot
 //! tag a preimage belonging to another: [`RefusalKey`] has the refusal and
-//! nothing else, [`AdmitKey`] the admission tag, [`VouchKey`] the vouch.
+//! nothing else, [`AdmitKey`] the admission tag and an invite's two, [`VouchKey`]
+//! the vouch.
 //!
 //! [`Tag`] has no `PartialEq`, so `==` on a tag does not compile. A comparison
 //! that stops at the first differing byte is a forgery oracle one byte at a
 //! time, and [`Tag::verify`] goes through `subtle` instead.
 //!
-//! cites: P-041, P-043, P-238, P-241, P-244
+//! cites: P-041, P-043, P-238, P-241, P-244, P-257
 
 use core::fmt;
 
@@ -56,7 +59,7 @@ const_assert!(
     "the tag is the digest's leftmost bytes and the key is zero-padded to one block; either wider and the zip below silently truncates"
 );
 
-/// The three MAC labels of P-043's table.
+/// The five MAC labels of P-043's table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Domain {
@@ -66,6 +69,11 @@ pub enum Domain {
     HelloAdmit,
     /// A vouch for an enrolment (P-244).
     Vouch,
+    /// The invitee's proof that it holds its key and knows the controller's
+    /// (P-257).
+    InviteProof,
+    /// The controller's confirmation that it wrote the invitee's slot (P-257).
+    InviteConfirm,
 }
 
 impl Domain {
@@ -74,6 +82,8 @@ impl Domain {
             Self::PairRefused => "km43/v1/pair-refused",
             Self::HelloAdmit => "km43/v1/hello-admit",
             Self::Vouch => "km43/v1/vouch",
+            Self::InviteProof => "km43/v1/invite-proof",
+            Self::InviteConfirm => "km43/v1/invite-confirm",
         }
     }
 }
@@ -188,6 +198,31 @@ impl AdmitKey {
         Preimage::under(&self.0, Domain::HelloAdmit)
             .bytes(prologue.as_bytes())
             .bytes(handshake)
+            .tag()
+    }
+
+    /// P-257's proof over an invite's transcript: only a holder of the
+    /// invitee's private key or of the controller's computes it.
+    #[must_use]
+    pub fn invite_proof(&self, transcript: &[u8]) -> Tag {
+        Preimage::under(&self.0, Domain::InviteProof)
+            .bytes(transcript)
+            .tag()
+    }
+
+    /// P-257's confirmation: the same transcript and the slot it was written
+    /// to, so a confirmation for one slot does not vouch for another.
+    #[must_use]
+    pub fn invite_confirm(
+        &self,
+        transcript: &[u8],
+        client_id: crate::ClientId,
+        generation: crate::Generation,
+    ) -> Tag {
+        Preimage::under(&self.0, Domain::InviteConfirm)
+            .bytes(transcript)
+            .bytes(&client_id.get().to_be_bytes())
+            .bytes(&generation.get().to_be_bytes())
             .tag()
     }
 }
