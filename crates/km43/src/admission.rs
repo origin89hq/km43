@@ -60,6 +60,7 @@ impl MessageType {
             | Self::History
             | Self::WifiScan
             | Self::WifiStatus
+            | Self::Vouch
             | Self::Clients
             | Self::Invite
             | Self::Approve
@@ -83,6 +84,7 @@ impl MessageType {
             | Self::HistoryResponse
             | Self::WifiScanResponse
             | Self::WifiStatusResponse
+            | Self::VouchResponse
             | Self::ClientsResponse
             | Self::InviteResponse
             | Self::ApproveResponse

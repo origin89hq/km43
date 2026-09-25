@@ -109,6 +109,7 @@ impl Direction {
             | MessageType::History
             | MessageType::WifiScan
             | MessageType::WifiStatus
+            | MessageType::Vouch
             | MessageType::Clients
             | MessageType::Invite
             | MessageType::Approve
@@ -129,6 +130,7 @@ impl Direction {
             | MessageType::HistoryResponse
             | MessageType::WifiScanResponse
             | MessageType::WifiStatusResponse
+            | MessageType::VouchResponse
             | MessageType::ClientsResponse
             | MessageType::InviteResponse
             | MessageType::ApproveResponse

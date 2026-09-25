@@ -176,6 +176,7 @@ by luck. The values are `none` (P-054), `handshake` (P-057), `pair_reply`
 | `0x11` | `0x91` | WifiScan | `sealed` | `sealed` | 1.0 | live |
 | `0x12` | `0x92` | WifiStatus | `sealed` | `sealed` | 1.0 | live |
 | `0x13` | `0x93` | Enrol | `handshake` | `pair_sealed` | 1.0 | live |
+| `0x14` | `0x94` | Vouch | `sealed` | `sealed` | 1.0 | live |
 | `0x15` | `0x95` | Invite | `signed` | `sealed` | 1.0 | live |
 | `0x16` | `0x96` | Approve | `signed` | `sealed` | 1.0 | live |
 | `0x17` | `0x97` | Remove | `signed` | `sealed` | 1.0 | live |
@@ -790,6 +791,20 @@ believe. A client that cannot tell those apart puts *the controller says that
 time is implausible* on the screen while the correction somebody drove four hours
 to make sits one gesture away.
 
+## Vouch outcomes — `u8`
+
+How a `Vouch 0x94` answered.
+
+| Value | Name | Meaning |
+|---|---|---|
+| 1 | vouched | The answer carries the epoch, slot, generation and tag of P-244 |
+| 2 | bad_verifier | The verifier key is a low-order point, so no tag under it could vouch for anything (P-245) |
+
+`2` is the only refusal because it is the only thing a controller can find wrong
+with a vouch request. Whether the nonce is fresh, the binding belongs to the
+caller and the generation is the one being linked is the verifier's to check
+(P-247), and the controller holds none of the records that would answer it.
+
 ## Time sources — `u8`
 
 Who set the clock, recorded as `source` in the `time set` event (P-111).
@@ -1141,11 +1156,16 @@ a client must not assume an unset bit is a failure, only an absence.
 | 6 | AC metering on the generator | live |
 | 7 | any behaviour is in shadow mode | live |
 | 8 | wifi scan and join status | live |
-| 9–31 | unallocated | — |
+| 9 | vouch answered | live |
+| 10–31 | unallocated | — |
 
 Bit 8 says the controller answers `WifiScan 0x11` and `WifiStatus 0x12`
 (P-216). A client that does not see it offers manual SSID entry and nothing
 else.
+
+Bit 9 says the controller answers `Vouch 0x14` (P-246). A client that does not
+see it cannot link the generation to a site until the controller's firmware is
+updated.
 
 Bit 7 is deliberately coarse. A client that wants to know *which* behaviour is
 shadowed reads the config sections; the bit exists so an app can put a banner up

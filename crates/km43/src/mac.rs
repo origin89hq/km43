@@ -1,21 +1,24 @@
 //! The HMAC tags on this wire: the pairing refusal (P-241), the `Hello`
-//! admission tag (P-238), and an invite's proof and confirmation (P-257). The
-//! first two are checked before any key agreement, which is the whole reason
-//! they are HMACs and not Noise messages: a DH costs this controller a quarter
-//! of a second, and those are the two places a peer that has proved nothing
-//! gets an answer. The invite's two are HMACs because the invitee and the
-//! controller have no session between them, only the relay.
+//! admission tag (P-238), the vouch (P-244), and an invite's proof and
+//! confirmation (P-257). The first two are checked before any key agreement,
+//! which is the whole reason they are HMACs and not Noise messages: a DH costs
+//! this controller a quarter of a second, and those are the two places a peer
+//! that has proved nothing gets an answer. The vouch is an HMAC because its
+//! reader is a verifier off this wire, long after the session that asked for
+//! it; the invite's two because the invitee and the controller have no session
+//! between them, only the relay.
 //!
 //! A preimage cannot be started without its label, because `Preimage::under`
 //! is the only constructor and it takes a [`Domain`] (P-043). And a key cannot
 //! tag a preimage belonging to another: [`RefusalKey`] has the refusal and
-//! nothing else, [`AdmitKey`] the admission tag and an invite's two.
+//! nothing else, [`AdmitKey`] the admission tag and an invite's two, [`VouchKey`]
+//! the vouch.
 //!
 //! [`Tag`] has no `PartialEq`, so `==` on a tag does not compile. A comparison
 //! that stops at the first differing byte is a forgery oracle one byte at a
 //! time, and [`Tag::verify`] goes through `subtle` instead.
 //!
-//! cites: P-041, P-043, P-238, P-241, P-257
+//! cites: P-041, P-043, P-238, P-241, P-244, P-257
 
 use core::fmt;
 
@@ -39,7 +42,7 @@ const _: () = {
     clears_on_drop::<Sha256>();
 };
 
-/// Both keys here are HKDF outputs asked for `L = 32`.
+/// Every key here is an HKDF output asked for `L = 32`.
 const KEY_BYTES: usize = 32;
 
 /// SHA-256's digest.
@@ -56,7 +59,7 @@ const_assert!(
     "the tag is the digest's leftmost bytes and the key is zero-padded to one block; either wider and the zip below silently truncates"
 );
 
-/// The four MAC labels of P-043's table.
+/// The five MAC labels of P-043's table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Domain {
@@ -64,6 +67,8 @@ pub enum Domain {
     PairRefused,
     /// A `Hello`'s admission tag (P-238).
     HelloAdmit,
+    /// A vouch for an enrolment (P-244).
+    Vouch,
     /// The invitee's proof that it holds its key and knows the controller's
     /// (P-257).
     InviteProof,
@@ -76,6 +81,7 @@ impl Domain {
         match self {
             Self::PairRefused => "km43/v1/pair-refused",
             Self::HelloAdmit => "km43/v1/hello-admit",
+            Self::Vouch => "km43/v1/vouch",
             Self::InviteProof => "km43/v1/invite-proof",
             Self::InviteConfirm => "km43/v1/invite-confirm",
         }
@@ -221,6 +227,31 @@ impl AdmitKey {
     }
 }
 
+/// The key one vouch is tagged under: HKDF over `X25519(cs, VS)` (P-244).
+///
+/// Derived for one answer and dropped with it; nothing stores one, so there is
+/// no way in from stored bytes and no way out.
+pub struct VouchKey(Zeroizing<[u8; KEY_BYTES]>);
+
+impl VouchKey {
+    pub(crate) const fn new(key: Zeroizing<[u8; KEY_BYTES]>) -> Self {
+        Self(key)
+    }
+
+    /// P-244's tag over the statement, fields in the order the spec writes them.
+    #[must_use]
+    pub fn tag(&self, statement: &crate::VouchStatement) -> Tag {
+        Preimage::under(&self.0, Domain::Vouch)
+            .bytes(statement.device_id.as_bytes())
+            .bytes(&statement.epoch.get().to_be_bytes())
+            .bytes(&statement.client_id.get().to_be_bytes())
+            .bytes(&statement.generation.get().to_be_bytes())
+            .bytes(statement.nonce.as_bytes())
+            .bytes(statement.binding.as_bytes())
+            .tag()
+    }
+}
+
 /// One preimage under construction: keyed, with its label already fed.
 struct Preimage(HmacSha256);
 
@@ -258,6 +289,7 @@ mod tests {
 
     impl crate::residue::Unpadded for RefusalKey {}
     impl crate::residue::Unpadded for AdmitKey {}
+    impl crate::residue::Unpadded for VouchKey {}
     use crate::generated::Pair;
 
     /// RFC 4231 test case 2 through the same keyed block this file builds, so
@@ -344,5 +376,22 @@ mod tests {
         let residue: [u8; KEY_BYTES] =
             crate::residue::after_drop(AdmitKey::from_stored([0x5A; KEY_BYTES]));
         assert_eq!(residue, [0; KEY_BYTES]);
+        let residue: [u8; KEY_BYTES] =
+            crate::residue::after_drop(VouchKey::new(Zeroizing::new([0x5A; KEY_BYTES])));
+        assert_eq!(residue, [0; KEY_BYTES]);
+    }
+
+    /// The vouch label is not the admission label. A client that sends its own
+    /// key as the verifier's gets a vouch key over its admission key's IKM, and
+    /// the labels are what keep the tag it receives from being one it could
+    /// replay as an admission tag (P-043, P-244).
+    #[test]
+    fn a_vouch_and_an_admission_over_one_preimage_differ() {
+        let key = Zeroizing::new([0x66; KEY_BYTES]);
+        let vouch = Preimage::under(&key, Domain::Vouch).bytes(&[0x77; 8]).tag();
+        let admit = Preimage::under(&key, Domain::HelloAdmit)
+            .bytes(&[0x77; 8])
+            .tag();
+        assert_eq!(vouch.verify(admit.as_bytes()), Err(MacError::Mismatch));
     }
 }

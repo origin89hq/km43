@@ -42,6 +42,8 @@ const fn signs(kind: MessageType) -> bool {
         | MessageType::WifiScanResponse
         | MessageType::WifiStatus
         | MessageType::WifiStatusResponse
+        | MessageType::Vouch
+        | MessageType::VouchResponse
         | MessageType::Subscribe
         | MessageType::SubscribeResponse
         | MessageType::EventResponse

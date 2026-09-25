@@ -62,6 +62,8 @@ impl EmptyBody {
             | MessageType::WifiScan
             | MessageType::WifiScanResponse
             | MessageType::WifiStatusResponse
+            | MessageType::Vouch
+            | MessageType::VouchResponse
             | MessageType::Subscribe
             | MessageType::SubscribeResponse
             | MessageType::EventResponse

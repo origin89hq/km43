@@ -801,6 +801,8 @@ const L_PAIR_REFUSAL: &[u8] = b"km43/v1/pair-refusal";
 const L_ADMIT_KEY: &[u8] = b"km43/v1/admit-key";
 const L_PAIR_REFUSED: &[u8] = b"km43/v1/pair-refused";
 const L_HELLO_ADMIT: &[u8] = b"km43/v1/hello-admit";
+const L_VOUCH_KEY: &[u8] = b"km43/v1/vouch-key";
+const L_VOUCH: &[u8] = b"km43/v1/vouch";
 const L_CONTROLLER_FP: &[u8] = b"km43/v1/controller-fp";
 const L_INVITE_PROOF: &[u8] = b"km43/v1/invite-proof";
 const L_INVITE_CONFIRM: &[u8] = b"km43/v1/invite-confirm";
@@ -840,6 +842,13 @@ enum ClientKind {
     App = 1,
 }
 
+/// How the controller answered a vouch request.
+#[derive(Clone, Copy)]
+enum VouchOutcome {
+    Vouched = 1,
+    BadVerifier = 2,
+}
+
 /// How the controller answered a pairing attempt.
 #[derive(Clone, Copy)]
 enum PairOutcome {
@@ -861,6 +870,7 @@ enum Msg {
     Pair = 0x0B,
     WifiScan = 0x11,
     Enrol = 0x13,
+    Vouch = 0x14,
     Invite = 0x15,
     Approve = 0x16,
     Remove = 0x17,
@@ -876,6 +886,7 @@ enum Msg {
     WifiScanAnswer = 0x91,
     WifiStatusAnswer = 0x92,
     EnrolAnswer = 0x93,
+    VouchAnswer = 0x94,
     InviteAck = 0x95,
     ApproveAck = 0x96,
     RemoveAck = 0x97,
@@ -1104,6 +1115,7 @@ pub struct Builder {
     refusal_key: Vec<u8>,
     admit_ikm: [u8; 32],
     admit_key: Vec<u8>,
+    vouch: VouchInputs,
     pairing_prologue: Vec<u8>,
     session_prologue: Vec<u8>,
     pairing: noise::Pairing,
@@ -1146,6 +1158,44 @@ impl WholeEnvelope {
         ]);
         Ok((self.name, obj(pairs)))
     }
+}
+
+/// What a verifier issues for one vouch, and the key it and the controller
+/// agree for it (P-244).
+struct VouchInputs {
+    verifier_key: [u8; 32],
+    nonce: Vec<u8>,
+    binding: Vec<u8>,
+    ikm: [u8; 32],
+    key: Vec<u8>,
+}
+
+impl VouchInputs {
+    fn new(device_id: &[u8], controller_key: &[u8; 32]) -> Result<Self> {
+        let verifier_key = run(0xA0);
+        let ikm = noise::agree(controller_key, &noise::public(&verifier_key));
+        if ikm != noise::agree(&verifier_key, &noise::public(controller_key)) {
+            bail!("the two ends of the vouch key's DH disagree");
+        }
+        Ok(Self {
+            verifier_key,
+            nonce: hex_to_bytes("b0b1b2b3b4b5b6b7b8b9babbbcbdbebf")?,
+            binding: run(0xD0).to_vec(),
+            ikm,
+            key: hkdf(device_id, &ikm, L_VOUCH_KEY, 32)?,
+        })
+    }
+}
+
+/// What differs between the published verification cases: the verifier's
+/// epoch and binding, its manufacturing record, and what the caller presents.
+#[derive(Clone)]
+struct VouchCase {
+    epoch: u32,
+    binding: Vec<u8>,
+    record: Option<Vec<u8>>,
+    presented: [u8; 32],
+    tag: Vec<u8>,
 }
 
 /// A run of thirty-two bytes from `first`, wrapping.
@@ -1206,6 +1256,8 @@ impl Builder {
             bail!("the two ends of the admission key's DH disagree");
         }
         let admit_key = hkdf(&device_id, &admit_ikm, L_ADMIT_KEY, 32)?;
+
+        let vouch = VouchInputs::new(&device_id, &controller_key)?;
 
         let major = u8::try_from(PROTOCOL_MAJOR).context("the major fits a byte")?;
         let minor = u8::try_from(PROTOCOL_MINOR).context("the minor fits a byte")?;
@@ -1274,6 +1326,7 @@ impl Builder {
             refusal_key,
             admit_ikm,
             admit_key,
+            vouch,
             pairing_prologue,
             session_prologue,
             pairing,
@@ -1400,6 +1453,241 @@ impl Builder {
     /// `Hello 0x81`: message 2, whose payload is the report.
     fn hello_answer_body(&self) -> Result<Vec<u8>> {
         cbor(&cmap! { 1 => Cb::B(self.session.message_2.clone()) })
+    }
+
+    /// P-244's preimage for the published slot, at `epoch` and under `binding`.
+    fn vouch_preimage(&self, epoch: u32, binding: &[u8]) -> Vec<u8> {
+        [
+            L_VOUCH,
+            self.device_id.as_slice(),
+            &epoch.to_be_bytes(),
+            &self.client_id.to_be_bytes(),
+            &self.generation.to_be_bytes(),
+            &self.vouch.nonce,
+            binding,
+        ]
+        .concat()
+    }
+
+    /// The tag a controller holding `controller_key` gives the published
+    /// verifier for the published slot: the real controller's, or an
+    /// impostor's when the caller chose the controller key.
+    fn vouch_tag(&self, controller_key: &[u8; 32], epoch: u32, binding: &[u8]) -> Result<Vec<u8>> {
+        let ikm = noise::agree(controller_key, &noise::public(&self.vouch.verifier_key));
+        let key = hkdf(&self.device_id, &ikm, L_VOUCH_KEY, 32)?;
+        Ok(t16(hmac(&key, &self.vouch_preimage(epoch, binding))?))
+    }
+
+    /// `Vouch 0x14`'s inner body, carrying `verifier` as key 1.
+    fn vouch_request_body(&self, verifier: &[u8]) -> Result<Vec<u8>> {
+        cbor(&cmap! {
+            1 => Cb::B(verifier.to_vec()),
+            2 => Cb::B(self.vouch.nonce.clone()),
+            3 => Cb::B(self.vouch.binding.clone()),
+        })
+    }
+
+    /// `Vouch 0x94`'s inner body for the published request.
+    fn vouch_answer_body(&self) -> Result<Vec<u8>> {
+        cbor(&cmap! {
+            1 => Cb::U(VouchOutcome::Vouched as u64),
+            2 => Cb::U(u64::from(self.epoch)),
+            3 => Cb::U(u64::from(self.client_id)),
+            4 => Cb::U(u64::from(self.generation)),
+            5 => Cb::B(self.vouch_tag(&self.controller_key, self.epoch, &self.vouch.binding)?),
+        })
+    }
+
+    fn vouch_mac(&self) -> Result<(&'static str, Value)> {
+        Ok((
+            "vouch",
+            MacVector::new(
+                DerivedKey::Vouch,
+                self.vouch_preimage(self.epoch, &self.vouch.binding),
+                "'km43/v1/vouch' | device_id[16] | epoch:u32be | client_id:u32be | generation:u32be | nonce[16] | binding[32]",
+            )
+            .with("nonce", hex(&self.vouch.nonce))
+            .with("binding", hex(&self.vouch.binding))
+            .body(hex(&self.vouch_answer_body()?))
+            .finish(&self.vouch.key)?,
+        ))
+    }
+
+    /// The request, both answers, and the request a low-order verifier key
+    /// makes, which is answered `bad_verifier` with no tag (P-245).
+    fn vouch_entries(&self) -> Result<Vec<(&'static str, Value)>> {
+        const REQUEST: &str = "this is the inner body; on the wire it is sealed (P-231) under the session's client-to-controller key, its nonce the req_id, as sealed.readlog_request is";
+        const WRAPPED: &str = "this is the inner body; on the wire it is sealed (P-231) under the session's controller-to-client key, as sealed.response is";
+        let entry = |kind: Msg,
+                     authentication: &str,
+                     readable: Option<&str>,
+                     meaning: &str,
+                     bytes: Vec<u8>| {
+            let mut fields = vec![
+                ("type", json!(kind as u8)),
+                ("authentication", json!(authentication)),
+            ];
+            if let Some(readable) = readable {
+                fields.push(("body_readable", json!(readable)));
+            }
+            fields.extend([
+                ("values_readable", json!(meaning)),
+                ("body_cbor", json!(hex(&bytes))),
+                ("body_len", json!(bytes.len())),
+            ]);
+            obj(fields)
+        };
+        Ok(vec![
+            (
+                "vouch_0x14",
+                entry(
+                    Msg::Vouch,
+                    REQUEST,
+                    Some("{1:verifier, 2:nonce, 3:binding}"),
+                    "the verifier's public key, nonce and account binding, from inputs",
+                    self.vouch_request_body(&noise::public(&self.vouch.verifier_key))?,
+                ),
+            ),
+            (
+                "vouch_0x94",
+                entry(
+                    Msg::VouchAnswer,
+                    WRAPPED,
+                    Some("{1:outcome, 2:epoch, 3:client_id, 4:generation, 5:tag}"),
+                    "vouched, for the published epoch and slot; key 5 is macs.vouch.out16",
+                    self.vouch_answer_body()?,
+                ),
+            ),
+            (
+                "vouch_low_order_0x14",
+                entry(
+                    Msg::Vouch,
+                    REQUEST,
+                    None,
+                    "a verifier key of thirty-two zero bytes, a low-order point: X25519 with it is all zero (P-245)",
+                    self.vouch_request_body(&[0; 32])?,
+                ),
+            ),
+            (
+                "vouch_bad_verifier_0x94",
+                entry(
+                    Msg::VouchAnswer,
+                    WRAPPED,
+                    None,
+                    "bad_verifier, the answer to vouch_low_order_0x14, and no key 2 to 5",
+                    cbor(&cmap! {1 => Cb::U(VouchOutcome::BadVerifier as u64)})?,
+                ),
+            ),
+        ])
+    }
+
+    /// P-247 run by a verifier over one claim each: the vouch it accepts, and
+    /// one for each failure the check names. The replay is byte for byte the
+    /// accepted claim, published to say that nothing in the bytes refuses it.
+    fn vouch_verification(&self) -> Result<Value> {
+        let impostor = run(0x50);
+        let later = self
+            .epoch
+            .checked_add(1)
+            .context("the published epoch has a successor")?;
+        let honest = VouchCase {
+            epoch: self.epoch,
+            binding: self.vouch.binding.clone(),
+            record: Some(self.controller_fp()),
+            presented: noise::public(&self.controller_key),
+            tag: self.vouch_tag(&self.controller_key, self.epoch, &self.vouch.binding)?,
+        };
+        let forged = VouchCase {
+            presented: noise::public(&impostor),
+            tag: self.vouch_tag(&impostor, self.epoch, &self.vouch.binding)?,
+            ..honest.clone()
+        };
+        let another_account = VouchCase {
+            binding: run(0xD1).to_vec(),
+            ..honest.clone()
+        };
+        let earlier_epoch = VouchCase {
+            epoch: later,
+            ..honest.clone()
+        };
+        let no_record = VouchCase {
+            record: None,
+            ..honest.clone()
+        };
+        Ok(obj(vec![
+            (
+                "note",
+                json!(
+                    "device_id, epoch, nonce and binding are the verifier's own records (P-247 step 2); controller_fp is the manufacturing record's (P-249), null where the verifier holds none; controller_public, client_id, generation and tag are what the caller presents. The verifier's private key is inputs.verifier_key."
+                ),
+            ),
+            ("impostor_key", json!(hex(&impostor))),
+            (
+                "accepted",
+                self.vouch_case(
+                    &honest,
+                    "accept",
+                    "the vouch in macs.vouch, presented once by the account it was issued to",
+                ),
+            ),
+            (
+                "replayed_nonce",
+                self.vouch_case(
+                    &honest,
+                    "refuse at step 1",
+                    "the accepted claim again: the tag still verifies, and only the nonce recorded as spent refuses it",
+                ),
+            ),
+            (
+                "another_account",
+                self.vouch_case(
+                    &another_account,
+                    "refuse at step 4",
+                    "the accepted tag presented under another account's binding, which the verifier tags in its place",
+                ),
+            ),
+            (
+                "earlier_epoch",
+                self.vouch_case(
+                    &earlier_epoch,
+                    "refuse at step 4",
+                    "a tag minted while the controller was at the published epoch, presented to link the next one",
+                ),
+            ),
+            (
+                "wrong_controller_key",
+                self.vouch_case(
+                    &forged,
+                    "refuse at step 3",
+                    "the caller chose the controller key and holds impostor_key: its tag verifies under that key, and only controller_fp refuses it",
+                ),
+            ),
+            (
+                "no_manufacturing_record",
+                self.vouch_case(
+                    &no_record,
+                    "refuse at step 3",
+                    "the honest claim, for a device_id whose record has not reached the verifier: controller_fp is null, and nothing the caller offers stands in for it (P-249)",
+                ),
+            ),
+        ]))
+    }
+
+    /// One published verification case, with the fields every case shares.
+    fn vouch_case(&self, case: &VouchCase, verdict: &str, why: &str) -> Value {
+        obj(vec![
+            ("device_id", json!(hex(&self.device_id))),
+            ("epoch", json!(case.epoch)),
+            ("nonce", json!(hex(&self.vouch.nonce))),
+            ("binding", json!(hex(&case.binding))),
+            ("controller_fp", json!(case.record.as_deref().map(hex))),
+            ("controller_public", json!(hex(&case.presented))),
+            ("client_id", json!(self.client_id)),
+            ("generation", json!(self.generation)),
+            ("tag", json!(hex(&case.tag))),
+            ("verdict", json!(verdict)),
+            ("why", json!(why)),
+        ])
     }
 
     /// `ReadLog 0x05`: from 1216, at most 64. One function so the body
@@ -2726,6 +3014,7 @@ impl Builder {
         .chain(Self::invite_entries()?)
         .chain(self.approval_entries()?)
         .chain(Self::wifi_entries()?)
+        .chain(self.vouch_entries()?)
         .chain(Self::config_section_entries()?)
         .chain(Self::config_message_entries()?)
         .collect::<Vec<_>>()))
@@ -3714,6 +4003,9 @@ impl Builder {
             ("pair_req_id", json!(PAIR_REQ_ID)),
             ("enrol_req_id", json!(ENROL_REQ_ID)),
             ("hello_req_id", json!(HELLO_REQ_ID)),
+            ("verifier_key", json!(hex(&self.vouch.verifier_key))),
+            ("vouch_nonce", json!(hex(&self.vouch.nonce))),
+            ("account_binding", json!(hex(&self.vouch.binding))),
         ];
         pairs.extend(self.report.inputs());
         obj(pairs)
@@ -3761,6 +4053,16 @@ impl Builder {
                     &self.invite_admit_key()?,
                 ),
             ),
+            (
+                "vouch_key",
+                key_entry(
+                    &self.device_id,
+                    &self.vouch.ikm,
+                    L_VOUCH_KEY,
+                    "'km43/v1/vouch-key'",
+                    &self.vouch.key,
+                ),
+            ),
         ]))
     }
 
@@ -3779,6 +4081,16 @@ impl Builder {
                 "admit_ikm_readable",
                 json!(
                     "X25519(client_key, controller_public), which equals X25519(controller_key, client_public)"
+                ),
+            ),
+            (
+                "verifier_public",
+                json!(hex(&noise::public(&self.vouch.verifier_key))),
+            ),
+            (
+                "vouch_ikm_readable",
+                json!(
+                    "X25519(controller_key, verifier_public), which equals X25519(verifier_key, controller_public)"
                 ),
             ),
             (
@@ -3956,6 +4268,7 @@ impl Builder {
         let macs = vec![
             self.pair_refusal()?,
             self.hello_admit()?,
+            self.vouch_mac()?,
             self.invite_proof()?,
             self.invite_confirm()?,
         ];
@@ -3991,6 +4304,7 @@ impl Builder {
             ("derived_keys", self.derived_keys()?),
             ("keys", self.keys()),
             ("macs", obj(macs)),
+            ("vouch_verification", self.vouch_verification()?),
             ("invite", self.invite()?),
             ("handshakes", self.handshakes()?),
             ("sealed", self.sealed()?),
@@ -4095,6 +4409,7 @@ fn conventions() -> Value {
 enum DerivedKey {
     Refusal,
     Admit,
+    Vouch,
     InviteAdmit,
 }
 
@@ -4103,6 +4418,7 @@ impl std::fmt::Display for DerivedKey {
         w.write_str(match self {
             Self::Refusal => "refusal_key",
             Self::Admit => "admit_key",
+            Self::Vouch => "vouch_key",
             Self::InviteAdmit => "invite_admit_key",
         })
     }

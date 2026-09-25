@@ -222,6 +222,15 @@ status = "live"
 since = "1.0"
 
 [[messages]]
+request = 0x14
+response = 0x94
+name = "Vouch"
+auth_request = "sealed"
+auth_response = "sealed"
+status = "live"
+since = "1.0"
+
+[[messages]]
 request = 0x15
 response = 0x95
 name = "Invite"
@@ -1932,6 +1941,18 @@ name = "needs_button"
 status = "live"
 meaning = "`at` is below the monotonic floor. A person at the panel can override it and the client can send it again (P-114, P-116)"
 
+[[outcomes.vouch]]
+value = 1
+name = "vouched"
+status = "live"
+meaning = "The answer carries the epoch, slot, generation and tag of P-244"
+
+[[outcomes.vouch]]
+value = 2
+name = "bad_verifier"
+status = "live"
+meaning = "The verifier key is a low-order point, so no tag under it could vouch for anything (P-245)"
+
 
 [[outcomes.invite]]
 value = 1
@@ -2660,7 +2681,12 @@ name = "wifi scan and join status"
 status = "live"
 
 [[codes.capability_bit]]
-range = "9–31"
+number = 9
+name = "vouch answered"
+status = "live"
+
+[[codes.capability_bit]]
+range = "10–31"
 name = "unallocated"
 
 
