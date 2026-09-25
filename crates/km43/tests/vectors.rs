@@ -73,7 +73,7 @@ fn every_published_body_is_one_this_reader_walks_to_the_end() {
             seen += 1;
         }
     }
-    assert_eq!(seen, 67, "the vector file grew or shrank a body");
+    assert_eq!(seen, 78, "the vector file grew or shrank a body");
 }
 
 /// The envelope the generator publishes must decode here to the same four
@@ -730,11 +730,13 @@ fn the_published_sealed_error_is_refused_when_read_bare() {
 /// `Readings 0x8E`, the `Concerns 0x8F`, the six event bodies — the two
 /// concern records `0x0501` and `0x0502`, then `0x0102`, `0x0901` and `0x0902`,
 /// then the boot record `0x0601`, followed by nine controller-record examples —
-/// and the thirty-three read by name rather than by position: the seven
+/// and the forty-four read by name rather than by position: the seven
 /// handshake envelopes and the bare `Error 0xFF`, the two offers and the
 /// `Enrol 0x93` answer, `ReadLog 0x05`, `LogPage 0x85`, the `Time 0x0A`
-/// operation, the two `TimeAck 0x8A`, the six Wi-Fi bodies, the seven config
-/// section bodies, and the five configuration messages around them.
+/// operation, the two `TimeAck 0x8A`, the two `Clients` bodies, the three
+/// invite bodies, the six approval and removal bodies, the six Wi-Fi bodies,
+/// the seven config section bodies, and the five configuration messages
+/// around them.
 ///
 /// Asserted rather than assumed, so a file that lost one does not hand the
 /// wrong bytes to whichever test still finds something at index 0. The count
@@ -743,7 +745,7 @@ fn the_published_sealed_error_is_refused_when_read_bare() {
 /// after that message was retired.
 fn published_bodies() -> Vec<Vec<u8>> {
     let found = blobs("body_cbor");
-    assert_eq!(found.len(), 53, "the vector file grew or shrank a body");
+    assert_eq!(found.len(), 64, "the vector file grew or shrank a body");
     found
 }
 
@@ -3239,4 +3241,205 @@ fn p_251_an_invite_computes_the_published_transcript_digits_and_tags() {
         .keep(&published, slot, generation)
         .expect("the published confirmation is kept");
     assert_eq!(kept.slot(), Some((slot, generation)));
+}
+
+/// The invite bodies from the committed witness, each decoded, rebuilt from
+/// the values `invite` publishes, and encoded back to the same bytes: the
+/// proposal carries the published invitee and commitment, and its answer the
+/// nonce the transcript was computed over.
+#[test]
+fn published_invite_bodies_decode_and_reencode_byte_for_byte() {
+    use km43::{
+        Commitment, Invite, InviteAck, InviteOperation, MAX_INVITE_ACK_BYTES,
+        MAX_INVITE_OPERATION_BYTES,
+    };
+
+    let invite = object("invite");
+    let nonce = InviteNonce(hex_in(invite, "controller_nonce").try_into().expect("16"));
+
+    let published = blob_under("invite_0x15", "body_cbor");
+    let want = InviteOperation {
+        role: Role::try_from(u8::try_from(u32_in(invite, "role")).expect("a byte"))
+            .expect("a role"),
+        invitee: PublicKey::from_bytes(hex_in(invite, "invitee_public").try_into().expect("32")),
+        commitment: Commitment(
+            hex_in(object_in(invite, "commitment"), "out")
+                .try_into()
+                .expect("32"),
+        ),
+        client_kind: ClientKind::App,
+        label: "site manager",
+    };
+    assert_eq!(InviteOperation::decode(&published), Ok(want));
+    let mut dst = [0; MAX_INVITE_OPERATION_BYTES];
+    let len = want.encode(&mut dst).expect("fits");
+    assert_eq!(dst.get(..len), Some(published.as_slice()), "invite_0x15");
+
+    for (name, want) in [
+        ("inviteack_0x95", InviteAck::proposed(nonce)),
+        (
+            "invite_refused_0x95",
+            InviteAck::refused(Invite::NoBudget).expect("a refusal"),
+        ),
+    ] {
+        let published = blob_under(name, "body_cbor");
+        assert_eq!(InviteAck::decode(&published), Ok(want), "{name}");
+        let mut dst = [0; MAX_INVITE_ACK_BYTES];
+        let len = want.encode(&mut dst).expect("fits");
+        assert_eq!(dst.get(..len), Some(published.as_slice()), "{name}");
+    }
+}
+
+/// The approval and removal bodies, the second half of the witness above:
+/// the approval carries the published proof and its answer the published
+/// confirmation, so the tags P-251 computes are the ones the bodies put on the
+/// wire, and the removal names the slot the approval wrote.
+#[test]
+fn published_approval_and_removal_bodies_decode_and_reencode_byte_for_byte() {
+    use km43::{
+        Approve, ApproveAck, ApproveOperation, Decision, Enrolled, MAX_APPROVE_ACK_BYTES,
+        MAX_APPROVE_OPERATION_BYTES, MAX_REMOVE_ACK_BYTES, MAX_REMOVE_OPERATION_BYTES, Remove,
+        RemoveAck, RemoveOperation, Reveal,
+    };
+
+    let invite = object("invite");
+    let nonce = InviteNonce(hex_in(invite, "controller_nonce").try_into().expect("16"));
+    let slot = ClientId::new(u32_in(invite, "client_id")).expect("a slot");
+    let generation = Generation::new(u32_in(invite, "generation")).expect("a generation");
+    let macs = object("macs");
+
+    for (name, decision) in [
+        (
+            "approve_0x16",
+            Decision::Approve {
+                reveal: Reveal(hex_in(invite, "reveal").try_into().expect("16")),
+                proof: hex_in(object_in(macs, "invite_proof"), "out16")
+                    .try_into()
+                    .expect("16"),
+            },
+        ),
+        ("approve_decline_0x16", Decision::Decline),
+    ] {
+        let published = blob_under(name, "body_cbor");
+        let want = ApproveOperation { nonce, decision };
+        assert_eq!(ApproveOperation::decode(&published), Ok(want), "{name}");
+        let mut dst = [0; MAX_APPROVE_OPERATION_BYTES];
+        let len = want.encode(&mut dst).expect("fits");
+        assert_eq!(dst.get(..len), Some(published.as_slice()), "{name}");
+    }
+
+    for (name, want) in [
+        (
+            "approveack_0x96",
+            ApproveAck::enrolled(Enrolled {
+                client_id: slot,
+                generation,
+                confirm: hex_in(object_in(macs, "invite_confirm"), "out16")
+                    .try_into()
+                    .expect("16"),
+            }),
+        ),
+        (
+            "approve_refused_0x96",
+            ApproveAck::other(Approve::Refused).expect("not enrolled"),
+        ),
+    ] {
+        let published = blob_under(name, "body_cbor");
+        assert_eq!(ApproveAck::decode(&published), Ok(want), "{name}");
+        let mut dst = [0; MAX_APPROVE_ACK_BYTES];
+        let len = want.encode(&mut dst).expect("fits");
+        assert_eq!(dst.get(..len), Some(published.as_slice()), "{name}");
+    }
+
+    let published = blob_under("remove_0x17", "body_cbor");
+    let want = RemoveOperation {
+        client_id: slot,
+        generation,
+    };
+    assert_eq!(RemoveOperation::decode(&published), Ok(want));
+    let mut dst = [0; MAX_REMOVE_OPERATION_BYTES];
+    let len = want.encode(&mut dst).expect("fits");
+    assert_eq!(dst.get(..len), Some(published.as_slice()), "remove_0x17");
+
+    let published = blob_under("removeack_0x97", "body_cbor");
+    assert_eq!(
+        RemoveAck::decode(&published),
+        Ok(RemoveAck(Remove::Removed))
+    );
+    let mut dst = [0; MAX_REMOVE_ACK_BYTES];
+    let len = RemoveAck(Remove::Removed).encode(&mut dst).expect("fits");
+    assert_eq!(dst.get(..len), Some(published.as_slice()), "removeack_0x97");
+
+    for (name, kind) in [
+        ("invite_0x15", MessageType::Invite),
+        ("inviteack_0x95", MessageType::InviteResponse),
+        ("invite_refused_0x95", MessageType::InviteResponse),
+        ("approve_0x16", MessageType::Approve),
+        ("approve_decline_0x16", MessageType::Approve),
+        ("approveack_0x96", MessageType::ApproveResponse),
+        ("approve_refused_0x96", MessageType::ApproveResponse),
+        ("remove_0x17", MessageType::Remove),
+        ("removeack_0x97", MessageType::RemoveResponse),
+    ] {
+        assert_eq!(number_in(name, "type"), usize::from(kind as u8), "{name}");
+    }
+}
+
+/// `Clients 0x14` is the empty body, and its answer lists the enrolled client
+/// as the owner and the published invite as pending. The invite row is where
+/// an owner reads the transcript before approving (P-251), so its nonce, role,
+/// invitee, inviter and suite are compared with `invite` and `inputs`, not
+/// only with themselves.
+#[test]
+fn published_clients_bodies_decode_and_reencode_byte_for_byte() {
+    use km43::{CLIENTS_MAX_BYTES, ClientRow, ClientsAnswer, EmptyBody, InviteRow};
+
+    let published = blob_under("clients_0x14", "body_cbor");
+    assert_eq!(
+        EmptyBody::decode(MessageType::Clients, &published),
+        Ok(EmptyBody)
+    );
+    let mut dst = [0; 8];
+    let len = EmptyBody
+        .encode(MessageType::Clients, &mut dst)
+        .expect("fits");
+    assert_eq!(dst.get(..len), Some(published.as_slice()));
+
+    let invite = object("invite");
+    let clients = [ClientRow {
+        client_id: ClientId::new(input_number("client_id")).expect("a slot"),
+        generation: Generation::new(input_number("generation")).expect("a generation"),
+        role: Role::Owner,
+        client_kind: ClientKind::App,
+        label: strings_of(object("inputs"), "label")
+            .first()
+            .copied()
+            .expect("a label"),
+    }];
+    let invites = [InviteRow {
+        nonce: InviteNonce(hex_in(invite, "controller_nonce").try_into().expect("16")),
+        role: Role::try_from(u8::try_from(u32_in(invite, "role")).expect("a byte"))
+            .expect("a role"),
+        invitee: PublicKey::from_bytes(hex_in(invite, "invitee_public").try_into().expect("32")),
+        inviter: ClientId::new(u32_in(invite, "inviter")).expect("a slot"),
+        inviter_generation: Generation::new(u32_in(invite, "inviter_generation"))
+            .expect("a generation"),
+        client_kind: ClientKind::App,
+        label: "site manager",
+        expires_in: 3599,
+        suite: Suite::X25519ChachapolySha256,
+    }];
+    let want = ClientsAnswer::new(&clients, &invites).expect("valid");
+    let published = blob_under("clients_0x94", "body_cbor");
+    assert_eq!(ClientsAnswer::decode(&published), Ok(want));
+    let mut dst = [0; CLIENTS_MAX_BYTES];
+    let len = want.encode(&mut dst).expect("fits");
+    assert_eq!(dst.get(..len), Some(published.as_slice()));
+
+    for (name, kind) in [
+        ("clients_0x14", MessageType::Clients),
+        ("clients_0x94", MessageType::ClientsResponse),
+    ] {
+        assert_eq!(number_in(name, "type"), usize::from(kind as u8), "{name}");
+    }
 }

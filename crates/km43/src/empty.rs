@@ -39,7 +39,10 @@ impl EmptyBody {
     /// request names nothing; its response does not wear one.
     const fn wears_one(kind: MessageType) -> bool {
         match kind {
-            MessageType::Goodbye | MessageType::GoodbyeResponse | MessageType::WifiStatus => true,
+            MessageType::Goodbye
+            | MessageType::GoodbyeResponse
+            | MessageType::WifiStatus
+            | MessageType::Clients => true,
             // Written out rather than `matches!`, which is a `_` arm wearing a
             // macro: a twenty-seventh type would land in neither list and this
             // file would compile, while `Direction::of` and `signs` — the two
@@ -78,7 +81,6 @@ impl EmptyBody {
             | MessageType::PairResponse
             | MessageType::Enrol
             | MessageType::EnrolResponse
-            | MessageType::Clients
             | MessageType::ClientsResponse
             | MessageType::Invite
             | MessageType::InviteResponse

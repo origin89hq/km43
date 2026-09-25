@@ -373,6 +373,44 @@ pub const SCAN_ANSWER_CEILING: usize = (INNER_BODY_BYTES - SCAN_ANSWER_HEADER_BY
 /// The most widest-case rows the link result could carry.
 pub const SCAN_RESULT_CEILING: usize = (MAX_PAYLOAD - SCAN_RESULT_HEADER_BYTES) / AP_MAX_BYTES;
 
+/// Slots holding `admin` (P-252). With [`MAX_VIEWERS`] it leaves a row of [`MAX_CLIENTS`] that
+/// only an owner can take, so a table the admins filled is still one an owner can be invited into.
+pub const MAX_ADMINS: usize = 6;
+
+/// Slots holding `viewer`: the cloud's identity (P-252).
+pub const MAX_VIEWERS: usize = 1;
+
+/// Pending invites, in RAM (P-247). Full is `Invite` outcome 3 `invites_full`; nothing is evicted,
+/// and the last free row is an owner's.
+pub const MAX_INVITES: usize = 4;
+
+/// Pending invites one slot may hold (P-247), so two admins cannot fill the table between them.
+pub const MAX_INVITES_PER_INVITER: usize = 2;
+
+/// How long an invite stays pending after it was proposed, on P-004's tick (P-247).
+pub const INVITE_TTL_MS: u64 = 3_600_000;
+
+/// Proposals an admin slot may make without an owner approving one (P-248). It is what bounds a
+/// relay to a few one-in-a-million guesses at the digits rather than a search.
+pub const INVITE_BUDGET: u8 = 3;
+
+/// A `ClientRow` at its widest: map header 1, `client_id` 6 and `generation` 6 at `u32` width,
+/// `role` 2, `client_kind` 2, `label` 35 at `MAX_LABEL` bytes.
+pub const CLIENT_ROW_MAX_BYTES: usize = 52;
+
+/// An `InviteRow` at its widest: map header 1, `nonce` 18, `role` 2, `invitee` 35, `inviter` 6 and
+/// `inviter_generation` 6, `client_kind` 2, `label` 35, `expires_in` 4 at [`INVITE_TTL_MS`] in
+/// seconds, `suite` 2.
+pub const INVITE_ROW_MAX_BYTES: usize = 111;
+
+/// A `Clients 0x94` around its rows: map header 1, and each list's key and array header 2.
+pub const CLIENTS_HEADER_BYTES: usize = 5;
+
+/// A `Clients 0x94` with every slot and every invite at its widest. P-245's answer is one response
+/// and not a page, so this has to fit the inner body.
+pub const CLIENTS_MAX_BYTES: usize =
+    CLIENTS_HEADER_BYTES + MAX_CLIENTS * CLIENT_ROW_MAX_BYTES + MAX_INVITES * INVITE_ROW_MAX_BYTES;
+
 /// The most scalar samples the byte budget could carry.
 pub const SAMPLE_CEILING: usize = (INNER_BODY_BYTES - READINGS_HEADER_BYTES) / SAMPLE_MAX_BYTES;
 
@@ -416,6 +454,21 @@ const_assert!(
 const_assert!(
     MAX_SCAN_APS <= SCAN_ANSWER_CEILING && MAX_SCAN_APS <= SCAN_RESULT_CEILING,
     "a scan cap above either ceiling is a list the comms processor sends and the controller cannot relay, or cannot receive"
+);
+
+const_assert!(
+    CLIENTS_MAX_BYTES <= INNER_BODY_BYTES,
+    "a full client table and a full invite table are one Clients 0x94 (P-245), and one that does not fit is a list the controller builds and then refuses with error 5"
+);
+
+const_assert!(
+    MAX_ADMINS + MAX_VIEWERS < MAX_CLIENTS,
+    "P-252 keeps a row only an owner can take; admins and viewers filling the table is a site nobody can invite an owner into"
+);
+
+const_assert!(
+    MAX_INVITES_PER_INVITER < MAX_INVITES,
+    "P-247 holds the last free invite row for an owner, so no one slot may fill the table"
 );
 
 const_assert!(
@@ -543,6 +596,19 @@ const _: () = assert!(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Each constant is checked in its own type, so nothing is cast on the way in — a `u64`
+    // narrowed to `usize` is a truncation on the 32-bit part this ships on. The name comes from
+    // the same identifier as the value, so an entry cannot name one constant and measure another,
+    // which the pair-of-literals form allowed and nothing checked.
+    macro_rules! every {
+        ($($name:ident),* $(,)?) => {
+            $(assert!(
+                $name > 0,
+                concat!(stringify!($name), " must be at least one")
+            );)*
+        };
+    }
 
     /// Worst-case wire size of a frame carrying `payload` bytes of envelope.
     fn frame_bytes(payload: usize) -> usize {
@@ -702,18 +768,6 @@ mod tests {
     /// comparing a truncated set.
     #[test]
     fn a_reported_capacity_of_zero_would_lock_every_client_out() {
-        // Each constant is checked in its own type, so nothing is cast on the way in — a
-        // `u64` narrowed to `usize` is a truncation on the 32-bit part this ships on. The name
-        // comes from the same identifier as the value, so an entry cannot name one constant and
-        // measure another, which the pair-of-literals form allowed and nothing checked.
-        macro_rules! every {
-            ($($name:ident),* $(,)?) => {
-                $(assert!(
-                    $name > 0,
-                    concat!(stringify!($name), " must be at least one")
-                );)*
-            };
-        }
         every![
             MAX_PAYLOAD,
             MAX_FRAME,
@@ -936,8 +990,29 @@ mod tests {
         assert_eq!(left, 9, "what the sixteen unbounded kinds must fit in");
     }
 
-    /// The list above is the one whose comment says it must never be short. It went short once,
-    /// and naming six of eleven let `MAX_DEPTH` be raised to 255 with the whole suite green.
+    /// The client table's and the invite table's capacities, in a list of their own. Zero admins is
+    /// a site where nobody but an owner is ever enrolled; a zero budget is an admin that can never
+    /// propose; a zero deadline is an invite withdrawn before anybody reads its digits.
+    #[test]
+    fn a_client_or_invite_capacity_of_zero_would_refuse_every_invite() {
+        every![
+            MAX_ADMINS,
+            MAX_VIEWERS,
+            MAX_INVITES,
+            MAX_INVITES_PER_INVITER,
+            INVITE_TTL_MS,
+            INVITE_BUDGET,
+            CLIENT_ROW_MAX_BYTES,
+            INVITE_ROW_MAX_BYTES,
+            CLIENTS_HEADER_BYTES,
+            CLIENTS_MAX_BYTES,
+        ];
+    }
+
+    /// The lists above are the ones whose comment says they must never be short. One went short
+    /// once, and naming six of eleven let `MAX_DEPTH` be raised to 255 with the whole suite green.
+    /// Every list is read, and only a list: one that opens on a new line, which the literal this
+    /// test splits on does not.
     ///
     /// So it is no longer trusted to a person. This reads the file back and asserts every exported
     /// constant in it is named in the list — which is the difference between a rule somebody
@@ -946,11 +1021,18 @@ mod tests {
     #[test]
     fn every_exported_constant_is_named_in_the_zero_check() {
         let source = include_str!("limits.rs");
-        let listed = source
-            .split("every![")
-            .nth(1)
-            .and_then(|rest| rest.split("];").next())
-            .expect("the zero-check list is in this file, in the macro form");
+        let lists = || {
+            source
+                .split("every![")
+                .skip(1)
+                .filter(|rest| rest.starts_with('\n'))
+                .filter_map(|rest| rest.split("];").next())
+        };
+        assert_eq!(
+            lists().count(),
+            2,
+            "the two zero-check lists, in the macro form"
+        );
 
         for line in source.lines() {
             let trimmed = line.trim_start();
@@ -968,13 +1050,9 @@ mod tests {
 
             // Matched with the trailing comma so `MAX_SERIES` cannot be satisfied by
             // `MAX_SERIES_ELEMENTS` sitting in the list — a prefix is not a member.
-            let mut found = false;
-            for entry in listed.split(',') {
-                if entry.trim() == name {
-                    found = true;
-                    break;
-                }
-            }
+            let found = lists()
+                .flat_map(|list| list.split(','))
+                .any(|entry| entry.trim() == name);
             assert!(
                 found,
                 "{name} is exported and is not in the zero check — the list this test exists to \

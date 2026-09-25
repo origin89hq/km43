@@ -667,6 +667,94 @@
       "body_cbor": "a10102",
       "body_len": 3
     },
+    "clients_0x14": {
+      "type": 20,
+      "authentication": "this is the inner body; on the wire it is sealed (P-231) under the session's client-to-controller key, its nonce the req_id, as sealed.readlog_request is",
+      "body_readable": null,
+      "values_readable": "an empty map: the list takes no arguments",
+      "body_cbor": "a0",
+      "body_len": 1
+    },
+    "clients_0x94": {
+      "type": 148,
+      "authentication": "this is the inner body; on the wire it is sealed (P-231) under the session's controller-to-client key, as sealed.response is",
+      "body_readable": "{1:clients, 2:invites}",
+      "values_readable": "the enrolled client in slot 7 as role 1 owner, and invite_0x15 pending with 3599 s left: nonce, role, invitee, inviter and suite are the transcript's",
+      "body_cbor": "a20181a50107020103010401056d6b69746368656e2070686f6e650281a90150d0d1d2d3d4d5d6d7d8d9dadbdcdddedf0202035820605a725d2a4adfeeb1a29e17edd621c1b7593ee8cdbc44ac6c4ab6e2f805d23c040705010601076c73697465206d616e6167657208190e0f0901",
+      "body_len": 111
+    },
+    "invite_0x15": {
+      "type": 21,
+      "authentication": "this is the operation body; on the wire it is the inner body of the write, sealed like every request, as sealed.signed_request is",
+      "body_readable": "{1:role, 2:invitee, 3:commitment, 4:client_kind, 5:label}",
+      "values_readable": "role 2 admin for invite.invitee_public, committed to invite.reveal: invite.commitment.out; client_kind 1 app, label site manager",
+      "body_cbor": "a50102025820605a725d2a4adfeeb1a29e17edd621c1b7593ee8cdbc44ac6c4ab6e2f805d23c0358204f7b7d5dce5264d6271c53ca2bd4976d6e29738bdf5bff6c1bac57f13b459a300401056c73697465206d616e61676572",
+      "body_len": 89
+    },
+    "inviteack_0x95": {
+      "type": 149,
+      "authentication": "this is the inner body; on the wire it is sealed (P-231) under the session's controller-to-client key, as sealed.response is",
+      "body_readable": "{1:outcome, 2:nonce}",
+      "values_readable": "outcome 1 proposed, nonce invite.controller_nonce: the invite's name from here on",
+      "body_cbor": "a201010250d0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+      "body_len": 21
+    },
+    "invite_refused_0x95": {
+      "type": 149,
+      "authentication": "this is the inner body; on the wire it is sealed (P-231) under the session's controller-to-client key, as sealed.response is",
+      "body_readable": null,
+      "values_readable": "outcome 6 no_budget, and no key 2: a refusal names no invite",
+      "body_cbor": "a10106",
+      "body_len": 3
+    },
+    "approve_0x16": {
+      "type": 22,
+      "authentication": "this is the operation body; on the wire it is the inner body of the write, sealed like every request, as sealed.signed_request is",
+      "body_readable": "{1:nonce, 2:decision, 3:reveal, 4:proof}",
+      "values_readable": "an owner approving inviteack_0x95's invite: decision 1 approve, the reveal and macs.invite_proof.out16",
+      "body_cbor": "a40150d0d1d2d3d4d5d6d7d8d9dadbdcdddedf02010350303132333435363738393a3b3c3d3e3f0450b04b871bc4a777fbcf7a92cf879f5647",
+      "body_len": 57
+    },
+    "approve_decline_0x16": {
+      "type": 22,
+      "authentication": "this is the operation body; on the wire it is the inner body of the write, sealed like every request, as sealed.signed_request is",
+      "body_readable": null,
+      "values_readable": "decision 2 decline: no key 3 and no key 4",
+      "body_cbor": "a20150d0d1d2d3d4d5d6d7d8d9dadbdcdddedf0202",
+      "body_len": 21
+    },
+    "approveack_0x96": {
+      "type": 150,
+      "authentication": "this is the inner body; on the wire it is sealed (P-231) under the session's controller-to-client key, as sealed.response is",
+      "body_readable": "{1:outcome, 2:client_id, 3:generation, 4:confirm}",
+      "values_readable": "outcome 1 enrolled in slot 2 at generation 1, confirmed by macs.invite_confirm.out16",
+      "body_cbor": "a4010102020301045079b18489914a1396020b84af8abbcb69",
+      "body_len": 25
+    },
+    "approve_refused_0x96": {
+      "type": 150,
+      "authentication": "this is the inner body; on the wire it is sealed (P-231) under the session's controller-to-client key, as sealed.response is",
+      "body_readable": null,
+      "values_readable": "outcome 6 refused: no slot, no generation and no confirmation",
+      "body_cbor": "a10106",
+      "body_len": 3
+    },
+    "remove_0x17": {
+      "type": 23,
+      "authentication": "this is the operation body; on the wire it is the inner body of the write, sealed like every request, as sealed.signed_request is",
+      "body_readable": "{1:client_id, 2:generation}",
+      "values_readable": "removing the enrolment approveack_0x96 wrote: slot 2, generation 1",
+      "body_cbor": "a201020201",
+      "body_len": 5
+    },
+    "removeack_0x97": {
+      "type": 151,
+      "authentication": "this is the inner body; on the wire it is sealed (P-231) under the session's controller-to-client key, as sealed.response is",
+      "body_readable": "{1:outcome}",
+      "values_readable": "outcome 1 removed",
+      "body_cbor": "a10101",
+      "body_len": 3
+    },
     "wifiscan_0x11": {
       "type": 17,
       "authentication": "this is the inner body; on the wire it is sealed (P-231) under the session's client-to-controller key, its nonce the req_id, as sealed.readlog_request is",

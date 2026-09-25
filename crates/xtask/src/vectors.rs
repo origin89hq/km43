@@ -861,6 +861,10 @@ enum Msg {
     Pair = 0x0B,
     WifiScan = 0x11,
     Enrol = 0x13,
+    Clients = 0x14,
+    Invite = 0x15,
+    Approve = 0x16,
+    Remove = 0x17,
     Discover = 0x80,
     Hello = 0x81,
     LogPage = 0x85,
@@ -872,6 +876,10 @@ enum Msg {
     WifiScanAnswer = 0x91,
     WifiStatusAnswer = 0x92,
     EnrolAnswer = 0x93,
+    ClientsAnswer = 0x94,
+    InviteAck = 0x95,
+    ApproveAck = 0x96,
+    RemoveAck = 0x97,
     Error = 0xFF,
 }
 
@@ -2714,6 +2722,9 @@ impl Builder {
         .chain(self.handshake_payload_entries()?)
         .chain([Self::readlog_entry()?, Self::logpage_entry()?])
         .chain(Self::time_entries()?)
+        .chain(self.clients_entries()?)
+        .chain(Self::invite_entries()?)
+        .chain(self.approval_entries()?)
         .chain(Self::wifi_entries()?)
         .chain(Self::config_section_entries()?)
         .chain(Self::config_message_entries()?)
@@ -2900,6 +2911,165 @@ impl Builder {
             ))
         })
         .collect()
+    }
+
+    /// `Clients 0x14` and its answer while `inviteack_0x95`'s invite is
+    /// pending: the enrolled client as the site's owner, and one invite row
+    /// carrying every transcript field `invite` publishes that the controller
+    /// holds, which is what an owner computes the digits from (P-251).
+    fn clients_entries(&self) -> Result<Vec<(&'static str, Value)>> {
+        const REQUEST: &str = "this is the inner body; on the wire it is sealed (P-231) under the session's client-to-controller key, its nonce the req_id, as sealed.readlog_request is";
+        let owner = cmap! {
+            1 => Cb::U(u64::from(self.client_id)),
+            2 => Cb::U(u64::from(self.generation)),
+            3 => Cb::U(1),
+            4 => Cb::U(ClientKind::App as u64),
+            5 => Cb::T(self.label.to_owned()),
+        };
+        let pending = cmap! {
+            1 => Cb::B(Self::invite_controller_nonce().to_vec()),
+            2 => Cb::U(u64::from(INVITE_ROLE)),
+            3 => Cb::B(noise::public(&Self::invitee_key()).to_vec()),
+            4 => Cb::U(u64::from(self.client_id)),
+            5 => Cb::U(u64::from(self.generation)),
+            6 => Cb::U(ClientKind::App as u64),
+            7 => Cb::T("site manager".to_owned()),
+            8 => Cb::U(3599),
+            9 => Cb::U(u64::from(SUITE)),
+        };
+        typed_bodies(vec![
+            (
+                "clients_0x14",
+                Msg::Clients,
+                REQUEST,
+                Cb::M(BTreeMap::new()),
+                None,
+                "an empty map: the list takes no arguments",
+            ),
+            (
+                "clients_0x94",
+                Msg::ClientsAnswer,
+                SEALED_ANSWER,
+                cmap! { 1 => Cb::A(vec![owner]), 2 => Cb::A(vec![pending]) },
+                Some("{1:clients, 2:invites}"),
+                "the enrolled client in slot 7 as role 1 owner, and invite_0x15 pending with 3599 s left: nonce, role, invitee, inviter and suite are the transcript's",
+            ),
+        ])
+    }
+
+    /// The invite's proposal and its answers, carrying the values `invite`
+    /// publishes: that invitee under that commitment, and the answer naming it
+    /// by that nonce. A refusal beside them names nothing.
+    fn invite_entries() -> Result<Vec<(&'static str, Value)>> {
+        let invitee = noise::public(&Self::invitee_key()).to_vec();
+        let commitment =
+            Sha256::digest([L_INVITE_COMMIT, invitee.as_slice(), &Self::invite_reveal()].concat())
+                .to_vec();
+        typed_bodies(vec![
+            (
+                "invite_0x15",
+                Msg::Invite,
+                SIGNED_OPERATION,
+                cmap! {
+                    1 => Cb::U(u64::from(INVITE_ROLE)),
+                    2 => Cb::B(invitee),
+                    3 => Cb::B(commitment),
+                    4 => Cb::U(ClientKind::App as u64),
+                    5 => Cb::T("site manager".to_owned()),
+                },
+                Some("{1:role, 2:invitee, 3:commitment, 4:client_kind, 5:label}"),
+                "role 2 admin for invite.invitee_public, committed to invite.reveal: invite.commitment.out; client_kind 1 app, label site manager",
+            ),
+            (
+                "inviteack_0x95",
+                Msg::InviteAck,
+                SEALED_ANSWER,
+                cmap! { 1 => Cb::U(1), 2 => Cb::B(Self::invite_controller_nonce().to_vec()) },
+                Some("{1:outcome, 2:nonce}"),
+                "outcome 1 proposed, nonce invite.controller_nonce: the invite's name from here on",
+            ),
+            (
+                "invite_refused_0x95",
+                Msg::InviteAck,
+                SEALED_ANSWER,
+                cmap! { 1 => Cb::U(6) },
+                None,
+                "outcome 6 no_budget, and no key 2: a refusal names no invite",
+            ),
+        ])
+    }
+
+    /// The approval of that invite, carrying the reveal and `macs.invite_proof`,
+    /// and the answer carrying `macs.invite_confirm` for slot 2; a decline and
+    /// a refusal beside them; and the removal of the slot the approval wrote.
+    fn approval_entries(&self) -> Result<Vec<(&'static str, Value)>> {
+        let nonce = Self::invite_controller_nonce().to_vec();
+        let key = self.invite_admit_key()?;
+        let proof = t16(hmac(&key, &self.invite_proof_preimage())?);
+        let confirm = t16(hmac(&key, &self.invite_confirm_preimage())?);
+        typed_bodies(vec![
+            (
+                "approve_0x16",
+                Msg::Approve,
+                SIGNED_OPERATION,
+                cmap! {
+                    1 => Cb::B(nonce.clone()),
+                    2 => Cb::U(1),
+                    3 => Cb::B(Self::invite_reveal().to_vec()),
+                    4 => Cb::B(proof),
+                },
+                Some("{1:nonce, 2:decision, 3:reveal, 4:proof}"),
+                "an owner approving inviteack_0x95's invite: decision 1 approve, the reveal and macs.invite_proof.out16",
+            ),
+            (
+                "approve_decline_0x16",
+                Msg::Approve,
+                SIGNED_OPERATION,
+                cmap! { 1 => Cb::B(nonce), 2 => Cb::U(2) },
+                None,
+                "decision 2 decline: no key 3 and no key 4",
+            ),
+            (
+                "approveack_0x96",
+                Msg::ApproveAck,
+                SEALED_ANSWER,
+                cmap! {
+                    1 => Cb::U(1),
+                    2 => Cb::U(u64::from(INVITE_SLOT)),
+                    3 => Cb::U(u64::from(INVITE_SLOT_GENERATION)),
+                    4 => Cb::B(confirm),
+                },
+                Some("{1:outcome, 2:client_id, 3:generation, 4:confirm}"),
+                "outcome 1 enrolled in slot 2 at generation 1, confirmed by macs.invite_confirm.out16",
+            ),
+            (
+                "approve_refused_0x96",
+                Msg::ApproveAck,
+                SEALED_ANSWER,
+                cmap! { 1 => Cb::U(6) },
+                None,
+                "outcome 6 refused: no slot, no generation and no confirmation",
+            ),
+            (
+                "remove_0x17",
+                Msg::Remove,
+                SIGNED_OPERATION,
+                cmap! {
+                    1 => Cb::U(u64::from(INVITE_SLOT)),
+                    2 => Cb::U(u64::from(INVITE_SLOT_GENERATION)),
+                },
+                Some("{1:client_id, 2:generation}"),
+                "removing the enrolment approveack_0x96 wrote: slot 2, generation 1",
+            ),
+            (
+                "removeack_0x97",
+                Msg::RemoveAck,
+                SEALED_ANSWER,
+                cmap! { 1 => Cb::U(1) },
+                Some("{1:outcome}"),
+                "outcome 1 removed",
+            ),
+        ])
     }
 
     /// `Time 0x0A`'s operation body and `TimeAck 0x8A` twice: an accepted set
@@ -3831,6 +4001,39 @@ impl Builder {
             ("link_local", Self::link()?),
         ]))
     }
+}
+
+const SIGNED_OPERATION: &str = "this is the operation body; on the wire it is the inner body of the write, sealed like every request, as sealed.signed_request is";
+const SEALED_ANSWER: &str = "this is the inner body; on the wire it is sealed (P-231) under the session's controller-to-client key, as sealed.response is";
+
+/// One published body under a message type: its name, type, how it travels,
+/// the CBOR, the fields in the spec's words and what its values mean.
+type TypedBody = (
+    &'static str,
+    Msg,
+    &'static str,
+    Cb,
+    Option<&'static str>,
+    &'static str,
+);
+
+fn typed_bodies(rows: Vec<TypedBody>) -> Result<Vec<(&'static str, Value)>> {
+    rows.into_iter()
+        .map(|(name, kind, authentication, body, readable, meaning)| {
+            let bytes = cbor(&body)?;
+            Ok((
+                name,
+                obj(vec![
+                    ("type", json!(kind as u8)),
+                    ("authentication", json!(authentication)),
+                    ("body_readable", json!(readable)),
+                    ("values_readable", json!(meaning)),
+                    ("body_cbor", json!(hex(&bytes))),
+                    ("body_len", json!(bytes.len())),
+                ]),
+            ))
+        })
+        .collect()
 }
 
 /// Which way a sealed message travels, which decides its body's shape: a
