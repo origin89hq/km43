@@ -423,7 +423,8 @@ pub enum Allocation {
     Free(Placement),
     /// The lowest `admin` slot whose label is byte-identical, answered
     /// `reclaimed`: the old install's key is erased with it and the role stays
-    /// `admin`.
+    /// `admin`. A table without an owner never gets here, because admins and a
+    /// viewer cannot fill it ([`MAX_ADMINS`]) and step 2 seats the owner first.
     Reclaim(Placement),
     /// Nothing to allocate: `table_full`.
     Full,
