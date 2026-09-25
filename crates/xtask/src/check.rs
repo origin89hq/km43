@@ -593,8 +593,13 @@ impl Checks {
             .and_then(serde_json::Value::as_object)
         {
             for (name, k) in keys {
-                if let Some(hex) = k.get("out").and_then(serde_json::Value::as_str) {
-                    secrets.push((name.clone(), hex.to_owned()));
+                // The input keying material is as secret as the output: the
+                // admission key's is a DH result, the label keys' the printed
+                // secret.
+                for part in ["out", "ikm"] {
+                    if let Some(hex) = k.get(part).and_then(serde_json::Value::as_str) {
+                        secrets.push((format!("{name}.{part}"), hex.to_owned()));
+                    }
                 }
             }
         }
@@ -608,12 +613,16 @@ impl Checks {
             "hello_client_ephemeral",
             "hello_controller_ephemeral",
         ] {
-            if let Some(s) = inputs
+            // A renamed input would otherwise leave the scan without a word.
+            let s = inputs
                 .and_then(|i| i.get(name))
                 .and_then(serde_json::Value::as_str)
-            {
-                secrets.push((name.to_owned(), s.to_owned()));
-            }
+                .ok_or_else(|| {
+                    fail(format!(
+                        "inputs.{name} is not published, so it cannot be looked for"
+                    ))
+                })?;
+            secrets.push((name.to_owned(), s.to_owned()));
         }
         if let Some(handshakes) = doc.get("handshakes").and_then(serde_json::Value::as_object) {
             for (name, h) in handshakes {
@@ -626,7 +635,14 @@ impl Checks {
         }
 
         let mut wire = Vec::new();
-        for block in ["macs", "sealed", "bodies", "handshakes", "frame"] {
+        for block in [
+            "macs",
+            "sealed",
+            "bodies",
+            "handshakes",
+            "frame",
+            "link_local",
+        ] {
             if let Some(value) = doc.get(block) {
                 on_the_wire(block, value, &mut wire);
             }
