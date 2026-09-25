@@ -92,7 +92,7 @@ pub const MAX_CMD_DEDUP: usize = 32;
 /// was proving against it to error 14 for no reason it can see.
 pub const MAX_CHALLENGES: usize = 8;
 
-/// MAC failures one connection may reach before it is closed (P-051).
+/// Authentication failures one connection may reach before it is closed (P-051).
 ///
 /// A `u8` and not a `usize` like its neighbours, because this one is not a table
 /// width — it is a counter that lives in a connection row eight times over, and
@@ -104,6 +104,10 @@ pub const MAX_CHALLENGES: usize = 8;
 /// dedup window sits the same way relative to `MAX_CMD_DEDUP`.
 pub const MAX_AUTH_FAILURES: u8 = 8;
 
+/// How many of the controller's nonces below the highest it has accepted a client still holds
+/// a record of (P-233). One bit each in a `u64`, so it is a width and not a tunable.
+pub const MAX_REPLAY_WINDOW: usize = 64;
+
 /// The CRC-16 that goes into COBS alongside the envelope.
 pub(crate) const CRC_BYTES: usize = 2;
 
@@ -114,67 +118,61 @@ pub(crate) const FRAME_DELIMITER_BYTES: usize = 1;
 /// CBOR bytes at the top of its range, not three. A `type` past `0x17` costs one more.
 pub(crate) const ENVELOPE_BYTES: usize = 11;
 
-/// The signed wrapper's map **contents** and the 16-byte MAC — the map header is not here.
-///
-/// This was `WRAPPER_BYTES = 23`, which counted the map header that [`ENVELOPE_BYTES`] already
-/// carries. The double-count cancelled against a second error — every response `type` is `0x8x`,
-/// which is two CBOR bytes rather than the one the envelope assumed — so `11 + 23 = 34` was the
-/// right answer for every response and one byte conservative for every request. Two errors that
-/// cancel are correct until somebody fixes one of them.
-const WRAPPER_CONTENTS_BYTES: usize = 22;
+/// A controller message's sealed body **contents** — the `sealed` key, the head of its byte string,
+/// the 16-byte tag, the `nonce` key and a `u64` nonce at full width. The map header is not here:
+/// [`ENVELOPE_BYTES`] already carries it.
+const SEALED_CONTROLLER_CONTENTS_BYTES: usize = 30;
+
+/// A request's sealed body contents: the same less the nonce, because a request's nonce is its
+/// `req_id` (P-232).
+const SEALED_REQUEST_CONTENTS_BYTES: usize = 20;
 
 /// A `0x8x` response type is two CBOR bytes; a request type at or below `0x17` is one.
 const RESPONSE_TYPE_EXTRA_BYTE: usize = 1;
 
-/// What a response spends before its inner body: 11 + 22 + 1.
+/// What a response spends before its inner body: 11 + 30 + 1.
 pub(crate) const RESPONSE_FRAMING_BYTES: usize =
-    ENVELOPE_BYTES + WRAPPER_CONTENTS_BYTES + RESPONSE_TYPE_EXTRA_BYTE;
+    ENVELOPE_BYTES + SEALED_CONTROLLER_CONTENTS_BYTES + RESPONSE_TYPE_EXTRA_BYTE;
 
-/// What a request spends before its inner body: 11 + 22. One byte cheaper, because its type fits
-/// in one CBOR byte.
-pub(crate) const REQUEST_FRAMING_BYTES: usize = ENVELOPE_BYTES + WRAPPER_CONTENTS_BYTES;
+/// What a request spends before its inner body: 11 + 20. Its type fits in one CBOR byte and it
+/// carries no nonce of its own.
+pub(crate) const REQUEST_FRAMING_BYTES: usize = ENVELOPE_BYTES + SEALED_REQUEST_CONTENTS_BYTES;
+
+/// What an `Event 0x04` spends before its inner body: 11 + 30. It is sealed like a response and
+/// its type is one CBOR byte like a request's.
+pub(crate) const EVENT_FRAMING_BYTES: usize = ENVELOPE_BYTES + SEALED_CONTROLLER_CONTENTS_BYTES;
 
 /// The inner body budget every topology derivation rests on.
 pub const INNER_BODY_BYTES: usize = MAX_PAYLOAD - RESPONSE_FRAMING_BYTES;
 
-/// The signed body around its operation: four key numbers at one byte each, `client_id` at `u32`
-/// width, `counter` at `u64` width, the `bstr` head a full-width operation needs, and the 16-byte
-/// MAC with its own head. The map header is not here — `ENVELOPE_BYTES` already carries it.
-///
-/// Written 39 first, from a count that included that map header twice and a comment that
-/// enumerated 35. `signed.rs` measures it against the encoder now, which is what this file is for.
-pub(crate) const SIGNED_BODY_BYTES: usize = 38;
+/// The signed inner body around its operation: its own map header, three key numbers at one byte
+/// each, `client_id` at `u32` width, `counter` at `u64` width and the `bstr` head a full-width
+/// operation needs. Its map header is counted here because the envelope's is the sealed body's.
+pub(crate) const SIGNED_BODY_BYTES: usize = 21;
 
 /// The largest `operation` whose worst-case signed request still fits `MAX_PAYLOAD`.
 ///
 /// `MAX_OPERATION` sits below it on purpose, the way every cap in this file sits below its own
-/// ceiling: the signed body is one of the three whose MAC covers fields, so a later key lands
-/// inside the preimage and inside these bytes.
-pub const MAX_OPERATION_CEILING: usize = MAX_PAYLOAD - SIGNED_BODY_BYTES - ENVELOPE_BYTES;
+/// ceiling: a later key in the signed body lands inside these bytes.
+pub const MAX_OPERATION_CEILING: usize = MAX_PAYLOAD - SIGNED_BODY_BYTES - REQUEST_FRAMING_BYTES;
 
 /// The `Event 0x04` body around key 4: the four key numbers, `seq` and `at` at `u64` width, and
-/// `kind` at `u16`. The map header is `ENVELOPE_BYTES`'.
+/// `kind` at `u16`.
 const EVENT_FIXED_BYTES: usize = 25;
 
-/// The event record's own map header. [`EVENT_FIXED_BYTES`] deliberately leaves it out, and under
-/// the old constants it was paid for by the byte `ENVELOPE_BYTES` and `WRAPPER_BYTES` double-counted.
-/// Named here so the cancellation is a line somebody can read rather than luck.
+/// The event record's own map header, which [`EVENT_FIXED_BYTES`] leaves out.
 const EVENT_RECORD_MAP_HEADER_BYTES: usize = 1;
 
 /// The widest `body` an `Event 0x04` can carry — what a payload holds once the envelope, the
-/// wrapper and the record's own three fields are paid for.
-///
-/// An `Event` is `0x04`, which is one CBOR byte, so `RESPONSE_TYPE_EXTRA_BYTE` does not apply
-/// here. It still comes to 965: the byte the old pair double-counted is exactly the record's map
-/// header, so the answer is unchanged and is now exact rather than lucky.
+/// sealed body and the record's own three fields are paid for.
 pub const MAX_EVENT_BODY: usize =
-    MAX_PAYLOAD - REQUEST_FRAMING_BYTES - EVENT_RECORD_MAP_HEADER_BYTES - EVENT_FIXED_BYTES;
+    MAX_PAYLOAD - EVENT_FRAMING_BYTES - EVENT_RECORD_MAP_HEADER_BYTES - EVENT_FIXED_BYTES;
 
 /// `LogPage` keys 2, 3 and 4.
 const LOG_PAGE_HEADER_BYTES: usize = 26;
 
-/// The most log-entry bytes one page could ever carry: a payload less the envelope, the wrapper
-/// and the page header. [`MAX_LOG_PAGE_BYTES`] sits under it with a margin, so a `LogPage` that
+/// The most log-entry bytes one page could ever carry: a payload less the envelope, the sealed
+/// body and the page header. [`MAX_LOG_PAGE_BYTES`] sits under it with a margin, so a `LogPage` that
 /// gains a key does not turn a page that was legal yesterday into one that cannot be sent.
 pub const LOG_PAGE_CEILING: usize = MAX_PAYLOAD - RESPONSE_FRAMING_BYTES - LOG_PAGE_HEADER_BYTES;
 
@@ -555,11 +553,11 @@ mod tests {
         max_encoded_len(payload.saturating_add(CRC_BYTES)).saturating_add(FRAME_DELIMITER_BYTES)
     }
 
-    /// What a `LogPage` of `page` bytes costs once the envelope, the wrapper and the page header
-    /// are wrapped around it — the derivation again, not `LOG_PAGE_CEILING` read back.
+    /// What a `LogPage` of `page` bytes costs once the envelope, the sealed body and the page
+    /// header are around it — the derivation again, not `LOG_PAGE_CEILING` read back.
     fn log_page_frame_bytes(page: usize) -> usize {
         ENVELOPE_BYTES
-            .saturating_add(WRAPPER_CONTENTS_BYTES)
+            .saturating_add(SEALED_CONTROLLER_CONTENTS_BYTES)
             .saturating_add(RESPONSE_TYPE_EXTRA_BYTE)
             .saturating_add(LOG_PAGE_HEADER_BYTES)
             .saturating_add(page)
@@ -633,11 +631,11 @@ mod tests {
         }
     }
 
-    /// A page is not a frame — it travels inside one, under an envelope, a wrapper and a MAC. An
+    /// A page is not a frame — it travels inside one, under an envelope and a sealed body. An
     /// earlier revision put 1024 bytes of page inside a 1024-byte payload, which cannot happen.
     #[test]
     fn a_log_page_is_not_a_payload() {
-        assert_eq!(LOG_PAGE_CEILING, 964, "the document derives 964");
+        assert_eq!(LOG_PAGE_CEILING, 956, "the document derives 956");
         assert!(
             log_page_frame_bytes(MAX_LOG_PAGE_BYTES) <= MAX_PAYLOAD,
             "the page must fit under its own overhead"
@@ -655,35 +653,33 @@ mod tests {
         let margin = LOG_PAGE_CEILING
             .checked_sub(MAX_LOG_PAGE_BYTES)
             .expect("the page must sit below its ceiling");
-        assert_eq!(margin, 68, "896 under a headroom of 964");
+        assert_eq!(margin, 60, "896 under a headroom of 956");
     }
 
-    /// An operation is signed, and the signature travels with it. If the operation could fill a
-    /// payload there would be nothing left for the body that proves it was not forged.
+    /// An operation travels inside a signed body inside a sealed body inside an envelope. If the
+    /// operation could fill a payload there would be nothing left for the counter that orders it
+    /// or the tag that proves it was not forged.
     ///
-    /// The margin is against the body *and* the envelope. Written as
-    /// `MAX_PAYLOAD - MAX_OPERATION == 64` first, which is a subtraction rather than a derivation:
-    /// it stays true if the body doubles.
+    /// The margin is against all three. Written as `MAX_PAYLOAD - MAX_OPERATION == 64` first,
+    /// which is a subtraction rather than a derivation: it stays true if a body doubles.
     #[test]
-    fn an_operation_leaves_room_for_the_body_and_the_envelope_that_sign_it() {
+    fn an_operation_leaves_room_for_the_bodies_and_the_envelope_around_it() {
         assert_eq!(
-            MAX_OPERATION_CEILING, 975,
-            "1024 less 38 of body and 11 of envelope"
+            MAX_OPERATION_CEILING, 972,
+            "1024 less 21 of signed body, 20 of sealed body and 11 of envelope (P-083)"
         );
         let spent = MAX_OPERATION
             .checked_add(SIGNED_BODY_BYTES)
-            .and_then(|n| n.checked_add(ENVELOPE_BYTES))
+            .and_then(|n| n.checked_add(REQUEST_FRAMING_BYTES))
             .expect("a signed request must not overflow a usize");
         assert_eq!(
-            spent, 1009,
-            "960 of operation under 38 of body and 11 of envelope"
+            spent, 1012,
+            "960 of operation under 21 of signed body and 31 of framing"
         );
     }
 
-    /// Fifteen spare bytes is what absorbs the signed body gaining a key. It is one of the three
-    /// bodies whose MAC covers fields rather than an encoding, so a later key enters the preimage
-    /// and these bytes — and without the margin, adding one turns a legal operation into a frame
-    /// the controller refuses with error 5.
+    /// Twelve spare bytes is what absorbs the signed body gaining a key: without the margin, adding
+    /// one turns a legal operation into a frame the controller refuses with error 5.
     ///
     /// The check here before this was `greedy + SIGNED_BODY_BYTES + ENVELOPE_BYTES > MAX_PAYLOAD`,
     /// where `greedy` had just subtracted `SIGNED_BODY_BYTES` — so it reduced to
@@ -693,11 +689,11 @@ mod tests {
         let margin = MAX_OPERATION_CEILING
             .checked_sub(MAX_OPERATION)
             .expect("the cap must sit below its ceiling, not above it");
-        assert_eq!(margin, 15, "960 under a ceiling of 975");
+        assert_eq!(margin, 12, "960 under a ceiling of 972");
 
         let widened = SIGNED_BODY_BYTES.saturating_add(10);
         assert!(
-            MAX_OPERATION + widened + ENVELOPE_BYTES <= MAX_PAYLOAD,
+            MAX_OPERATION + widened + REQUEST_FRAMING_BYTES <= MAX_PAYLOAD,
             "a body ten bytes wider must still fit at the cap, which is what the margin is for"
         );
     }
@@ -743,11 +739,13 @@ mod tests {
             MAX_CMD_DEDUP,
             MAX_CHALLENGES,
             MAX_AUTH_FAILURES,
+            MAX_REPLAY_WINDOW,
             CRC_BYTES,
             FRAME_DELIMITER_BYTES,
             ENVELOPE_BYTES,
             RESPONSE_FRAMING_BYTES,
             REQUEST_FRAMING_BYTES,
+            EVENT_FRAMING_BYTES,
             SIGNED_BODY_BYTES,
             INNER_BODY_BYTES,
             MAX_SERIES_LEN,
@@ -810,21 +808,21 @@ mod tests {
         ];
     }
 
-    /// The framing split must not move a single existing answer. That is the whole claim of the
-    /// commit that made it, and the other tests in this file check it from the far end — this one
-    /// checks the three new constants add up to the two they replaced.
+    /// The sealed framing, counted the way the document counts it. A request carries no nonce of
+    /// its own because its `req_id` is one (P-232), so it is ten bytes cheaper than a response
+    /// and the two cannot share a constant.
     #[test]
-    fn the_framing_split_reproduces_the_pair_it_replaced() {
-        assert_eq!(RESPONSE_FRAMING_BYTES, 34, "11 + 22 + 1, the old 11 + 23");
+    fn the_sealed_framing_is_what_the_document_counts() {
+        assert_eq!(RESPONSE_FRAMING_BYTES, 42, "11 + 30 + 1");
         assert_eq!(
-            REQUEST_FRAMING_BYTES, 33,
-            "a request type is one CBOR byte, so it is a byte cheaper — which the old pair could not say"
+            REQUEST_FRAMING_BYTES, 31,
+            "11 + 20: no nonce, one type byte"
         );
-        assert_eq!(INNER_BODY_BYTES, 990, "1024 less a response's framing");
+        assert_eq!(EVENT_FRAMING_BYTES, 41, "11 + 30: a nonce, one type byte");
+        assert_eq!(INNER_BODY_BYTES, 982, "1024 less a response's framing");
         assert_eq!(
-            MAX_EVENT_BODY, 965,
-            "unchanged, and now exact: an Event 0x04 pays request framing, and the byte the old \
-             pair double-counted is the event record's own map header"
+            MAX_EVENT_BODY, 957,
+            "1024 less 41 of framing, the record's map header and its 25 fixed bytes"
         );
     }
 
@@ -849,8 +847,8 @@ mod tests {
                 "MAX_HISTORY_POINTS",
                 POINT_CEILING,
                 MAX_HISTORY_POINTS,
-                113,
-                17,
+                112,
+                16,
             ),
             (
                 "MAX_VALIDITY_SWEEP",
@@ -878,7 +876,7 @@ mod tests {
 
     /// The byte caps against their headrooms, and the widest response each one produces.
     ///
-    /// `MAX_LOG_PAGE_BYTES` keeps 68 under its 964; these keep the same order of margin for the
+    /// `MAX_LOG_PAGE_BYTES` keeps 60 under its 956; these keep the same order of margin for the
     /// same reason, and the numbers are the ones the design document prints.
     #[test]
     fn every_widest_response_fits_a_payload_with_the_headroom_claimed() {
@@ -887,25 +885,25 @@ mod tests {
                 "Readings",
                 READINGS_HEADER_BYTES,
                 MAX_READINGS_BYTES,
-                948,
-                68,
-                956,
+                940,
+                60,
+                964,
             ),
             (
                 "Inventory",
                 INVENTORY_HEADER_BYTES,
                 MAX_INVENTORY_PAGE_BYTES,
-                958,
-                78,
-                946,
+                950,
+                70,
+                954,
             ),
             (
                 "Concerns",
                 CONCERNS_HEADER_BYTES,
                 MAX_CONCERN_PAGE_BYTES,
-                957,
-                125,
-                899,
+                949,
+                117,
+                907,
             ),
         ];
         for (name, header, cap, want_headroom, want_margin, want_widest) in widest {
@@ -923,10 +921,10 @@ mod tests {
         assert_eq!(history, 845, "the widest History body");
         assert_eq!(
             INNER_BODY_BYTES - history,
-            145,
+            137,
             "History keeps the widest margin of the four"
         );
-        assert_eq!(RESPONSE_FRAMING_BYTES + history, 879, "widest History");
+        assert_eq!(RESPONSE_FRAMING_BYTES + history, 887, "widest History");
     }
 
     /// A burst this design can produce must not fill a session's queue in one tick.

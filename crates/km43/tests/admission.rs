@@ -52,13 +52,12 @@ fn messages() -> Vec<Allocated> {
 /// **The registry's `auth_request` and this crate's match must agree about
 /// every message, or one of them is describing a protocol nobody implements.**
 ///
-/// `none`, `proof` and `pair_key` are the three that run before a session
-/// exists: no key at all, a proof carried in the body, and a key derived from
-/// the printed secret. `wrq` and `signed` both require one — the first is
-/// wrapper-authenticated under the session key, and the second is that plus a
-/// counter, which is a session's counter.
+/// `none` and `handshake` are the two that run before a session exists: no key
+/// at all, and a Noise handshake message that authenticates itself. `sealed`
+/// and `signed` both require one — the first is sealed under the session's
+/// keys, and the second is that plus a counter, which is a session's counter.
 ///
-/// Watched by flipping `Concerns`' `auth_request` to `proof` in `protocol.toml`:
+/// Watched by flipping `Concerns`' `auth_request` to `handshake` in `protocol.toml`:
 /// this goes red naming the message, while every other check in the repo stays
 /// green, because nothing else reads that column against anything.
 #[test]
@@ -77,8 +76,8 @@ fn p_143_the_registry_and_this_crate_agree_about_what_needs_a_session() {
             .unwrap_or_else(|()| panic!("0x{opcode:02X} is allocated and has no MessageType"));
 
         let want = match auth {
-            "none" | "proof" | "pair_key" => Admits::WithoutSession,
-            "wrq" | "signed" => Admits::OnlyWithSession,
+            "none" | "handshake" => Admits::WithoutSession,
+            "sealed" | "signed" => Admits::OnlyWithSession,
             other => panic!("{kind:?} has auth_request {other:?}, which classifies nothing"),
         };
         assert_eq!(

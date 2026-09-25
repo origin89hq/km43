@@ -20,6 +20,18 @@ sha2 = { version = "0.11.0", default-features = false }
 hmac = { version = "0.13.0", default-features = false }
 hkdf = { version = "0.13.0", default-features = false }
 
+# The key agreement and the session cipher. No default
+# features: those pull in `alloc`, `getrandom` and precomputed tables the
+# controller has neither the RAM nor the flash for. The caller supplies every
+# random byte, as it supplies every other byte.
+x25519-dalek = { version = "3.0.0", default-features = false, features = ["static_secrets", "zeroize"] }
+chacha20poly1305 = { version = "0.11.0", default-features = false, features = ["zeroize"] }
+
+# The vector generator's Noise. A second implementation of the handshakes,
+# written by other people, so the published messages are not the crate's own
+# code agreeing with itself.
+snow = { version = "0.10.0", default-features = false, features = ["std", "use-chacha20poly1305", "use-sha2", "use-curve25519", "use-getrandom", "risky-raw-split"] }
+
 # Constant-time comparison, which a hand-rolled loop cannot promise: the
 # optimiser is free to turn one into an early return.
 subtle = { version = "2.6.1", default-features = false }

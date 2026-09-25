@@ -24,7 +24,8 @@ use crate::generated::MessageType;
 pub enum Admits {
     /// The exchange that creates a session. No session is needed and none is
     /// looked for — `Discover` has no key to look one up with, `Hello` is what
-    /// makes one, and `Pair` runs on a key derived from the printed secret.
+    /// makes one, and `Pair` and `Enrol` run the pairing handshake under the
+    /// label's pre-shared key.
     WithoutSession,
     /// A session must be bound on the connection this arrived on, and the
     /// envelope's `session_id` must be the one that connection holds.
@@ -44,7 +45,7 @@ impl MessageType {
     #[must_use]
     pub const fn admits(self) -> Admits {
         match self {
-            Self::Discover | Self::Hello | Self::Pair => Admits::WithoutSession,
+            Self::Discover | Self::Hello | Self::Pair | Self::Enrol => Admits::WithoutSession,
             Self::Subscribe
             | Self::ReadLog
             | Self::GetConfig
@@ -70,6 +71,7 @@ impl MessageType {
             | Self::FirmwareResponse
             | Self::TimeResponse
             | Self::PairResponse
+            | Self::EnrolResponse
             | Self::GoodbyeResponse
             | Self::InventoryResponse
             | Self::ReadingsResponse

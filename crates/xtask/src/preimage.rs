@@ -126,7 +126,7 @@ impl DescribedBytes {
             for field in fields.split('|').map(str::trim).filter(|f| !f.is_empty()) {
                 // A variable-width field is always last, so once one appears
                 // there is nothing further to pin.
-                let Some(bytes) = self.resolve(field) else {
+                let Some(bytes) = self.resolve(entry, field) else {
                     break;
                 };
                 want.push_str(&bytes);
@@ -143,11 +143,14 @@ impl DescribedBytes {
     }
 
     /// The bytes a named field contributes, or `None` when its width is not fixed.
-    fn resolve(&self, field: &str) -> Option<String> {
+    ///
+    /// The entry itself is asked first: a refusal's `outcome` and the `h1` it
+    /// covers belong to that one vector, not to the file's inputs.
+    fn resolve(&self, entry: &Value, field: &str) -> Option<String> {
         let (name, ty) = field.split_once(':').map_or((field, ""), |(a, b)| (a, b));
         let name = name.split_once('[').map_or(name, |(a, _)| a).trim();
 
-        if let Some(v) = self.inputs.get(name) {
+        if let Some(v) = entry.get(name).or_else(|| self.inputs.get(name)) {
             if let Some(s) = v.as_str() {
                 return Some(
                     if s.len() % 2 == 0 && s.chars().all(|c| c.is_ascii_hexdigit()) {
@@ -169,7 +172,6 @@ impl DescribedBytes {
         }
         // Literals the vectors do not carry as an input.
         match (name, ty) {
-            ("outcome", "u8") => Some("01".to_owned()),
             ("0x00000000", _) => Some("00000000".to_owned()),
             _ => None,
         }

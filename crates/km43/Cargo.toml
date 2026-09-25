@@ -29,6 +29,13 @@ subtle.workspace = true
 # that secret through it as ordinary input. `mac.rs` fails the build without it.
 sha2 = { workspace = true, features = ["zeroize"] }
 
+# The key agreement and the session cipher (P-226). The generator uses the same
+# primitives through `snow` and checks both against RFC 7748 and RFC 8439; what
+# the vectors witness independently is the handshake and the transport built on
+# them, which is what varies.
+x25519-dalek.workspace = true
+chacha20poly1305.workspace = true
+
 # The key types clear their bytes on drop, so a client that clears its own copy
 # of the printed secret is not left with ours in freed memory.
 zeroize.workspace = true

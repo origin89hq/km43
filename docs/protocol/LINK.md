@@ -37,7 +37,7 @@ tableOfContents:
   <a href="/km43/verification/">Verification plan <span aria-hidden="true">→</span></a>
 </nav>
 
-None of these messages is forwarded to a client or carries a MAC. Their outcomes,
+None of these messages is forwarded to a client or carries a tag. Their outcomes,
 reasons, and operation values share the authoritative allocation in
 [`protocol.toml`](../../crates/km43/protocol.toml); `cargo xtask check`
 refuses an allocated value that this document never names.
@@ -177,16 +177,17 @@ response arrives, and it MAY recur on this link: P-022's strictly-increasing,
 never-reused rule does not apply here.
 
 Wrapping is allowed here and forbidden one document over, and the difference is
-not an oversight. A client's `req_id` is inside a response MAC, so a value that
-recurs inside a session lets an old authenticated answer verify against a new
-request. Nothing in this range carries a MAC, and at most four requests are
+not an oversight. A client's `req_id` is the nonce its request is sealed under
+and is inside every response's associated data, so a value that recurs inside a
+session is a nonce used twice under one key. Nothing in this range is sealed or
+carries a tag, and at most four requests are
 outstanding per side, so there is nothing here for a recurring number to unlock.
 Saying so is what stops somebody carrying P-022's wrap-out path onto a link that
 does not need it.
 
 **Integer widths** in the bodies below are the range a field is allowed to take,
 not its encoding — CBOR emits shortest-form integers. Where a link-local integer
-ever enters a hash or MAC preimage it is big-endian, fixed width, no padding, no
+ever enters a hash, a MAC or an associated data string it is big-endian, fixed width, no padding, no
 length prefix, exactly as in the client protocol. Today no link-local field does,
 which is the subject of the next section.
 
@@ -214,7 +215,7 @@ outstanding. A `Heartbeat` is not retried either, because the next beat two
 seconds later is its retry and a missed one is what L-100 measures. Reusing the
 `req_id` is what lets the peer recognise a retry instead of answering a request
 it has already answered, and it is only safe because nothing in this range
-carries a MAC or a counter. Retrying forever is the alternative, and it hides a
+is sealed or carries a counter. Retrying forever is the alternative, and it hides a
 link that has stopped carrying traffic behind a sender that looks busy.
 
 Nothing in this range is cryptographic, so its vectors in
@@ -241,7 +242,7 @@ and an unconditional MUST NOT here would make that exception unimplementable.
 
 The link is two chips on one board, in a sealed enclosure, in a locked electrical
 room, four hours from a road. Somebody with probes on that UART already has the
-FRAM, the device key and a screwdriver, so authentication would be protecting a
+FRAM, the controller key and a screwdriver, so authentication would be protecting a
 door that is already off its hinges.
 
 More to the point: **there is no key that would help.** A link key would have to
@@ -261,10 +262,11 @@ not:
    with it. That is why the step is capped below rather than merely bounded and
    logged, and why a clock change never replays a schedule.
 2. **A connection is not a session.** `ClientConnected` creates a row in a table
-   and attempts to mint a challenge (L-070). Turning that into a session still requires `Hello` with
-   a proof over `client_key` — which the comms processor does not hold, is never
-   sent, and cannot derive. A comms processor that invents eight connections has
-   filled the connection table and nothing else. It could already deny
+   and attempts to mint a challenge (L-070). Turning that into a session still requires a `Hello`
+   that only the holders of an enrolled client's private key and the
+   controller's can complete — neither of which the comms processor holds, and
+   neither of which is ever sent. A comms processor that invents eight
+   connections has filled the connection table and nothing else. It could already deny
    connectivity by simply not forwarding; it is the radio.
 3. **A time offer is floored, capped, rate-limited and logged.** The first set
    after boot cannot go below the timestamp of the newest log record the
@@ -446,8 +448,8 @@ connect is told the table is full.
 
 **L-042** — On a `LinkUp` whose controller `boot_id` differs from the one last
 seen, the comms processor MUST close every live client connection. The clients'
-session keys were derived from challenges that no longer exist, so their next
-requests would fail one at a time with increasingly confusing errors. A closed
+session keys went with the controller's RAM (P-230), so their next requests
+would fail one at a time with increasingly confusing errors. A closed
 socket is the honest signal, and every client already handles one.
 
 ### Version mismatch does not take the link down
@@ -568,8 +570,8 @@ seconds or has already been consumed, the controller attempts to mint another
 under P-060. If it still cannot supply a valid challenge, it answers error 18
 `challenge unavailable`. The row remains allocated so a later `Discover` can
 retry on the same transport. At most one challenge exists per connection at any
-moment, and the session key derived after `Hello` is bound to whichever one the
-client proved against.
+moment, and the `Hello` that consumes it binds its session to it through the
+prologue (P-227).
 
 Accepting the connection records where the client can be answered; it does not
 promise that challenge generation succeeded. Requiring a challenge before
@@ -589,8 +591,8 @@ for no reason anybody could give the person watching it.
 response in the clear — so the reason is not confidentiality; it is that the
 second copy would sit on the chip this document assumes is hostile. A comms
 processor holding a cached challenge serves it after a controller reboot, and the
-client goes off to compute a proof that cannot verify and learns why only from
-error 14.
+client goes off to build a handshake that cannot succeed and learns why only
+from error 14.
 
 **L-072** — `peer` and `transport` are both assertions from the untrusted peer.
 Nothing MAY decide on `peer`, and no authorisation on either side MAY rest on
@@ -644,8 +646,8 @@ at 15 minutes otherwise leaves a socket the client believes is healthy, and the
 client discovers otherwise one failed request at a time. Closing the transport is
 unambiguous and frees the row on both sides at the same moment.
 
-It is also how the controller sheds a client that keeps failing its MAC, without
-the comms processor needing to know what a MAC is.
+It is also how the controller sheds a client that keeps failing authentication,
+without the comms processor needing to know what a tag is.
 
 **L-090** — The comms processor MUST treat `CloseConnection` with `conn = 0` as
 every connection, and MUST report in the ack's `closed` how many it actually
@@ -1173,7 +1175,7 @@ Five seconds is drift; an hour is a different Tuesday. The first-set window abov
 is ten years wide, so it reaches every day of the week and every time of day —
 and time is an input to `schedule`, `exercise` and `quiet_hours`. Without this cap
 the comms processor chooses when the generator exercises, having authorised
-nothing, forged no MAC and touched no setpoint. It is the one lever in this range
+nothing, forged no tag and touched no setpoint. It is the one lever in this range
 that reaches the site, and this is where it stops.
 
 **L-151** — The controller MUST accept at most one offer per 15 minutes,
@@ -1266,7 +1268,7 @@ CommsReleaseAck  0xE7
    reserved and [DEFERRED.md](DEFERRED.md) still owns the field list, `target`
    included. Everything below this step is settled; the step that starts it is
    not, and a reader should not have to discover that by grepping for a field
-   name. The controller checks the client's MAC and counter and applies policy.
+   name. The controller opens the sealed request, checks the counter and applies policy.
 
    **L-169** — Policy MUST NOT permit an arbitrary downgrade.
    Rollback-to-known-good is step 6 below — an image that never confirms healthy
@@ -1348,7 +1350,7 @@ reports an open pairing window, provided valid radio metadata is available.
 The unwritten-clear Wi-Fi shutdown rule (L-133) takes precedence, including
 across reboot after successful erasure; a pairing report supplies no regulatory
 country. This message changes reachability only: P-066's
-physical act and the controller's proof checks still decide whether enrolment is
+physical act and the controller's handshake checks still decide whether enrolment is
 allowed. It carries no credentials and cannot open the controller's window.
 
 ```text

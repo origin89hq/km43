@@ -1075,7 +1075,26 @@
 # puts the controller's device_id in LinkUp so the comms processor has an `id`
 # to advertise. The codec and the published controller LinkUp cover the wire
 # half; advertising only the latest one is firmware#146, so it stays counted.
-uncovered = 144
+# 144 -> 142, and it is the second reason the file allows run in reverse: the
+# key agreement replaced v1's symmetric scheme (origin89hq/km43#128). Eighteen
+# rules arrived, P-226 to P-243, and P-069 was retired. Sixteen of the new ones
+# are covered by tests named after them in the new modules, and four rules the
+# old pairing and wrapper tests stood behind are covered again by the ones that
+# replaced them: P-022's three clauses by the controller's request window in
+# `sealed.rs`, P-071, P-080 and P-105.
+#
+# Two new rules stay up, and they are owed rather than untestable. P-235 says
+# the controller key is generated at manufacture into the controller's own
+# protected storage, leaves the station only as its fingerprint, and survives a
+# factory reset; the first two are the factory tool's to prove and the last the
+# firmware's. P-243 says key agreement never
+# delays the control loop; that is an executor question on the controller, and
+# the cost that makes it matter is measured in the PR that brought it.
+#
+# P-222's clause about an earlier epoch was reversed rather than dropped: a
+# restore now keeps an enrolment whose epoch differs, because the `Discover`
+# saying so is unauthenticated.
+uncovered = 142
 
 # P-045 is the shape this file is for. Nothing can drive an implementation into
 # transmitting a key it does not have, so the thing that stands behind it reads
@@ -1403,14 +1422,16 @@ id = "P-066"
 each = ["closed_window", "first_enrolment_power_on_without_pushbutton"]
 reason = """
 The caller supplies the window state; KM43 does not decide when a controller \
-opens it. Firmware must prove that boot reads a valid empty client table, \
+opens it. The crate answers a closed window with outcome 2 under the label's \
+refusal tag (P-241), which is the `closed_window` clause. Firmware must prove that boot reads a valid empty client table, \
 once-per-boot opening at boot, 120-second expiry, first-Pair closure, no opening \
 with a non-empty table, renewed eligibility after factory reset or recovery, \
 no opening on the boot that repairs an absent or unreadable table, eligibility \
 on a later boot that reads the valid empty table, and exclusion of \
-boards with a pushbutton. Pair still needs the printed-secret proof. The \
+boards with a pushbutton. The pairing handshake still needs the label. The \
 controller also owes L-193 through L-195 reports, including a delayed link's \
-remaining time. Codec and closed-window refusal tests do not prove that lifecycle."""
+remaining time. Codec and closed-window refusal tests do not prove that lifecycle, \
+and the label's pre-shared key is still required inside the window."""
 
 
 [[clauses]]
@@ -1456,8 +1477,8 @@ reason = "The codec checks that version 0 and an absent body travel together. A 
 
 [[clauses]]
 id = "P-222"
-each = ["carry_no_printed_secret", "another_controller_is_refused", "earlier_epoch_is_refused", "app_keeps_no_printed_secret", "app_moves_on_from_another_controller"]
-reason = "The stored encoding holds only the issued key and a restore checks the device and epoch. Discarding the scanned printed secret once Pair succeeds is the app's, owed by origin89hq/apps#8. Trying the next candidate rather than pairing when another controller answers is the app's, owed by origin89hq/apps#19."
+each = ["carry_no_printed_secret", "another_controller_is_refused", "does_not_discard_the_enrolment", "app_keeps_no_printed_secret", "app_moves_on_from_another_controller"]
+reason = "The stored encoding holds the client's key pair, the pinned controller key and the suite, and a restore checks the device only: a differing epoch in an unauthenticated Discover is a reason to expect the Hello to fail, not to throw the key away. Discarding the scanned printed secret once the enrolment is confirmed is the app's, owed by origin89hq/apps#8. Trying the next candidate rather than pairing when another controller answers is the app's, owed by origin89hq/apps#19."
 
 [[clauses]]
 id = "L-035"

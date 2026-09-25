@@ -17,7 +17,7 @@ Read [docs/PROTOCOL.md](../../../docs/PROTOCOL.md). A fielded unit will meet a n
 
 ## Every write is signed
 
-If you add a message that changes anything — configuration, firmware, time, pairing, a command — it goes on the signed list and the MAC covers its type. Authenticating one write and not another is a locked door beside an open one.
+If you add a message that changes anything — configuration, firmware, time, a command — it goes on the signed list, and its type is in the associated data it is sealed with. Enrolment changes state too, and is authenticated by its handshake instead. Authenticating one write and not another is a locked door beside an open one.
 
 ## The check that catches the real bugs
 

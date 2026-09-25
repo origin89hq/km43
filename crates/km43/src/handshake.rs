@@ -1,40 +1,39 @@
-//! `Discover 0x80` and the two halves of `Hello` — where a session begins, and
-//! the two places in this protocol a value is used before it is authenticated.
+//! `Discover 0x80`, the report a `Hello` answers with, and the prologue both
+//! handshakes hash first.
 //!
-//! `Discover 0x80` is the one message with no MAC at all (P-054), so every field
-//! in it is a claim the comms processor could have made up. Nothing here derives
-//! `Debug` over one: a rendered `model` is sixty-four attacker-chosen bytes in a
-//! log somebody reads as if the site had said them, which is P-055 lost to one
-//! `?discovery` in a span. P-087 puts `epoch` in that message so a client whose
-//! key no longer derives is told why rather than collecting an unexplainable bad
-//! proof.
+//! `Discover 0x80` is the one message with no authentication at all (P-054), so
+//! every field in it is a claim the comms processor could have made up. Nothing
+//! here derives `Debug` over one: a rendered `model` is sixty-four
+//! attacker-chosen bytes in a log somebody reads as if the site had said them,
+//! which is P-055 lost to one `?discovery` in a span. What makes a `Discover`
+//! safe to act on is [`Prologue`]: every field a client takes from it enters
+//! the transcript both ends hash (P-227), so one rewritten in flight is a
+//! handshake whose first tag fails.
 //!
-//! The two orderings are structural rather than remembered. A [`HelloClaim`]
-//! hands over `client_id` and `client_nonce` — the two fields the key cannot be
-//! found without — and nothing else until the proof over the bytes that arrived
-//! has checked out, which is P-057's order and what stops P-070's version fields
-//! being read off a body a relay wrote. And [`Session::open`] takes no key at
-//! all: it derives one from the `session_id` in the envelope, because P-072 says
-//! that is the only order that works, and a caller allowed to pass a key in is a
-//! caller who can pass the wrong one.
+//! The Noise messages themselves, and the order a `Hello` is read in, are
+//! `hello.rs`'s.
 //!
-//! cites: P-005, P-006, P-048, P-057, P-070, P-072, P-073, P-074, P-087
+//! cites: P-005, P-006, P-073, P-074, P-087, P-227
 
 use core::fmt;
 
 use crate::cbor::{CborError, CborReader, CborWriter};
 use crate::envelope::{Envelope, EnvelopeError, Header, Refusal, SessionId};
-use crate::generated::{ErrorCode, MessageType};
-use crate::kdf::{ClientId, Enrolment, Epoch, Handshake};
+use crate::generated::{ErrorCode, MessageType, Suite};
+use crate::kdf::{ClientId, DEVICE_ID_BYTES, DeviceId, Epoch, Generation};
 use crate::limits::{
-    MAX_CHANNELS, MAX_CLIENTS, MAX_CMD_DEDUP, MAX_EVENT_QUEUE, MAX_INFLIGHT, MAX_PAYLOAD,
-    MAX_SESSIONS, MAX_STRING, REQUEST_FRAMING_BYTES, RESPONSE_FRAMING_BYTES,
+    ENVELOPE_BYTES, MAX_CHANNELS, MAX_CLIENTS, MAX_CMD_DEDUP, MAX_EVENT_QUEUE, MAX_INFLIGHT,
+    MAX_PAYLOAD, MAX_SESSIONS, MAX_STRING,
 };
-use crate::mac::{ClientKey, HelloProof, MacError, SessionKey, Tag};
-use crate::wrapper::{Wrapper, WrapperError};
+use crate::noise::{CHALLENGE_BYTES, KEY_BYTES, TAG_BYTES};
 
-/// A `device_id`, a `challenge` and a `client_nonce` are all `bstr16`.
+/// A `device_id` and a `challenge` are both `bstr16`.
 const BSTR16: usize = 16;
+
+const_assert!(
+    BSTR16 == DEVICE_ID_BYTES && BSTR16 == CHALLENGE_BYTES,
+    "the prologue copies both straight out of a Discover; a width that moved on one side is a transcript nobody else hashes"
+);
 
 /// A `text` field at its widest: a two-byte head and [`MAX_STRING`] bytes.
 const TEXT_MAX: usize = 2 + MAX_STRING;
@@ -51,11 +50,6 @@ const_assert!(
 /// that waits for a real site rather than showing up on a bench.
 pub const MAX_DISCOVER_BODY: usize = 54 + TEXT_MAX;
 
-/// The widest inner body of `Hello 0x01`. A client's scratch is this wide,
-/// because the proof covers the encoded bytes (P-048) and the bytes have to
-/// exist somewhere before they can be proved.
-pub const MAX_HELLO_INNER: usize = 32 + TEXT_MAX;
-
 /// Keys 18 to 29 at the widest their declared types permit, key bytes included.
 ///
 /// **Keys 24 and up cost two CBOR bytes for the key itself**, because a map key
@@ -68,20 +62,20 @@ pub const MAX_HELLO_INNER: usize = 32 + TEXT_MAX;
 /// once the key widens = 59.
 const TOPOLOGY_REPORT_BYTES: usize = 59;
 
-/// The widest body of `Hello 0x81`: twenty-nine keys, two 64-byte firmware
-/// strings and four `u64`.
+/// The widest `HelloReport`: thirty-one keys, two 64-byte firmware strings and
+/// four `u64`.
 ///
-/// The trailing `+ 1` is the map header: twenty-nine pairs is past twenty-three,
-/// so the header that cost one byte at seventeen keys costs two.
-pub const MAX_HELLO_REPORT: usize = 81 + 2 * TEXT_MAX + TOPOLOGY_REPORT_BYTES + 1;
+/// Keys 30 and 31 cost seven bytes each: a two-byte key and a `u32` at its
+/// widest. The trailing `+ 1` is the map header, which is two bytes past
+/// twenty-three pairs.
+pub const MAX_HELLO_REPORT: usize = 81 + 2 * TEXT_MAX + TOPOLOGY_REPORT_BYTES + 2 * 7 + 1;
 
+// What travels around a report: the envelope, the second byte a `0x81` type
+// costs, key 1 and a two-byte `bstr` head, and message 2's ephemeral key and
+// tag.
 const_assert!(
-    MAX_HELLO_REPORT + RESPONSE_FRAMING_BYTES <= MAX_PAYLOAD,
-    "a Hello 0x81 travels under an envelope and a wrapper; a body that fills the payload is the frame a controller builds and then has to refuse with error 5, which is P-185's argument one message over"
-);
-const_assert!(
-    MAX_HELLO_INNER + REQUEST_FRAMING_BYTES <= MAX_PAYLOAD,
-    "the inner body of a Hello 0x01 rides inside its payload key inside an envelope, and a client that cannot fit its own handshake never opens a session at all"
+    MAX_HELLO_REPORT + ENVELOPE_BYTES + 1 + 1 + 3 + KEY_BYTES + TAG_BYTES <= MAX_PAYLOAD,
+    "a HelloReport travels inside message 2 of the session handshake; a report that fills the payload is the frame a controller builds and then has to refuse with error 5"
 );
 
 /// The two version bytes both ends open with.
@@ -230,113 +224,7 @@ impl fmt::Display for DiscoverKey {
     }
 }
 
-/// The two keys of a `Hello 0x01` body: the encoded inner body, and the proof
-/// over it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum HelloKey {
-    /// Key 1, the inner body exactly as the client encoded it.
-    Payload,
-    /// Key 2, the sixteen bytes of [`Tag`].
-    Proof,
-}
-
-impl HelloKey {
-    const COUNT: usize = 2;
-
-    const fn of(number: i64) -> Option<Self> {
-        match number {
-            1 => Some(Self::Payload),
-            2 => Some(Self::Proof),
-            _ => None,
-        }
-    }
-
-    const fn number(self) -> i64 {
-        match self {
-            Self::Payload => 1,
-            Self::Proof => 2,
-        }
-    }
-
-    const fn name(self) -> &'static str {
-        match self {
-            Self::Payload => "payload",
-            Self::Proof => "proof",
-        }
-    }
-}
-
-impl fmt::Display for HelloKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Hello 0x01 {} (key {})", self.name(), self.number())
-    }
-}
-
-/// The five keys of the inner body of `Hello 0x01` — the ones P-070 puts inside
-/// the proof.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum InnerKey {
-    /// Key 1.
-    ProtocolMajor,
-    /// Key 2.
-    ProtocolMinor,
-    /// Key 3, which names the enrolment and so the key (P-057).
-    ClientId,
-    /// Key 4, what a person reads in the client list.
-    ClientVersion,
-    /// Key 5, the client's half of the session salt (P-071).
-    ClientNonce,
-}
-
-impl InnerKey {
-    const COUNT: usize = 5;
-
-    const fn of(number: i64) -> Option<Self> {
-        match number {
-            1 => Some(Self::ProtocolMajor),
-            2 => Some(Self::ProtocolMinor),
-            3 => Some(Self::ClientId),
-            4 => Some(Self::ClientVersion),
-            5 => Some(Self::ClientNonce),
-            _ => None,
-        }
-    }
-
-    const fn number(self) -> i64 {
-        match self {
-            Self::ProtocolMajor => 1,
-            Self::ProtocolMinor => 2,
-            Self::ClientId => 3,
-            Self::ClientVersion => 4,
-            Self::ClientNonce => 5,
-        }
-    }
-
-    const fn name(self) -> &'static str {
-        match self {
-            Self::ProtocolMajor => "protocol_major",
-            Self::ProtocolMinor => "protocol_minor",
-            Self::ClientId => "client_id",
-            Self::ClientVersion => "client_version",
-            Self::ClientNonce => "client_nonce",
-        }
-    }
-}
-
-impl fmt::Display for InnerKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "Hello 0x01 inner body {} (key {})",
-            self.name(),
-            self.number()
-        )
-    }
-}
-
-/// The twenty-nine keys of `Hello 0x81`.
+/// The thirty-one keys of `HelloReport`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ReportKey {
@@ -400,10 +288,14 @@ pub enum ReportKey {
     MaxHistorySignals,
     /// Key 29, how deep either `parent` chain may run.
     MaxTopologyDepth,
+    /// Key 30, the slot this session is bound to.
+    ClientId,
+    /// Key 31, that slot's generation (P-239).
+    Generation,
 }
 
 impl ReportKey {
-    const COUNT: usize = 29;
+    const COUNT: usize = 31;
 
     const fn of(number: i64) -> Option<Self> {
         match number {
@@ -436,6 +328,8 @@ impl ReportKey {
             27 => Some(Self::MaxSelectors),
             28 => Some(Self::MaxHistorySignals),
             29 => Some(Self::MaxTopologyDepth),
+            30 => Some(Self::ClientId),
+            31 => Some(Self::Generation),
             _ => None,
         }
     }
@@ -471,6 +365,8 @@ impl ReportKey {
             Self::MaxSelectors => 27,
             Self::MaxHistorySignals => 28,
             Self::MaxTopologyDepth => 29,
+            Self::ClientId => 30,
+            Self::Generation => 31,
         }
     }
 
@@ -505,52 +401,34 @@ impl ReportKey {
             Self::MaxSelectors => "max_selectors",
             Self::MaxHistorySignals => "max_history_signals",
             Self::MaxTopologyDepth => "max_topology_depth",
+            Self::ClientId => "client_id",
+            Self::Generation => "generation",
         }
     }
 }
 
 impl fmt::Display for ReportKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Hello 0x81 {} (key {})", self.name(), self.number())
+        write!(f, "HelloReport {} (key {})", self.name(), self.number())
     }
 }
 
-/// A key of any of the four bodies here, so one refusal can name any of them.
+/// A key of either body here, so one refusal can name any of them.
 ///
-/// `BodyKey` and not `Key` for the reason `wrapper.rs` gives about `WrapperKey`:
-/// this crate is full of keys and none of the others are integers on a wire.
-///
-/// Four enums rather than one flat list of thirty-two: key 1 is
-/// `protocol_major` in a `Discover` and `payload` in a `Hello`, and a single
-/// enum would either lose that or spell every variant twice.
+/// Two enums rather than one flat list: key 1 is `protocol_major` in both, and
+/// key 3 is `device_id` in one and `session_id` in the other.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum BodyKey {
     /// A key of `Discover 0x80`.
     Discover(DiscoverKey),
-    /// A key of the `Hello 0x01` body.
-    Hello(HelloKey),
-    /// A key of the inner body a `Hello 0x01` proof covers.
-    Inner(InnerKey),
-    /// A key of `Hello 0x81`.
+    /// A key of `HelloReport`.
     Report(ReportKey),
 }
 
 impl From<DiscoverKey> for BodyKey {
     fn from(key: DiscoverKey) -> Self {
         Self::Discover(key)
-    }
-}
-
-impl From<HelloKey> for BodyKey {
-    fn from(key: HelloKey) -> Self {
-        Self::Hello(key)
-    }
-}
-
-impl From<InnerKey> for BodyKey {
-    fn from(key: InnerKey) -> Self {
-        Self::Inner(key)
     }
 }
 
@@ -564,8 +442,6 @@ impl fmt::Display for BodyKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Discover(key) => key.fmt(f),
-            Self::Hello(key) => key.fmt(f),
-            Self::Inner(key) => key.fmt(f),
             Self::Report(key) => key.fmt(f),
         }
     }
@@ -823,242 +699,9 @@ impl fmt::Debug for Discovery<'_> {
     }
 }
 
-/// The inner body of `Hello 0x01`: five keys, encoded once and then covered by
-/// the proof exactly as encoded (P-048, P-070).
-///
-/// On the receiving side it is reachable only past [`HelloClaim::verify`], which
-/// is what stops version negotiation running on values a relay chose.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct HelloInner<'a> {
-    /// Keys 1 and 2, which P-070 exists to keep out of a relay's hands.
-    pub version: Version,
-    /// Key 3: which enrolment is proving itself, and so which `client_key`.
-    pub client_id: ClientId,
-    /// Key 4.
-    pub client_version: &'a str,
-    /// Key 5: fresh per handshake, from the client's CSPRNG (P-071).
-    pub client_nonce: [u8; BSTR16],
-}
-
-impl<'a> HelloInner<'a> {
-    /// Encode into `dst` and prove those bytes under `key`.
-    ///
-    /// The two come back together because P-048 is about bytes: a caller that
-    /// could encode once and prove a different encoding would authenticate a
-    /// body it never sent.
-    pub fn prove<'d>(
-        &self,
-        key: &ClientKey,
-        challenge: &[u8; BSTR16],
-        dst: &'d mut [u8],
-    ) -> Result<HelloRequest<'d>, HandshakeError> {
-        let len = self.encode(dst)?;
-        let payload = dst.get(..len).ok_or(CborError::DestinationTooSmall)?;
-        let proof = key.hello_proof(&HelloProof {
-            challenge,
-            client_nonce: &self.client_nonce,
-            client_id: self.client_id.get(),
-            payload,
-        });
-        Ok(HelloRequest { payload, proof })
-    }
-
-    /// Private, so the only way to put an encoding on the wire is to prove that
-    /// same encoding.
-    fn encode(&self, dst: &mut [u8]) -> Result<usize, HandshakeError> {
-        let mut cbor = CborWriter::new(dst);
-        cbor.map(InnerKey::COUNT)?;
-        cbor.key(InnerKey::ProtocolMajor.number())?;
-        cbor.u64(u64::from(self.version.major))?;
-        cbor.key(InnerKey::ProtocolMinor.number())?;
-        cbor.u64(u64::from(self.version.minor))?;
-        cbor.key(InnerKey::ClientId.number())?;
-        cbor.u64(u64::from(self.client_id.get()))?;
-        cbor.key(InnerKey::ClientVersion.number())?;
-        cbor.text(self.client_version)?;
-        cbor.key(InnerKey::ClientNonce.number())?;
-        cbor.bytes(&self.client_nonce)?;
-        Ok(cbor.finish()?)
-    }
-
-    fn decode(payload: &'a [u8]) -> Result<Self, HandshakeError> {
-        let mut body = CborReader::new(payload);
-        let pairs = body.map()?;
-        let mut slots = InnerSlots::empty();
-        for _ in 0..pairs {
-            let number = body.key()?;
-            match InnerKey::of(number) {
-                Some(key) => slots.fill(key, &mut body)?,
-                None => body.skip()?,
-            }
-        }
-        body.finish()?;
-        slots.complete()
-    }
-}
-
-/// A `Hello 0x01` body ready to send: the encoded inner body and the proof over
-/// exactly those bytes.
-///
-/// Produced only by [`HelloInner::prove`], so the payload and the tag cannot
-/// come from two different encodings.
-pub struct HelloRequest<'a> {
-    payload: &'a [u8],
-    proof: Tag,
-}
-
-impl<'a> HelloRequest<'a> {
-    /// The bytes the proof covers, which are the bytes that go on the wire.
-    #[must_use]
-    pub const fn payload(&self) -> &'a [u8] {
-        self.payload
-    }
-
-    /// The tag, for putting on the wire. Checking one is [`Tag::verify`].
-    #[must_use]
-    pub const fn proof(&self) -> &Tag {
-        &self.proof
-    }
-
-    /// Write the whole `Hello 0x01` envelope into `dst`. The header must name
-    /// `Hello`.
-    pub fn write(&self, header: Header, dst: &mut [u8]) -> Result<usize, HandshakeError> {
-        expected(header, MessageType::Hello)?;
-        let mut cbor = header
-            .write(HelloKey::COUNT, dst)
-            .map_err(HandshakeError::Envelope)?;
-        cbor.key(HelloKey::Payload.number())?;
-        cbor.bytes(self.payload)?;
-        cbor.key(HelloKey::Proof.number())?;
-        cbor.bytes(self.proof.as_bytes())?;
-        Ok(cbor.finish()?)
-    }
-}
-
-/// The payload length rather than the payload, for the reason `wrapper.rs` gives
-/// about a derived `Debug` being an accessor spelled `{:?}`.
-impl fmt::Debug for HelloRequest<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "HelloRequest {{ payload: {} bytes }}",
-            self.payload.len()
-        )
-    }
-}
-
-/// A `Hello 0x01` as it arrived, with a proof nobody has checked.
-///
-/// P-057's ordering written as a type. `client_id` and `client_nonce` are
-/// reachable because no key can be found without them; the fields P-070 protects
-/// are not, and [`HelloClaim::verify`] is the only thing that hands them over:
-///
-/// ```
-/// use km43::{ClientId, HelloClaim};
-/// fn who(claim: &HelloClaim<'_>) -> ClientId { claim.client_id() }
-/// ```
-/// ```compile_fail
-/// use km43::{HelloClaim, Version};
-/// fn what(claim: &HelloClaim<'_>) -> Version { claim.version() }
-/// ```
-pub struct HelloClaim<'a> {
-    payload: &'a [u8],
-    proof: &'a [u8],
-    inner: HelloInner<'a>,
-}
-
-impl<'a> HelloClaim<'a> {
-    /// Read one out of an envelope naming `Hello`.
-    ///
-    /// A key beside `payload` and `proof` is refused rather than skipped: it
-    /// would be meaningful and structurally outside the proof, which is P-050's
-    /// argument one message over.
-    pub fn decode(envelope: Envelope<'a>) -> Result<Self, HandshakeError> {
-        expected(envelope.header(), MessageType::Hello)?;
-        let pairs = envelope.keys();
-        let mut body = envelope.into_body();
-        let mut payload = Slot::empty();
-        let mut proof = Slot::empty();
-        for _ in 0..pairs {
-            let number = body.key()?;
-            let key = HelloKey::of(number).ok_or(HandshakeError::UnknownKey(number))?;
-            let value = body.bytes()?;
-            match key {
-                HelloKey::Payload => payload.fill(key, value)?,
-                HelloKey::Proof => proof.fill(key, value)?,
-            }
-        }
-        body.finish()?;
-        let payload = payload.taken(HelloKey::Payload)?;
-        let proof = proof.taken(HelloKey::Proof)?;
-        Ok(Self {
-            payload,
-            proof,
-            inner: HelloInner::decode(payload)?,
-        })
-    }
-
-    /// Which enrolment claims to be proving itself. Unauthenticated: it selects
-    /// a key and licenses nothing else (P-057).
-    #[must_use]
-    pub const fn client_id(&self) -> ClientId {
-        self.inner.client_id
-    }
-
-    /// The client's half of the session salt, which the session key cannot be
-    /// derived without (P-071). Unauthenticated for the same one step.
-    #[must_use]
-    pub const fn client_nonce(&self) -> [u8; BSTR16] {
-        self.inner.client_nonce
-    }
-
-    /// Check the proof over the bytes that arrived (P-048), negotiate the
-    /// version (P-073), and only then give up the body.
-    pub fn verify(
-        self,
-        key: &ClientKey,
-        challenge: &[u8; BSTR16],
-        ours: Version,
-    ) -> Result<Accepted<'a>, HandshakeError> {
-        let expect = key.hello_proof(&HelloProof {
-            challenge,
-            client_nonce: &self.inner.client_nonce,
-            client_id: self.inner.client_id.get(),
-            payload: self.payload,
-        });
-        expect.verify(self.proof)?;
-        Ok(Accepted {
-            agreed: ours.agreed(self.inner.version)?,
-            inner: self.inner,
-        })
-    }
-}
-
-/// Names and lengths, never the body. A derived `Debug` here would print
-/// `client_version` — one of the three fields P-070 spends a MAC on — out of a
-/// message nobody has authenticated yet.
-impl fmt::Debug for HelloClaim<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "HelloClaim {{ unverified, client_id: {}, payload: {} bytes }}",
-            self.inner.client_id.get(),
-            self.payload.len()
-        )
-    }
-}
-
-/// A `Hello 0x01` whose proof checked out, and the version the two ends settled
-/// on (P-073).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Accepted<'a> {
-    /// The inner body, now that the proof over its bytes has been checked.
-    pub inner: HelloInner<'a>,
-    /// The shared major and the lower of the two minors.
-    pub agreed: Version,
-}
-
-/// The body of `Hello 0x81`, reachable only past the wrapper MAC over it.
+/// What a controller reports when a session opens: the payload of the session
+/// handshake's message 2, so it arrives authenticated and bound to that one
+/// handshake.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HelloReport<'a> {
     /// Keys 1 and 2.
@@ -1085,10 +728,15 @@ pub struct HelloReport<'a> {
     pub caps: Caps,
     /// The topology plane's revision, digest and caps, keys 18 to 29.
     pub topology: Topology,
+    /// Key 30, the slot this session is bound to.
+    pub client_id: ClientId,
+    /// Key 31, that slot's generation (P-239).
+    pub generation: Generation,
 }
 
 impl<'a> HelloReport<'a> {
-    /// Encode the twenty-nine keys into `dst`; the caller wraps and MACs them.
+    /// Encode the thirty-one keys into `dst`; the caller carries them in
+    /// message 2.
     ///
     /// A `channels` above [`Caps::CHANNEL_CEILING`] is refused here as well as on
     /// decode, because P-006 binds the controller too and a cap nobody keeps is
@@ -1121,12 +769,16 @@ impl<'a> HelloReport<'a> {
         cbor.u64(self.counter)?;
         self.caps.encode(&mut cbor)?;
         self.topology.encode(&mut cbor)?;
+        cbor.key(ReportKey::ClientId.number())?;
+        cbor.u64(u64::from(self.client_id.get()))?;
+        cbor.key(ReportKey::Generation.number())?;
+        cbor.u64(u64::from(self.generation.get()))?;
         Ok(cbor.finish()?)
     }
 
-    /// Private: the only route to one is [`Session::open`], which cannot be
-    /// reached without the MAC over these bytes having checked out (P-051).
-    fn decode(payload: &'a [u8], envelope: SessionId) -> Result<Self, HandshakeError> {
+    /// Crate-private: the only route to one is a `Hello 0x81` whose message 2
+    /// opened (P-051), and key 3 must name the session the envelope does.
+    pub(crate) fn decode(payload: &'a [u8], envelope: SessionId) -> Result<Self, HandshakeError> {
         let mut body = CborReader::new(payload);
         let pairs = body.map()?;
         let mut slots = ReportSlots::empty();
@@ -1178,75 +830,101 @@ impl Caps {
     }
 }
 
-/// A session a client has actually opened: the key P-072 derived, the version
-/// P-073 agreed, and what the controller reported.
+/// P-227's prologue: fifty-seven bytes both handshakes hash before anything
+/// else, built from everything a client decides on out of a `Discover`.
 ///
-/// No `Debug`, because it holds a [`SessionKey`] and `mac.rs` refuses one on
-/// every key type for the reason a bench log makes obvious.
-pub struct Session<'a> {
-    key: SessionKey,
-    version: Version,
-    report: HelloReport<'a>,
+/// The client builds it from the `Discover 0x80` it received, the challenge it
+/// is presenting and the handle its pre-session responses carried; the
+/// controller from its own values for the connection. A `Discover` rewritten in
+/// flight gives the two ends different prologues, and the first tag of the
+/// handshake fails.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct Prologue([u8; PROLOGUE_BYTES]);
+
+/// The label, the suite, two version bytes, `device_id`, `epoch`, the challenge
+/// and the handle.
+pub const PROLOGUE_BYTES: usize = 16 + 1 + 2 + BSTR16 + 4 + BSTR16 + 2;
+
+/// P-043's prologue prefix.
+const PROLOGUE_LABEL: &[u8; 16] = b"km43/v1/prologue";
+
+/// What a prologue is built from, named so no two can be swapped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PrologueFields<'a> {
+    /// The suite the handshake runs.
+    pub suite: Suite,
+    /// The controller's version, from `Discover` keys 1 and 2.
+    pub version: Version,
+    /// `Discover` key 3.
+    pub device_id: DeviceId,
+    /// `Discover` key 8.
+    pub epoch: Epoch,
+    /// The live challenge this handshake presents: `Discover` key 7, or
+    /// `Enrol 0x93` key 4 after an enrolment on this connection.
+    pub challenge: &'a [u8; CHALLENGE_BYTES],
+    /// The connection handle the pre-session responses carried (P-024).
+    pub handle: SessionId,
 }
 
-impl<'a> Session<'a> {
-    /// P-072, in the one order that works.
-    ///
-    /// No key comes in: `session_id` is read off the **envelope**, the key is
-    /// derived from it, and only then is the body MAC checked.
-    pub fn open(
-        envelope: Envelope<'a>,
-        enrolment: &Enrolment,
-        handshake: &Handshake,
-        ours: Version,
-    ) -> Result<Self, HandshakeError> {
-        let header = envelope.header();
-        expected(header, MessageType::HelloResponse)?;
-        // Handle 0 means *no session* (P-021), so a response arriving at one is
-        // not a session to open. Accepted, it derives and MACs under handle 0
-        // and hands back a `Session` whose id means nothing was assigned —
-        // every later frame keyed at 0, with nothing downstream able to tell,
-        // because `Session` does not surrender the id. P-021 names the comms
-        // processor stamping 0 as the bug this refuses.
-        if let SessionId::None = header.session {
-            return Err(HandshakeError::NoHandle);
+impl Prologue {
+    /// Join the fields in P-227's order.
+    #[must_use]
+    pub fn new(fields: &PrologueFields<'_>) -> Self {
+        let mut out = [0u8; PROLOGUE_BYTES];
+        let parts: [&[u8]; 7] = [
+            PROLOGUE_LABEL,
+            &[fields.suite as u8],
+            &[fields.version.major, fields.version.minor],
+            fields.device_id.as_bytes(),
+            &fields.epoch.get().to_be_bytes(),
+            fields.challenge,
+            &u16::from(fields.handle).to_be_bytes(),
+        ];
+        for (slot, &byte) in out
+            .iter_mut()
+            .zip(parts.iter().flat_map(|part| part.iter()))
+        {
+            *slot = byte;
         }
-        // This reads like a bug and is not. `session_id` has not been
-        // authenticated at this line — nothing has — and it is used anyway,
-        // because the key that would authenticate it is derived from it. What
-        // makes it safe is that `session_id` is inside the `rsp` preimage: a
-        // comms processor that rewrote it sends us to a different key, and the
-        // MAC on the next line fails. There is no ordering in which the check
-        // comes first, which is why this function takes no key from its caller.
-        let key = enrolment.session_key(handshake, header.session);
-        let verified = Wrapper::decode(envelope)?.verify(&key)?;
-        let report = HelloReport::decode(verified.payload(), header.session)?;
-        Ok(Self {
-            key,
-            version: ours.agreed(report.version)?,
-            report,
+        Self(out)
+    }
+
+    /// The client's: every field but the suite and the challenge from the
+    /// `Discover` it received, and the handle that `Discover`'s answer carried.
+    #[must_use]
+    pub fn from_discovery(
+        discovery: &Discovery<'_>,
+        suite: Suite,
+        challenge: &[u8; CHALLENGE_BYTES],
+        handle: SessionId,
+    ) -> Self {
+        Self::new(&PrologueFields {
+            suite,
+            version: discovery.version,
+            device_id: DeviceId::new(discovery.device_id),
+            epoch: discovery.epoch,
+            challenge,
+            handle,
         })
     }
 
-    /// The key this session's traffic is authenticated under, in both
-    /// directions.
+    /// The bytes both ends hash.
     #[must_use]
-    pub const fn key(&self) -> &SessionKey {
-        &self.key
-    }
-
-    /// The shared major and the lower of the two minors (P-073).
-    #[must_use]
-    pub const fn version(&self) -> Version {
-        self.version
-    }
-
-    /// What the controller reported, now that the MAC over it has been checked.
-    #[must_use]
-    pub const fn report(&self) -> &HelloReport<'a> {
-        &self.report
+    pub const fn as_bytes(&self) -> &[u8; PROLOGUE_BYTES] {
+        &self.0
     }
 }
+
+impl fmt::Debug for Prologue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Prologue({PROLOGUE_BYTES} bytes)")
+    }
+}
+
+const_assert!(
+    PROLOGUE_BYTES == 57,
+    "P-238's admission preimage and the published vectors count 57 bytes of prologue before the handshake message"
+);
 
 /// One key's value, and the two rules every body here applies to it.
 ///
@@ -1367,52 +1045,6 @@ impl<'a> DiscoverSlots<'a> {
     }
 }
 
-struct InnerSlots<'a> {
-    major: Slot<u8>,
-    minor: Slot<u8>,
-    client_id: Slot<ClientId>,
-    client_version: Slot<&'a str>,
-    client_nonce: Slot<[u8; BSTR16]>,
-}
-
-impl<'a> InnerSlots<'a> {
-    const fn empty() -> Self {
-        Self {
-            major: Slot::empty(),
-            minor: Slot::empty(),
-            client_id: Slot::empty(),
-            client_version: Slot::empty(),
-            client_nonce: Slot::empty(),
-        }
-    }
-
-    fn fill(&mut self, key: InnerKey, body: &mut CborReader<'a>) -> Result<(), HandshakeError> {
-        match key {
-            InnerKey::ProtocolMajor => self.major.fill(key, body.u8()?),
-            InnerKey::ProtocolMinor => self.minor.fill(key, body.u8()?),
-            InnerKey::ClientId => {
-                let raw = body.u32()?;
-                let id = ClientId::new(raw).ok_or(HandshakeError::NoSuchSlot)?;
-                self.client_id.fill(key, id)
-            }
-            InnerKey::ClientVersion => self.client_version.fill(key, body.text()?),
-            InnerKey::ClientNonce => self.client_nonce.fill(key, sixteen(key, body.bytes()?)?),
-        }
-    }
-
-    fn complete(self) -> Result<HelloInner<'a>, HandshakeError> {
-        Ok(HelloInner {
-            version: Version {
-                major: self.major.taken(InnerKey::ProtocolMajor)?,
-                minor: self.minor.taken(InnerKey::ProtocolMinor)?,
-            },
-            client_id: self.client_id.taken(InnerKey::ClientId)?,
-            client_version: self.client_version.taken(InnerKey::ClientVersion)?,
-            client_nonce: self.client_nonce.taken(InnerKey::ClientNonce)?,
-        })
-    }
-}
-
 struct ReportSlots<'a> {
     major: Slot<u8>,
     minor: Slot<u8>,
@@ -1427,6 +1059,8 @@ struct ReportSlots<'a> {
     counter: Slot<u64>,
     caps: CapSlots,
     topo: TopoSlots,
+    client_id: Slot<ClientId>,
+    generation: Slot<Generation>,
 }
 
 /// Keys 12 to 17 on their own, so neither `fill` nor `complete` becomes the
@@ -1531,6 +1165,8 @@ impl<'a> ReportSlots<'a> {
             counter: Slot::empty(),
             caps: CapSlots::empty(),
             topo: TopoSlots::empty(),
+            client_id: Slot::empty(),
+            generation: Slot::empty(),
         }
     }
 
@@ -1565,6 +1201,15 @@ impl<'a> ReportSlots<'a> {
             ReportKey::MaxSelectors => self.topo.selectors.fill(key, body.u8()?),
             ReportKey::MaxHistorySignals => self.topo.history_signals.fill(key, body.u16()?),
             ReportKey::MaxTopologyDepth => self.topo.topology_depth.fill(key, body.u8()?),
+            ReportKey::ClientId => {
+                let id = ClientId::new(body.u32()?).ok_or(HandshakeError::NoSuchSlot)?;
+                self.client_id.fill(key, id)
+            }
+            ReportKey::Generation => {
+                let generation =
+                    Generation::new(body.u32()?).ok_or(HandshakeError::ZeroGeneration)?;
+                self.generation.fill(key, generation)
+            }
         }
     }
 
@@ -1585,6 +1230,8 @@ impl<'a> ReportSlots<'a> {
             counter: self.counter.taken(ReportKey::Counter)?,
             caps: self.caps.complete()?,
             topology: self.topo.complete()?,
+            client_id: self.client_id.taken(ReportKey::ClientId)?,
+            generation: self.generation.taken(ReportKey::Generation)?,
         })
     }
 }
@@ -1601,9 +1248,6 @@ pub enum HandshakeError {
     Missing(BodyKey),
     /// The same key twice (P-015), refused before either copy is used.
     Duplicate(BodyKey),
-    /// A key beside `payload` and `proof` in a `Hello 0x01`, which would be
-    /// meaningful and outside the proof.
-    UnknownKey(i64),
     /// A `bstr16` that was not sixteen bytes, carrying what arrived so a bench
     /// log can say how far off the peer was.
     WrongWidth {
@@ -1619,10 +1263,10 @@ pub enum HandshakeError {
         /// What the envelope named.
         found: MessageType,
     },
-    /// A `Hello 0x81` whose key 3 is not the `session_id` its key was derived
-    /// from (P-072).
+    /// A `HelloReport` whose key 3 is not the `session_id` the envelope and the
+    /// prologue carried (P-072).
     SessionMismatch {
-        /// What the envelope said, and so what the key was derived under.
+        /// What the envelope said.
         envelope: SessionId,
         /// What the authenticated body said.
         body: SessionId,
@@ -1639,16 +1283,14 @@ pub enum HandshakeError {
     ChannelsAboveCeiling(u8),
     /// A `client_id` of zero, which names no slot (P-086).
     NoSuchSlot,
+    /// A generation of zero, which is a slot never written (P-239).
+    ZeroGeneration,
     /// An `epoch` of zero, which is FRAM nobody wrote rather than an epoch
     /// (P-085).
     ZeroEpoch,
     /// The response arrived at handle 0, which means *no session* (P-021) and
     /// cannot be one.
     NoHandle,
-    /// The `Hello` proof did not check out, or was not sixteen bytes. Error 10.
-    Proof(MacError),
-    /// The wrapper around a `Hello 0x81`.
-    Wrapper(WrapperError),
     /// The envelope this body was written into.
     Envelope(EnvelopeError),
     /// The CBOR underneath the body.
@@ -1661,17 +1303,15 @@ impl HandshakeError {
     pub const fn refusal(self) -> Refusal {
         match self {
             Self::MajorMismatch { .. } => Refusal::Client(ErrorCode::ProtocolMajorMismatch),
-            Self::Proof(_) => Refusal::Client(ErrorCode::BadMAC),
-            Self::Wrapper(why) => why.refusal(),
             Self::Envelope(why) => why.refusal(),
             Self::Missing(_)
             | Self::Duplicate(_)
-            | Self::UnknownKey(_)
             | Self::WrongWidth { .. }
             | Self::WrongMessage { .. }
             | Self::SessionMismatch { .. }
             | Self::ChannelsAboveCeiling(_)
             | Self::NoSuchSlot
+            | Self::ZeroGeneration
             | Self::ZeroEpoch
             | Self::NoHandle
             | Self::Cbor(_) => Refusal::Client(ErrorCode::MalformedFrame),
@@ -1685,26 +1325,11 @@ impl From<CborError> for HandshakeError {
     }
 }
 
-impl From<MacError> for HandshakeError {
-    fn from(why: MacError) -> Self {
-        Self::Proof(why)
-    }
-}
-
-impl From<WrapperError> for HandshakeError {
-    fn from(why: WrapperError) -> Self {
-        Self::Wrapper(why)
-    }
-}
-
 impl fmt::Display for HandshakeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Missing(key) => write!(f, "no {key} arrived"),
             Self::Duplicate(key) => write!(f, "{key} arrived twice"),
-            Self::UnknownKey(number) => {
-                write!(f, "Hello 0x01 key {number} is neither payload nor proof")
-            }
             Self::WrongWidth { key, len } => write!(f, "{key} is {len} bytes, not {BSTR16}"),
             Self::WrongMessage { expected, found } => write!(
                 f,
@@ -1726,10 +1351,9 @@ impl fmt::Display for HandshakeError {
                 Caps::CHANNEL_CEILING
             ),
             Self::NoSuchSlot => f.write_str("client_id 0 names no slot"),
+            Self::ZeroGeneration => f.write_str("generation 0 is a slot never written"),
             Self::ZeroEpoch => f.write_str("epoch 0 is FRAM nobody wrote"),
             Self::NoHandle => f.write_str("a session cannot be opened at handle 0"),
-            Self::Proof(why) => write!(f, "{why}"),
-            Self::Wrapper(why) => write!(f, "wrapper: {why}"),
             Self::Envelope(why) => write!(f, "envelope: {why}"),
             Self::Cbor(why) => write!(f, "{why}"),
         }
@@ -1739,1662 +1363,369 @@ impl fmt::Display for HandshakeError {
 impl core::error::Error for HandshakeError {}
 
 const_assert!(
-    size_of::<HandshakeError>() <= size_of::<WrapperError>() + size_of::<usize>(),
-    "one of these comes back from every handshake decode on a part with 144 KB of RAM. Most of it is the WrapperError already inside it and the rest ride in bit patterns that error was not using; the width is paid on the frames that pass as well as the ones that fail, so a variant that grows it past a word over what it contains is worth arguing about"
+    size_of::<HandshakeError>() <= 16,
+    "one of these comes back from every handshake decode on a part with 144 KB of RAM, and the width is paid on the frames that pass as well as the ones that fail"
 );
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::envelope::ReqId;
-    use crate::kdf::{DeviceId, DeviceSecret, PrintedSecret};
-    use crate::mac::Wrapped;
-    use crate::render::Rendering;
-
-    /// Wider than any frame below, and narrow enough that a length bug shows as
-    /// a refusal in the builder rather than as a passing test.
-    const SCRATCH: usize = 512;
-
-    /// Fixtures go in as the hexadecimal the documents publish. Retyping
-    /// `0x8a, 0xee, …` by hand is how a digit moves house without anybody
-    /// noticing, and this is a `const fn` so a fixture of the wrong width fails
-    /// the build rather than a test.
-    const fn hex<const N: usize>(text: &str) -> [u8; N] {
-        let src = text.as_bytes();
-        assert!(src.len() == N * 2, "hex fixture is not the width it claims");
-        let mut out = [0u8; N];
-        let mut i = 0;
-        while i < N {
-            out[i] = (nibble(src[i * 2]) << 4) | nibble(src[i * 2 + 1]);
-            i += 1;
-        }
-        out
-    }
-
-    const fn nibble(c: u8) -> u8 {
-        match c {
-            b'0'..=b'9' => c - b'0',
-            b'a'..=b'f' => c - b'a' + 10,
-            _ => panic!("hex fixture is not lowercase hexadecimal"),
-        }
-    }
-
-    const PRINTED_SECRET: [u8; 32] =
-        hex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f");
-    const DEVICE_ID: [u8; BSTR16] = hex("4f524947494e38392044454d4f203031");
-    const CHALLENGE: [u8; BSTR16] = hex("a0a1a2a3a4a5a6a7a8a9aaabacadaeaf");
-    const CLIENT_NONCE: [u8; BSTR16] = hex("b0b1b2b3b4b5b6b7b8b9babbbcbdbebf");
-    const CLIENT_ID: u32 = 7;
-    const SESSION: u16 = 3;
-    const REQ_ID: u32 = 17;
-    const CLIENT_VERSION: &str = "o89-cli 0.1.0";
-
-    /// Sixteen bytes that are not any proof. For the frames below that are
-    /// refused before the proof is ever checked.
-    const NOT_A_PROOF: [u8; Tag::LEN] = [0x5a; Tag::LEN];
-
-    /// The device every key below descends from.
-    fn device() -> DeviceSecret {
-        DeviceSecret::new(DeviceId::new(DEVICE_ID), PrintedSecret::new(PRINTED_SECRET))
-    }
-
-    fn slot() -> ClientId {
-        ClientId::new(CLIENT_ID).expect("client_id 7 is a slot")
-    }
-
-    fn enrolment() -> Enrolment {
-        device().enrolment(Epoch::FIRST, slot())
-    }
-
-    fn handshake() -> Handshake {
-        Handshake {
-            challenge: CHALLENGE,
-            client_nonce: CLIENT_NONCE,
-        }
-    }
-
-    /// The inner body the vectors were computed over, as fields rather than as
-    /// bytes — so the encoder is what has to agree with the file.
-    fn inner() -> HelloInner<'static> {
-        HelloInner {
-            version: Version::V1_0,
-            client_id: slot(),
-            client_version: CLIENT_VERSION,
-            client_nonce: CLIENT_NONCE,
-        }
-    }
 
     fn header(kind: MessageType) -> Header {
         Header {
             kind,
-            session: SessionId::from(SESSION),
-            req_id: ReqId(REQ_ID),
+            session: SessionId::from(3),
+            req_id: ReqId(17),
         }
     }
-
-    /// `Discover 0x80` at session 3, `req_id` 17, written out by hand so the tests
-    /// below compare against bytes rather than against this crate's own encoder.
-    const MODEL: &str = "origin89-v1";
-    const DISCOVER_RESPONSE: [u8; 65] = hex(
-        "8418800311a80101020003504f524947494e38392044454d4f203031046b6f726967696e38392d763105f506f4\
-         0750a0a1a2a3a4a5a6a7a8a9aaabacadaeaf0801",
-    );
 
     fn discovery() -> Discovery<'static> {
         Discovery {
             version: Version::V1_0,
-            device_id: DEVICE_ID,
-            model: MODEL,
-            provisioned: true,
-            pairing_open: false,
-            challenge: CHALLENGE,
+            device_id: [0xAB; BSTR16],
+            model: "o89-controller",
+            provisioned: false,
+            pairing_open: true,
+            challenge: [0xA0; BSTR16],
             epoch: Epoch::FIRST,
         }
     }
 
-    /// One frame's bytes, assembled by hand.
-    ///
-    /// Not through `CborWriter`: it refuses a duplicate key and a key that does
-    /// not ascend, which is exactly what half of these fixtures have to send.
-    #[derive(Clone, Copy)]
-    struct Wire {
-        bytes: [u8; SCRATCH],
-        len: usize,
-    }
-
-    impl Wire {
-        /// `[type, session_id, req_id, {`, every integer in the shortest form
-        /// that holds it — which is why every fixture keeps `session_id`,
-        /// `req_id` and the pair count under 24.
-        fn envelope(head: Header, pairs: usize) -> Self {
-            let session = u8::try_from(u16::from(head.session)).expect("a one-byte session");
-            let req_id = u8::try_from(head.req_id.0).expect("a one-byte req_id");
-            let pairs = u8::try_from(pairs).expect("a map of fewer than twenty-four pairs");
-            assert!(session < 24 && req_id < 24 && pairs < 24, "one-byte CBOR");
-            let mut wire = Self {
-                bytes: [0; SCRATCH],
-                len: 0,
-            };
-            wire.push(&[0x84]);
-            let kind = head.kind as u8;
-            if kind < 24 {
-                wire.push(&[kind]);
-            } else {
-                wire.push(&[0x18, kind]);
-            }
-            wire.push(&[session, req_id, 0xa0 | pairs]);
-            wire
-        }
-
-        fn push(&mut self, data: &[u8]) {
-            for &byte in data {
-                let slot = self
-                    .bytes
-                    .get_mut(self.len)
-                    .expect("the fixture fits the scratch");
-                *slot = byte;
-                self.len = self.len.saturating_add(1);
-            }
-        }
-
-        /// A key under 24 and the CBOR value written out, so a fixture can send
-        /// a width or a type no encoder would choose.
-        fn pair(mut self, key: u8, value: &[u8]) -> Self {
-            assert!(key < 24, "the fixture keys are all inline");
-            self.push(&[key]);
-            self.push(value);
-            self
-        }
-
-        fn appended(mut self, data: &[u8]) -> Self {
-            self.push(data);
-            self
-        }
-
-        /// One byte of the frame set to something else, for a fixture that
-        /// stands in for a relay rewriting a field in flight.
-        fn replaced(mut self, at: usize, byte: u8) -> Self {
-            let slot = self.bytes.get_mut(at).expect("at is inside the frame");
-            *slot = byte;
-            self
-        }
-
-        fn flipped(mut self, at: usize, bit: u8) -> Self {
-            let slot = self.bytes.get_mut(at).expect("at is inside the frame");
-            *slot ^= 1 << bit;
-            self
-        }
-
-        fn cut_to(mut self, len: usize) -> Self {
-            assert!(len <= self.len, "a cut is a prefix");
-            self.len = len;
-            self
-        }
-
-        fn bytes(&self) -> &[u8] {
-            self.bytes
-                .get(..self.len)
-                .expect("the length came from the builder")
-        }
-
-        /// A key carrying a byte string, in the head form its length calls for.
-        fn bstr(mut self, key: u8, value: &[u8]) -> Self {
-            assert!(key < 24, "the fixture keys are all inline");
-            self.push(&[key]);
-            let len = u8::try_from(value.len()).expect("a fixture string under 256 bytes");
-            if len < 24 {
-                self.push(&[0x40 | len]);
-            } else {
-                self.push(&[0x58, len]);
-            }
-            self.push(value);
-            self
-        }
-
-        fn claimed(&self) -> Result<HelloClaim<'_>, HandshakeError> {
-            HelloClaim::decode(Envelope::decode(self.bytes()).map_err(HandshakeError::Envelope)?)
-        }
-
-        fn discovered(&self) -> Result<Discovery<'_>, HandshakeError> {
-            Discovery::decode(Envelope::decode(self.bytes()).map_err(HandshakeError::Envelope)?)
-        }
-
-        /// One byte appended after the body's top-level item, which is what a
-        /// missing `finish()` fails to notice.
-        fn with_a_trailing_byte(&self) -> Self {
-            let mut next = Self {
-                bytes: self.bytes,
-                len: self.len,
-            };
-            if let Some(slot) = next.bytes.get_mut(next.len) {
-                *slot = 0x01;
-                next.len = next.len.saturating_add(1);
-            }
-            next
-        }
-    }
-
-    /// Every body decoder calls `finish()`, and deleting any of the four leaves
-    /// the whole suite green — nothing fed one a trailing byte.
-    ///
-    /// What it lets through is a body with something appended after its
-    /// top-level map: on the two MAC'd paths the extra byte is inside the
-    /// preimage so the tag still holds, and the two ends then disagree about
-    /// where the message ended while both believe it authentic.
-    #[test]
-    fn a_byte_appended_after_a_body_is_refused_rather_than_ignored() {
-        assert_eq!(
-            discover_wire().with_a_trailing_byte().discovered().err(),
-            Some(HandshakeError::Cbor(CborError::TrailingBytes)),
-            "a Discover body ran past its map"
-        );
-        let key = enrolment().client_key();
-        let mut scratch = [0u8; MAX_HELLO_INNER];
-        let request = inner()
-            .prove(&key, &CHALLENGE, &mut scratch)
-            .expect("the fixture proves");
-        let hello = hello_wire(request.payload(), request.proof().as_bytes());
-        assert_eq!(
-            hello.with_a_trailing_byte().claimed().err(),
-            Some(HandshakeError::Cbor(CborError::TrailingBytes)),
-            "a Hello body ran past its map"
-        );
-    }
-
-    /// A `bstr16` value, head byte and all.
-    fn bstr16(value: &[u8; BSTR16]) -> [u8; BSTR16 + 1] {
-        let mut out = [0x50u8; BSTR16 + 1];
-        for (slot, &byte) in out.iter_mut().skip(1).zip(value) {
-            *slot = byte;
-        }
-        out
-    }
-
-    /// A whole `Discover 0x80` body, key by key, so a fixture can leave one out
-    /// or send it twice.
-    fn discover_wire() -> Wire {
-        Wire::envelope(header(MessageType::DiscoverResponse), DiscoverKey::COUNT)
-            .pair(1, &[0x01])
-            .pair(2, &[0x00])
-            .pair(3, &bstr16(&DEVICE_ID))
-            .pair(
-                4,
-                &[
-                    0x6b, b'o', b'r', b'i', b'g', b'i', b'n', b'8', b'9', b'-', b'v', b'1',
-                ],
-            )
-            .pair(5, &[0xf5])
-            .pair(6, &[0xf4])
-            .pair(7, &bstr16(&CHALLENGE))
-            .pair(8, &[0x01])
-    }
-
-    /// The shape of the one message nobody signs, in both directions and against
-    /// fixed bytes. An encoder and a decoder that agree with each other and not
-    /// with the document is the mistake this crate has already made once, so the
-    /// vector is written by hand rather than by the writer.
-    #[test]
-    fn a_discover_response_round_trips_through_the_bytes_the_document_shows() {
-        let mut buf = [0u8; SCRATCH];
-        let len = discovery()
-            .write(header(MessageType::DiscoverResponse), &mut buf)
-            .expect("the answer is written");
-        assert_eq!(
-            buf.get(..len).expect("the writer's own length"),
-            &DISCOVER_RESPONSE[..],
-            "the encoder and the hand-written Discover have parted company"
-        );
-
-        let envelope = Envelope::decode(&DISCOVER_RESPONSE).expect("the envelope decodes");
-        assert_eq!(
-            Discovery::decode(envelope).expect("the body decodes"),
-            discovery()
-        );
-        assert_eq!(discover_wire().bytes(), &DISCOVER_RESPONSE[..]);
-    }
-
-    /// P-087 put `epoch` in this message so a client whose key no longer derives
-    /// is told why rather than collecting an unexplainable bad proof. Absent, it
-    /// must not read as zero, and a zero must not read as an epoch: epoch 0 is
-    /// FRAM nobody wrote, and deriving under it mints keys the first successful
-    /// write invalidates.
-    #[test]
-    fn a_discover_with_no_epoch_is_refused_rather_than_read_as_epoch_zero() {
-        let without = Wire::envelope(header(MessageType::DiscoverResponse), 7)
-            .pair(1, &[0x01])
-            .pair(2, &[0x00])
-            .pair(3, &bstr16(&DEVICE_ID))
-            .pair(4, &[0x60])
-            .pair(5, &[0xf5])
-            .pair(6, &[0xf4])
-            .pair(7, &bstr16(&CHALLENGE));
-        assert_eq!(
-            without.discovered().err(),
-            Some(HandshakeError::Missing(BodyKey::Discover(
-                DiscoverKey::Epoch
-            ))),
-            "a missing epoch must be named, never defaulted"
-        );
-
-        let zero = Wire::envelope(header(MessageType::DiscoverResponse), DiscoverKey::COUNT)
-            .pair(1, &[0x01])
-            .pair(2, &[0x00])
-            .pair(3, &bstr16(&DEVICE_ID))
-            .pair(4, &[0x60])
-            .pair(5, &[0xf5])
-            .pair(6, &[0xf4])
-            .pair(7, &bstr16(&CHALLENGE))
-            .pair(8, &[0x00]);
-        assert_eq!(zero.discovered().err(), Some(HandshakeError::ZeroEpoch));
-
-        // And the epoch that arrives is the epoch that was sent, at the top of
-        // its own width — a counter that only ever climbs eventually gets there.
-        let widest = discover_wire()
-            .cut_to(discover_wire().len.saturating_sub(1))
-            .appended(&[0x1a, 0xff, 0xff, 0xff, 0xff]);
-        let epoch = widest.discovered().expect("the widest epoch decodes").epoch;
-        assert_eq!(epoch.get(), u32::MAX);
-    }
-
-    /// P-013: a key a newer controller added is skipped rather than refused,
-    /// which is what lets an older client keep talking to a unit that has
-    /// learned to say more about itself. Nothing in this body is authenticated,
-    /// so there is no field to land on the wrong side of a MAC.
-    #[test]
-    fn a_discover_key_this_version_has_never_heard_of_is_skipped_rather_than_refused() {
-        let device = bstr16(&DEVICE_ID);
-        let challenge = bstr16(&CHALLENGE);
-        let newer = Wire::envelope(header(MessageType::DiscoverResponse), 9)
-            .pair(1, &[0x01])
-            .pair(2, &[0x00])
-            .pair(3, &device)
-            .pair(
-                4,
-                &[
-                    0x6b, 0x6f, 0x72, 0x69, 0x67, 0x69, 0x6e, 0x38, 0x39, 0x2d, 0x76, 0x31,
-                ],
-            )
-            .pair(5, &[0xf5])
-            .pair(6, &[0xf4])
-            .pair(7, &challenge)
-            .pair(8, &[0x01])
-            .pair(9, &[0x83, 0x01, 0x02, 0x03]);
-        assert_eq!(
-            newer.discovered().expect("a newer controller's extra key"),
-            discovery(),
-            "an unknown key must be skipped, not refused and not read"
-        );
-    }
-
-    /// P-015: the same key twice is refused before either copy is used. RFC 8949
-    /// §5.6 leaves the resolution to the decoder — first wins, last wins — and
-    /// two ends picking differently read different challenges out of one body,
-    /// which is a client proving against something the controller never minted.
-    #[test]
-    fn a_discover_that_carries_a_key_twice_is_refused_before_either_copy_is_used() {
-        let device = bstr16(&DEVICE_ID);
-        let challenge = bstr16(&CHALLENGE);
-        let other = bstr16(&[0x5a; BSTR16]);
-        let twice = Wire::envelope(header(MessageType::DiscoverResponse), 9)
-            .pair(1, &[0x01])
-            .pair(2, &[0x00])
-            .pair(3, &device)
-            .pair(4, &[0x60])
-            .pair(5, &[0xf5])
-            .pair(6, &[0xf4])
-            .pair(7, &challenge)
-            .pair(7, &other)
-            .pair(8, &[0x01]);
-        assert_eq!(
-            twice.discovered().err(),
-            Some(HandshakeError::Duplicate(BodyKey::Discover(
-                DiscoverKey::Challenge
-            ))),
-            "a second challenge must not be resolvable at all"
-        );
-    }
-
-    /// A `bstr16` that is not sixteen bytes is refused on its width, never
-    /// padded out or trimmed to fit. Padded, a client derives a session key from
-    /// a challenge with a tail of zeros nobody agreed to, and every frame of the
-    /// session fails its MAC with nothing pointing at this line.
-    #[test]
-    fn a_bstr16_that_is_not_sixteen_bytes_is_refused_rather_than_padded() {
-        let device = bstr16(&DEVICE_ID);
-        let challenge = bstr16(&CHALLENGE);
-        let filler = [0x40u8; 18];
-        for len in [0usize, 1, 15, 17] {
-            let mut headed = filler;
-            *headed.first_mut().expect("a head byte") =
-                0x40 | u8::try_from(len).expect("the widths here are small");
-            let short = headed
-                .get(..len.saturating_add(1))
-                .expect("the filler is wider than seventeen");
-            let wrong_device = Wire::envelope(header(MessageType::DiscoverResponse), 8)
-                .pair(1, &[0x01])
-                .pair(2, &[0x00])
-                .pair(3, short)
-                .pair(4, &[0x60])
-                .pair(5, &[0xf5])
-                .pair(6, &[0xf4])
-                .pair(7, &challenge)
-                .pair(8, &[0x01]);
-            assert_eq!(
-                wrong_device.discovered().err(),
-                Some(HandshakeError::WrongWidth {
-                    key: BodyKey::Discover(DiscoverKey::DeviceId),
-                    len,
-                }),
-                "a device_id of {len} bytes"
-            );
-
-            let wrong_challenge = Wire::envelope(header(MessageType::DiscoverResponse), 8)
-                .pair(1, &[0x01])
-                .pair(2, &[0x00])
-                .pair(3, &device)
-                .pair(4, &[0x60])
-                .pair(5, &[0xf5])
-                .pair(6, &[0xf4])
-                .pair(7, short)
-                .pair(8, &[0x01]);
-            assert_eq!(
-                wrong_challenge.discovered().err(),
-                Some(HandshakeError::WrongWidth {
-                    key: BodyKey::Discover(DiscoverKey::Challenge),
-                    len,
-                }),
-                "a challenge of {len} bytes"
-            );
-        }
-    }
-
-    /// The five fields of [`inner`] with `client_id` written in long form:
-    /// identical meaning, and not the bytes the encoder writes.
-    const LONG_FORM_INNER: [u8; 41] =
-        hex("a501010200031807046d6f38392d636c6920302e312e300550b0b1b2b3b4b5b6b7b8b9babbbcbdbebf");
-
-    fn hello_wire(payload: &[u8], proof: &[u8]) -> Wire {
-        Wire::envelope(header(MessageType::Hello), HelloKey::COUNT)
-            .bstr(1, payload)
-            .bstr(2, proof)
-    }
-
-    /// A client's `Hello 0x01` from fields to wire and back, ending where P-057
-    /// says it must: the fields only on the far side of the proof.
-    #[test]
-    fn a_hello_goes_out_as_fields_and_comes_back_as_a_proof_that_verifies() {
-        let key = enrolment().client_key();
-        let mut scratch = [0u8; MAX_HELLO_INNER];
-        let request = inner()
-            .prove(&key, &CHALLENGE, &mut scratch)
-            .expect("the body encodes and proves");
-
-        let mut frame = [0u8; SCRATCH];
-        let len = request
-            .write(header(MessageType::Hello), &mut frame)
-            .expect("the envelope is written");
-        assert_eq!(
-            frame.get(..len).expect("the writer's own length"),
-            hello_wire(request.payload(), request.proof().as_bytes()).bytes(),
-            "the encoder and the hand-written Hello have parted company"
-        );
-
-        let envelope = Envelope::decode(frame.get(..len).expect("the length")).expect("decodes");
-        let claim = HelloClaim::decode(envelope).expect("the body decodes");
-        assert_eq!(claim.client_id(), slot());
-        assert_eq!(claim.client_nonce(), CLIENT_NONCE);
-        let accepted = claim
-            .verify(&key, &CHALLENGE, Version::V1_0)
-            .expect("the proof this client computed verifies");
-        assert_eq!(accepted.inner, inner());
-        assert_eq!(accepted.agreed, Version::V1_0);
-    }
-
-    /// P-070: the proof covers the whole inner body, so `client_version`,
-    /// `protocol_major` and `protocol_minor` cannot be rewritten in flight.
-    ///
-    /// The frame below is what a hostile comms processor sends: a body it edited
-    /// under the proof the client actually computed. Version negotiation running
-    /// on those three values is a downgrade with extra steps, and the only thing
-    /// between here and there is that the tag moves.
-    #[test]
-    fn a_body_rewritten_in_flight_does_not_verify_under_the_proof_the_client_sent() {
-        let key = enrolment().client_key();
-        let mut honest = [0u8; MAX_HELLO_INNER];
-        let sent = inner()
-            .prove(&key, &CHALLENGE, &mut honest)
-            .expect("the honest body proves");
-        let proof = *sent.proof();
-
-        let downgrades: [HelloInner<'_>; 3] = [
-            HelloInner {
-                client_version: "o89-cli 0.0.9",
-                ..inner()
-            },
-            HelloInner {
-                version: Version { major: 2, minor: 0 },
-                ..inner()
-            },
-            HelloInner {
-                version: Version { major: 1, minor: 9 },
-                ..inner()
-            },
-        ];
-        for rewritten in downgrades {
-            let mut edited = [0u8; MAX_HELLO_INNER];
-            let forged = rewritten
-                .prove(&key, &CHALLENGE, &mut edited)
-                .expect("the rewritten body encodes");
-            assert_ne!(
-                forged.payload(),
-                sent.payload(),
-                "the fixture must differ on the wire, or this test proves nothing"
-            );
-            let wire = hello_wire(forged.payload(), proof.as_bytes());
-            assert_eq!(
-                wire.claimed()
-                    .expect("the frame parses")
-                    .verify(&key, &CHALLENGE, Version::V1_0)
-                    .err(),
-                Some(HandshakeError::Proof(MacError::Mismatch)),
-                "a rewritten {rewritten:?} verified under somebody else's proof"
-            );
-        }
-    }
-
-    /// P-048: the proof is over the payload bytes exactly as they arrived.
-    ///
-    /// `07` and `1807` are the same CBOR integer and different bytes. A verifier
-    /// that decoded and re-encoded before hashing would compute one tag for
-    /// both, and so would authenticate a body the sender never sent — which is
-    /// the whole of what the proof was there to rule out.
-    #[test]
-    fn a_re_encoded_inner_body_is_not_the_inner_body_that_arrived() {
-        let key = enrolment().client_key();
-        let mut scratch = [0u8; MAX_HELLO_INNER];
-        let short_form = inner()
-            .prove(&key, &CHALLENGE, &mut scratch)
-            .expect("the inner body encodes and proves");
-        assert_eq!(
-            HelloInner::decode(&LONG_FORM_INNER).expect("long form decodes"),
-            inner(),
-            "the two encodings must mean the same thing, or this test proves nothing"
-        );
-        assert_ne!(&LONG_FORM_INNER[..], short_form.payload());
-
-        // A genuine proof, computed over the short form, presented with the
-        // long form underneath it.
-        let wire = hello_wire(&LONG_FORM_INNER, short_form.proof().as_bytes());
-        assert_eq!(
-            wire.claimed()
-                .expect("the frame parses")
-                .verify(&key, &CHALLENGE, Version::V1_0)
-                .err(),
-            Some(HandshakeError::Proof(MacError::Mismatch)),
-            "two encodings of one body shared a proof, so something re-encoded"
-        );
-
-        // And the honest pairing of those same bytes does verify, so the
-        // refusal above is about the encoding and not about the fixture.
-        let over_the_bytes = key.hello_proof(&HelloProof {
-            challenge: &CHALLENGE,
-            client_nonce: &CLIENT_NONCE,
-            client_id: CLIENT_ID,
-            payload: &LONG_FORM_INNER,
-        });
-        assert!(
-            hello_wire(&LONG_FORM_INNER, over_the_bytes.as_bytes())
-                .claimed()
-                .expect("the frame parses")
-                .verify(&key, &CHALLENGE, Version::V1_0)
-                .is_ok()
-        );
-    }
-
-    /// P-057's ordering, and the half of it a happy path never exercises: a
-    /// proof that does not check out hands back no body at all.
-    ///
-    /// `client_id` and `client_nonce` are reachable before the check because no
-    /// key can be found without them. Everything else is behind `verify`, so a
-    /// controller cannot negotiate a version off a body a relay wrote — which is
-    /// the only thing P-070 is protecting.
-    #[test]
-    fn a_hello_whose_proof_fails_hands_back_no_body_to_act_on() {
-        let ours = enrolment().client_key();
-        let theirs = device()
-            .enrolment(Epoch::FIRST, ClientId::new(1).expect("slot 1 is a slot"))
-            .client_key();
-        let mut scratch = [0u8; MAX_HELLO_INNER];
-        let request = inner()
-            .prove(&theirs, &CHALLENGE, &mut scratch)
-            .expect("some other client's body");
-        let wire = hello_wire(request.payload(), request.proof().as_bytes());
-
-        let claim = wire.claimed().expect("the frame parses");
-        assert_eq!(claim.client_id(), slot(), "the routing field is readable");
-        assert_eq!(claim.client_nonce(), CLIENT_NONCE);
-        assert_eq!(
-            claim.verify(&ours, &CHALLENGE, Version::V1_0).err(),
-            Some(HandshakeError::Proof(MacError::Mismatch))
-        );
-        assert_eq!(
-            HandshakeError::Proof(MacError::Mismatch).refusal().code(),
-            10,
-            "P-051 answers a failed proof with error 10"
-        );
-
-        // The same body against a challenge this connection no longer holds.
-        let claim = wire.claimed().expect("the frame parses");
-        assert_eq!(
-            claim.verify(&theirs, &[0x5a; BSTR16], Version::V1_0).err(),
-            Some(HandshakeError::Proof(MacError::Mismatch)),
-            "a proof against a stale challenge must not verify"
-        );
-    }
-
-    /// A key beside `payload` and `proof` is refused rather than skipped.
-    ///
-    /// This is P-050's argument one message over: a third key here would be
-    /// meaningful and structurally outside the proof, which is the classic shape
-    /// of the bug — the field lands on the wrong side of the authentication and
-    /// every older decoder skips politely past it.
-    #[test]
-    fn a_key_beside_payload_and_proof_in_a_hello_is_refused_rather_than_skipped() {
-        let key = enrolment().client_key();
-        let mut scratch = [0u8; MAX_HELLO_INNER];
-        let request = inner()
-            .prove(&key, &CHALLENGE, &mut scratch)
-            .expect("the body proves");
-
-        let extra = Wire::envelope(header(MessageType::Hello), 3)
-            .bstr(1, request.payload())
-            .bstr(2, request.proof().as_bytes())
-            .pair(3, &[0x01]);
-        assert_eq!(extra.claimed().err(), Some(HandshakeError::UnknownKey(3)));
-        assert_eq!(HandshakeError::UnknownKey(3).refusal().code(), 1);
-
-        // -1 is a legal CBOR key and not a legal Hello key.
-        let negative = Wire::envelope(header(MessageType::Hello), 3)
-            .appended(&[0x20, 0x01])
-            .bstr(1, request.payload())
-            .bstr(2, request.proof().as_bytes());
-        assert_eq!(
-            negative.claimed().err(),
-            Some(HandshakeError::UnknownKey(-1))
-        );
-
-        // And a key that arrives twice, which RFC 8949 §5.6 leaves to the
-        // decoder: last-wins reads a body the proof does not cover.
-        let twice = Wire::envelope(header(MessageType::Hello), 3)
-            .bstr(1, request.payload())
-            .bstr(2, request.proof().as_bytes())
-            .bstr(1, &LONG_FORM_INNER);
-        assert_eq!(
-            twice.claimed().err(),
-            Some(HandshakeError::Duplicate(BodyKey::Hello(HelloKey::Payload)))
-        );
-    }
-
-    /// Zero is the `client_id` a `PairAck` carries when nobody was enrolled, so
-    /// it names no slot and there is no key at it. Read as a number, a `Hello`
-    /// claiming it sends a controller looking up row zero of a table that counts
-    /// from one.
-    #[test]
-    fn a_hello_claiming_client_id_zero_names_no_slot() {
-        let zeroed: [u8; 40] =
-            hex("a5010102000300046d6f38392d636c6920302e312e300550b0b1b2b3b4b5b6b7b8b9babbbcbdbebf");
-        let wire = hello_wire(&zeroed, &NOT_A_PROOF);
-        assert_eq!(wire.claimed().err(), Some(HandshakeError::NoSuchSlot));
-    }
-
-    /// Every required inner key, left out one at a time. A body missing one is
-    /// refused by name rather than defaulted — an absent `client_nonce` is not
-    /// sixteen zero bytes, and a session salted with those is one a controller
-    /// with a stuck RNG hands to every client.
-    #[test]
-    fn an_inner_body_missing_a_required_key_is_refused_by_name() {
-        const EVERY: [(InnerKey, &[u8]); 5] = [
-            (InnerKey::ProtocolMajor, &[0x01, 0x01]),
-            (InnerKey::ProtocolMinor, &[0x02, 0x00]),
-            (InnerKey::ClientId, &[0x03, 0x07]),
-            (InnerKey::ClientVersion, &[0x04, 0x62, 0x76, 0x31]),
-            (
-                InnerKey::ClientNonce,
-                &[
-                    0x05, 0x50, 0xb0, 0xb1, 0xb2, 0xb3, 0xb4, 0xb5, 0xb6, 0xb7, 0xb8, 0xb9, 0xba,
-                    0xbb, 0xbc, 0xbd, 0xbe, 0xbf,
-                ],
-            ),
-        ];
-        for (left_out, _) in EVERY {
-            let mut body = [0u8; MAX_HELLO_INNER];
-            let mut len = 1;
-            *body.first_mut().expect("the map header") = 0xa4;
-            for (key, bytes) in EVERY {
-                if key == left_out {
-                    continue;
-                }
-                for &byte in bytes {
-                    *body.get_mut(len).expect("the body fits") = byte;
-                    len = len.saturating_add(1);
-                }
-            }
-            let short = body.get(..len).expect("the length came from the builder");
-            assert_eq!(
-                HelloInner::decode(short).err(),
-                Some(HandshakeError::Missing(BodyKey::Inner(left_out))),
-                "a body without {left_out}"
-            );
-        }
-    }
-
-    /// The type-state says an unverified claim has no accessor for the fields
-    /// P-070 protects. A derived `Debug` is one, and it took two reviewers
-    /// running `format!` to notice the same hole in `wrapper.rs` — the doc-tests
-    /// above assert the property by *type*, and a formatter is not a type.
-    #[test]
-    fn an_unverified_hello_does_not_hand_the_client_version_to_a_formatter() {
-        let key = enrolment().client_key();
-        let mut ours = [0u8; MAX_HELLO_INNER];
-        let mine = inner()
-            .prove(&key, &CHALLENGE, &mut ours)
-            .expect("the honest body");
-        let mut theirs = [0u8; MAX_HELLO_INNER];
-        let other = HelloInner {
-            client_version: "different-ver",
-            ..inner()
-        }
-        .prove(&key, &CHALLENGE, &mut theirs)
-        .expect("a body of the same width and another version");
-
-        let here = hello_wire(mine.payload(), mine.proof().as_bytes());
-        let there = hello_wire(other.payload(), other.proof().as_bytes());
-        let first = Rendering::<160>::debugged(&here.claimed().expect("parses"));
-        let second = Rendering::<160>::debugged(&there.claimed().expect("parses"));
-        assert_eq!(
-            first.bytes(),
-            second.bytes(),
-            "two client_versions rendered differently, so the rendering carries one"
-        );
-        let text = core::str::from_utf8(first.bytes()).expect("a rendering is UTF-8");
-        assert!(
-            text.contains("unverified"),
-            "a reader has to be told the body is nobody's word yet: {text}"
-        );
-    }
-
-    fn session_key(session: SessionId) -> SessionKey {
-        enrolment().session_key(&handshake(), session)
-    }
-
     fn report() -> HelloReport<'static> {
         HelloReport {
-            topology: Topology::THIS_CONTROLLER,
             version: Version::V1_0,
-            session: SessionId::from(SESSION),
-            fw_controller: "0.1.0",
-            fw_comms: "0.1.0",
-            capabilities: 0x0000_00ff,
+            session: SessionId::from(3),
+            fw_controller: "0.1.0-beta.12+g1a2b3c4d",
+            fw_comms: "0.2.0-alpha.12+g5e6f7a8b",
+            capabilities: 0xF7,
             log_oldest_seq: LogSeq(1),
-            log_newest_seq: LogSeq(4242),
-            state_seq: StateSeq(9),
+            log_newest_seq: LogSeq(256),
+            state_seq: StateSeq(255),
             time_known: true,
-            counter: 66,
+            counter: 65,
             caps: Caps::THIS_CONTROLLER,
+            topology: Topology::THIS_CONTROLLER,
+            client_id: ClientId::new(7).expect("slot 7"),
+            generation: Generation::FIRST,
         }
     }
 
-    /// The twenty-nine keys, and the length the encoder wrote.
-    fn encoded(reported: &HelloReport<'_>) -> ([u8; MAX_HELLO_REPORT], usize) {
-        let mut body = [0u8; MAX_HELLO_REPORT];
-        let len = reported.encode(&mut body).expect("the report encodes");
-        (body, len)
+    fn written(d: &Discovery<'_>) -> ([u8; 128], usize) {
+        let mut out = [0u8; 128];
+        let len = d
+            .write(header(MessageType::DiscoverResponse), &mut out)
+            .expect("writes");
+        (out, len)
     }
 
-    /// A whole `Hello 0x81` frame, MAC'd under the key the client will derive —
-    /// with the body handed in, so a fixture can edit it first.
-    fn wrapped(head: Header, body: &[u8]) -> Wire {
-        let mac = session_key(head.session).response(&Wrapped {
-            kind: head.kind,
-            session: head.session,
-            req_id: head.req_id,
-            payload: body,
-        });
-        Wire::envelope(head, 2)
-            .bstr(1, body)
-            .bstr(2, mac.as_bytes())
-    }
-
-    /// The controller's answer as a controller builds it.
-    fn answered(reported: &HelloReport<'_>, head: Header) -> Wire {
-        let (body, len) = encoded(reported);
-        wrapped(head, body.get(..len).expect("the writer's own length"))
-    }
-
-    impl Wire {
-        fn opened(&self) -> Result<Session<'_>, HandshakeError> {
-            Session::open(
-                Envelope::decode(self.bytes()).map_err(HandshakeError::Envelope)?,
-                &enrolment(),
-                &handshake(),
-                Version::V1_0,
-            )
-        }
-    }
-
-    /// The path this module exists for on the client side: an envelope in, a
-    /// session out, and the key derived from the `session_id` the envelope
-    /// carried rather than from anything the caller passed.
+    /// A `Discover 0x80` comes back as the fields that went out.
     #[test]
-    fn a_hello_response_opens_a_session_whose_key_came_from_the_envelope() {
-        let head = header(MessageType::HelloResponse);
-        let wire = answered(&report(), head);
-        let session = wire
-            .opened()
-            .expect("the controller's answer opens a session");
-        assert_eq!(*session.report(), report());
-        assert_eq!(session.version(), Version::V1_0);
-
-        // The key that came out is the key the next frame is authenticated
-        // under, which is the only thing a session is for.
-        let onward = Wrapped {
-            kind: MessageType::CommandResponse,
-            session: head.session,
-            req_id: ReqId(REQ_ID),
-            payload: &[0x42; 24],
-        };
-        session
-            .key()
-            .response(&onward)
-            .verify(session_key(head.session).response(&onward).as_bytes())
-            .expect("the session hands back the key it derived");
+    fn p_087_a_discover_round_trips_with_its_epoch() {
+        let (out, len) = written(&discovery());
+        let back =
+            Discovery::decode(Envelope::decode(&out[..len]).expect("decodes")).expect("reads");
+        assert_eq!(back, discovery());
+        assert_eq!(back.epoch, Epoch::FIRST);
     }
 
-    /// P-072, and the reason it is safe.
-    ///
-    /// `session_id` is read off the envelope before anything has authenticated
-    /// it, which reads like a bug. It is not, because `session_id` is inside the
-    /// `rsp` preimage: a comms processor that rewrites it sends the client to a
-    /// different key, and the MAC over a body it did not touch stops matching.
-    /// Every rewritten handle below has to come back as a failed MAC rather than
-    /// as a session running on somebody else's number.
+    /// An epoch of zero is FRAM nobody wrote, not an epoch: refused rather than
+    /// read as the first one.
     #[test]
-    fn a_rewritten_session_id_in_the_envelope_yields_a_key_that_fails_the_mac() {
-        let head = header(MessageType::HelloResponse);
-        let wire = answered(&report(), head);
-        assert!(
-            wire.opened().is_ok(),
-            "the fixture must open, or every rewrite below proves nothing"
-        );
-
-        for handle in [1u8, 2, 4, 23] {
-            // Element 2 of the envelope: 0x84, the long-form type, then the
-            // session_id inline.
-            let rewritten = wire.replaced(3, handle);
-            assert_eq!(
-                rewritten.opened().err(),
-                Some(HandshakeError::Wrapper(WrapperError::Mac(
-                    MacError::Mismatch
-                ))),
-                "a session_id rewritten to {handle} opened a session anyway"
-            );
-        }
-
-        // Zero is refused earlier and for a different reason, so it is not in
-        // the loop above: handle 0 means *no session*, and there is no key to
-        // derive at it.
+    fn p_085_a_discover_with_epoch_zero_is_refused() {
+        let (mut out, len) = written(&discovery());
+        assert_eq!(out[len - 1], 1, "the epoch is the last byte");
+        out[len - 1] = 0;
         assert_eq!(
-            wire.replaced(3, 0).opened().err(),
-            Some(HandshakeError::NoHandle),
-            "a session_id rewritten to 0 opened a session anyway"
+            Discovery::decode(Envelope::decode(&out[..len]).expect("decodes")).err(),
+            Some(HandshakeError::ZeroEpoch)
         );
     }
 
-    /// A handle of 0 means *no session* (P-021), so a `Hello 0x81` arriving at
-    /// one is not a session however well it verifies.
-    ///
-    /// The rewrite case above is caught by the MAC. This is the one it cannot
-    /// catch: a comms processor that stamps 0 into the envelope **and** key 3,
-    /// with the body MAC'd under the key derived at 0, is internally consistent
-    /// — the mismatch check compares `None` against `None` and the tag holds.
-    /// Accepted, every later frame is keyed at handle 0 and nothing downstream
-    /// can tell, because a `Session` does not surrender its id. A default
-    /// mistaken for a measurement, which is the one thing this project refuses.
+    /// A key this version has never heard of is skipped (P-013), and a key that
+    /// arrives twice is refused before either copy is used (P-015).
     #[test]
-    fn a_hello_that_verifies_at_handle_zero_is_still_not_a_session() {
-        let head = Header {
-            session: SessionId::None,
-            ..header(MessageType::HelloResponse)
-        };
-        let at_zero = HelloReport {
-            session: SessionId::None,
-            ..report()
-        };
-        let wire = answered(&at_zero, head);
+    fn a_discover_skips_an_unknown_key_and_refuses_a_repeated_one() {
+        let mut out = [0u8; 160];
+        let mut cbor = header(MessageType::DiscoverResponse)
+            .write(9, &mut out)
+            .expect("fits");
+        let d = discovery();
+        cbor.key(1).expect("k");
+        cbor.u64(1).expect("v");
+        cbor.key(2).expect("k");
+        cbor.u64(0).expect("v");
+        cbor.key(3).expect("k");
+        cbor.bytes(&d.device_id).expect("v");
+        cbor.key(4).expect("k");
+        cbor.text(d.model).expect("v");
+        cbor.key(5).expect("k");
+        cbor.bool(false).expect("v");
+        cbor.key(6).expect("k");
+        cbor.bool(true).expect("v");
+        cbor.key(7).expect("k");
+        cbor.bytes(&d.challenge).expect("v");
+        cbor.key(8).expect("k");
+        cbor.u64(1).expect("v");
+        cbor.key(40).expect("k");
+        cbor.text("from a newer version").expect("v");
+        let len = cbor.finish().expect("done");
         assert_eq!(
-            wire.opened().err(),
-            Some(HandshakeError::NoHandle),
-            "a consistent handle 0 opened a session"
-        );
-    }
-
-    /// The other half of P-072: key 3 inside the authenticated body has to be
-    /// the handle the key was derived under.
-    ///
-    /// The frame below is MAC'd correctly — a controller that filled key 3 in
-    /// from the wrong row builds exactly this — so nothing but the comparison
-    /// catches it, and a client that skipped it runs a session whose two halves
-    /// disagree about which session it is.
-    #[test]
-    fn a_hello_response_whose_body_names_another_session_is_refused() {
-        let head = header(MessageType::HelloResponse);
-        let elsewhere = HelloReport {
-            session: SessionId::from(SESSION.saturating_add(1)),
-            ..report()
-        };
-        assert_eq!(
-            answered(&elsewhere, head).opened().err(),
-            Some(HandshakeError::SessionMismatch {
-                envelope: SessionId::from(SESSION),
-                body: SessionId::from(SESSION.saturating_add(1)),
-            })
-        );
-    }
-
-    /// P-006: a `Hello 0x81` reporting more than 32 channels is rejected with
-    /// error 1, and a controller may not build one either.
-    ///
-    /// Thirty-two is the config array a channel list is stored in. A device
-    /// reporting 64 does not get twice the room; it gets a client that writes
-    /// 64 channels and is refused the whole section, having already built a
-    /// configuration around the number the controller told it.
-    #[test]
-    fn a_hello_response_reporting_thirty_three_channels_is_refused_with_error_one() {
-        let head = header(MessageType::HelloResponse);
-        let ceiling = Caps {
-            channels: Caps::CHANNEL_CEILING,
-            ..Caps::THIS_CONTROLLER
-        };
-        let (body, len) = encoded(&HelloReport {
-            caps: ceiling,
-            ..report()
-        });
-        let at = body
-            .get(..len)
-            .expect("the writer's own length")
-            .windows(3)
-            // Key 13, and 32 in the long form its own width calls for.
-            .position(|run| run == [0x0d, 0x18, Caps::CHANNEL_CEILING])
-            .expect("key 13 and its value are in the body");
-
-        for channels in [33u8, 34, 36, 64, 255] {
-            let mut over = body;
-            *over
-                .get_mut(at.saturating_add(2))
-                .expect("the value of key 13") = channels;
-            let edited = over.get(..len).expect("the same length");
-            assert_eq!(
-                wrapped(head, edited).opened().err(),
-                Some(HandshakeError::ChannelsAboveCeiling(channels)),
-                "a client must reject a Hello 0x81 reporting {channels} channels"
-            );
-            assert_eq!(
-                HandshakeError::ChannelsAboveCeiling(channels)
-                    .refusal()
-                    .code(),
-                1,
-                "P-006 names error 1"
-            );
-
-            // And the controller must not build one in the first place.
-            let mut scratch = [0u8; MAX_HELLO_REPORT];
-            assert_eq!(
-                HelloReport {
-                    caps: Caps {
-                        channels,
-                        ..Caps::THIS_CONTROLLER
-                    },
-                    ..report()
-                }
-                .encode(&mut scratch)
-                .err(),
-                Some(HandshakeError::ChannelsAboveCeiling(channels))
-            );
-        }
-
-        // The ceiling itself is legal, or the test above would pass on a cap of
-        // one and say nothing about 32.
-        assert!(
-            wrapped(head, body.get(..len).expect("the length"))
-                .opened()
-                .is_ok()
-        );
-    }
-
-    impl Wire {
-        fn opened_as(&self, ours: Version) -> Result<Session<'_>, HandshakeError> {
-            Session::open(
-                Envelope::decode(self.bytes()).map_err(HandshakeError::Envelope)?,
-                &enrolment(),
-                &handshake(),
-                ours,
-            )
-        }
-    }
-
-    /// P-073: a major mismatch refuses the session with error 3, a minor
-    /// mismatch proceeds at the lower of the two. A newer client degrades; it
-    /// never assumes.
-    ///
-    /// The end-to-end half matters as much as the arithmetic: negotiating at
-    /// all is something that happens after the MAC, because P-070 spends a proof
-    /// on these two bytes precisely so a relay cannot pick them.
-    #[test]
-    fn a_major_mismatch_refuses_and_a_minor_one_proceeds_at_the_lower_of_the_two() {
-        assert_eq!(Version::V1_0.agreed(Version::V1_0), Ok(Version::V1_0));
-        let newer = Version { major: 1, minor: 9 };
-        let older = Version { major: 1, minor: 2 };
-        assert_eq!(newer.agreed(older), Ok(older), "a newer client degrades");
-        assert_eq!(older.agreed(newer), Ok(older), "and so does a newer peer");
-
-        for theirs in [0u8, 2, 9, 255] {
-            let mismatch = HandshakeError::MajorMismatch { ours: 1, theirs };
-            assert_eq!(
-                Version::V1_0.agreed(Version {
-                    major: theirs,
-                    minor: 0
-                }),
-                Err(mismatch)
-            );
-            assert_eq!(mismatch.refusal().code(), 3, "P-073 names error 3");
-        }
-
-        // A controller a major ahead, through a Hello 0x81 whose MAC is perfect.
-        let head = header(MessageType::HelloResponse);
-        let ahead = HelloReport {
-            version: Version { major: 2, minor: 0 },
-            ..report()
-        };
-        assert_eq!(
-            answered(&ahead, head).opened().err(),
-            Some(HandshakeError::MajorMismatch { ours: 1, theirs: 2 })
+            Discovery::decode(Envelope::decode(&out[..len]).expect("decodes")).expect("reads"),
+            d
         );
 
-        // A controller a minor ahead: the session opens at ours.
-        let minor_ahead = HelloReport {
-            version: Version { major: 1, minor: 4 },
-            ..report()
-        };
-        let wire = answered(&minor_ahead, head);
-        let session = wire.opened().expect("a minor ahead is not a refusal");
-        assert_eq!(session.version(), Version::V1_0);
-
-        // And a client a minor ahead of the controller lands on the controller's.
-        let wire = answered(&report(), head);
-        let session = wire
-            .opened_as(Version { major: 1, minor: 7 })
-            .expect("a client a minor ahead degrades");
-        assert_eq!(session.version(), Version::V1_0);
+        let (mut twice, len) = written(&discovery());
+        // Rewrite key 2's number as 1: key 1 now arrives twice.
+        let at = twice[..len]
+            .windows(2)
+            .position(|w| w == [0x02, 0x00])
+            .expect("key 2");
+        twice[at] = 0x01;
+        assert!(matches!(
+            Discovery::decode(Envelope::decode(&twice[..len]).expect("decodes")),
+            Err(HandshakeError::Duplicate(_) | HandshakeError::Cbor(_))
+        ));
     }
 
-    /// The version fields are negotiated after the proof, never before.
-    ///
-    /// A `Hello 0x01` announcing a major nobody speaks, signed under a key the
-    /// controller does not hold, has to come back as a failed proof — otherwise
-    /// anything on the path can refuse any client's session by editing one byte,
-    /// and P-070's whole argument is that these three fields are not a relay's
-    /// to choose.
+    /// A `bstr16` that is not sixteen bytes is refused rather than padded.
     #[test]
-    fn a_version_is_negotiated_after_the_proof_and_never_before_it() {
-        let ours = enrolment().client_key();
-        let theirs = device()
-            .enrolment(Epoch::FIRST, ClientId::new(1).expect("slot 1 is a slot"))
-            .client_key();
-        let ahead = HelloInner {
-            version: Version { major: 2, minor: 0 },
-            ..inner()
-        };
-
-        let mut forged = [0u8; MAX_HELLO_INNER];
-        let by_somebody_else = ahead
-            .prove(&theirs, &CHALLENGE, &mut forged)
-            .expect("a body signed under the wrong key");
-        assert_eq!(
-            hello_wire(
-                by_somebody_else.payload(),
-                by_somebody_else.proof().as_bytes()
-            )
-            .claimed()
-            .expect("the frame parses")
-            .verify(&ours, &CHALLENGE, Version::V1_0)
-            .err(),
-            Some(HandshakeError::Proof(MacError::Mismatch)),
-            "the version was read off a body nobody had authenticated"
-        );
-
-        // Signed by the client that really holds the key, the same major is the
-        // refusal P-073 asks for.
-        let mut honest = [0u8; MAX_HELLO_INNER];
-        let genuine = ahead
-            .prove(&ours, &CHALLENGE, &mut honest)
-            .expect("a body this client really signed");
-        assert_eq!(
-            hello_wire(genuine.payload(), genuine.proof().as_bytes())
-                .claimed()
-                .expect("the frame parses")
-                .verify(&ours, &CHALLENGE, Version::V1_0)
-                .err(),
-            Some(HandshakeError::MajorMismatch { ours: 1, theirs: 2 })
-        );
+    fn a_challenge_that_is_not_sixteen_bytes_is_refused() {
+        let mut out = [0u8; 160];
+        let mut cbor = header(MessageType::DiscoverResponse)
+            .write(1, &mut out)
+            .expect("fits");
+        cbor.key(7).expect("k");
+        cbor.bytes(&[0; 15]).expect("v");
+        let len = cbor.finish().expect("done");
+        assert!(matches!(
+            Discovery::decode(Envelope::decode(&out[..len]).expect("decodes")),
+            Err(HandshakeError::WrongWidth { len: 15, .. })
+        ));
     }
 
-    /// P-005: the controller reports the numbers it enforces, and they survive
-    /// the trip through the wire unchanged.
-    ///
-    /// Reporting a number the controller does not enforce is worse than
-    /// reporting nothing: a client told it may keep eight requests in flight,
-    /// then refused the third with error 7, has been handed a field that made it
-    /// behave worse than the compiled-in guess it replaced.
+    /// Every truncation of a `Discover 0x80` is refused without a panic.
     #[test]
-    fn the_caps_a_hello_response_reports_are_the_ones_this_controller_enforces() {
-        let caps = Caps::THIS_CONTROLLER;
-        assert_eq!(usize::from(caps.sessions), MAX_SESSIONS);
-        assert_eq!(usize::from(caps.channels), MAX_CHANNELS);
-        assert_eq!(usize::from(caps.clients), MAX_CLIENTS);
-        assert_eq!(usize::from(caps.event_queue), MAX_EVENT_QUEUE);
-        assert_eq!(usize::from(caps.inflight), MAX_INFLIGHT);
-        assert_eq!(usize::from(caps.cmd_dedup), MAX_CMD_DEDUP);
-
-        let head = header(MessageType::HelloResponse);
-        let wire = answered(&report(), head);
-        let session = wire.opened().expect("the answer opens a session");
-        assert_eq!(
-            session.report().caps,
-            caps,
-            "a cap moved somewhere between the encoder and the decoder"
-        );
-    }
-
-    const EVERY_REPORT_KEY: [ReportKey; ReportKey::COUNT] = [
-        ReportKey::ProtocolMajor,
-        ReportKey::ProtocolMinor,
-        ReportKey::SessionId,
-        ReportKey::FwController,
-        ReportKey::FwComms,
-        ReportKey::Capabilities,
-        ReportKey::LogOldestSeq,
-        ReportKey::LogNewestSeq,
-        ReportKey::StateSeq,
-        ReportKey::TimeKnown,
-        ReportKey::Counter,
-        ReportKey::MaxSessions,
-        ReportKey::MaxChannels,
-        ReportKey::MaxClients,
-        ReportKey::MaxEventQueue,
-        ReportKey::MaxInflight,
-        ReportKey::MaxCmdDedup,
-        ReportKey::Rev,
-        ReportKey::TopoDigest,
-        ReportKey::MaxBuses,
-        ReportKey::MaxDevices,
-        ReportKey::MaxComponents,
-        ReportKey::MaxSignals,
-        ReportKey::MaxSeriesElements,
-        ReportKey::MaxParams,
-        ReportKey::MaxConcerns,
-        ReportKey::MaxSelectors,
-        ReportKey::MaxHistorySignals,
-        ReportKey::MaxTopologyDepth,
-    ];
-
-    /// Twenty-eight of the twenty-nine keys, written independently of
-    /// [`HelloReport::encode`] so a fixture can leave any one of them out.
-    fn report_without(left_out: ReportKey, dst: &mut [u8]) -> usize {
-        let mut cbor = CborWriter::new(dst);
-        cbor.map(ReportKey::COUNT.saturating_sub(1))
-            .expect("a twenty-eight-pair map");
-        for key in EVERY_REPORT_KEY {
-            if key == left_out {
-                continue;
-            }
-            cbor.key(key.number()).expect("an ascending key");
-            match key {
-                ReportKey::SessionId => cbor.u64(u64::from(SESSION)),
-                ReportKey::FwController | ReportKey::FwComms => cbor.text("0.1.0"),
-                ReportKey::TimeKnown => cbor.bool(true),
-                ReportKey::TopoDigest => cbor.bytes(&[0u8; 8]),
-                ReportKey::ProtocolMajor
-                | ReportKey::ProtocolMinor
-                | ReportKey::Capabilities
-                | ReportKey::LogOldestSeq
-                | ReportKey::LogNewestSeq
-                | ReportKey::StateSeq
-                | ReportKey::Counter
-                | ReportKey::MaxSessions
-                | ReportKey::MaxChannels
-                | ReportKey::MaxClients
-                | ReportKey::MaxEventQueue
-                | ReportKey::MaxInflight
-                | ReportKey::MaxCmdDedup
-                | ReportKey::Rev
-                | ReportKey::MaxBuses
-                | ReportKey::MaxDevices
-                | ReportKey::MaxComponents
-                | ReportKey::MaxSignals
-                | ReportKey::MaxSeriesElements
-                | ReportKey::MaxParams
-                | ReportKey::MaxConcerns
-                | ReportKey::MaxSelectors
-                | ReportKey::MaxHistorySignals
-                | ReportKey::MaxTopologyDepth => cbor.u64(1),
-            }
-            .expect("a value");
-        }
-        cbor.finish().expect("the body is complete")
-    }
-
-    /// Every key of `Hello 0x81`, left out one at a time, and every one of the
-    /// twenty-nine refused by name.
-    ///
-    /// The tempting mistake is to read what is there and default the rest. A
-    /// `counter` defaulted to zero is a client that signs its next write with a
-    /// number the controller has already accepted, and P-080 refuses it with
-    /// error 11 for the rest of the session.
-    #[test]
-    fn a_hello_response_missing_any_one_key_is_refused_by_name() {
-        let head = header(MessageType::HelloResponse);
-        for left_out in EVERY_REPORT_KEY {
-            let mut body = [0u8; MAX_HELLO_REPORT];
-            let len = report_without(left_out, &mut body);
-            let short = body.get(..len).expect("the writer's own length");
-            assert_eq!(
-                wrapped(head, short).opened().err(),
-                Some(HandshakeError::Missing(BodyKey::Report(left_out))),
-                "a body without {left_out}"
-            );
-        }
-
-        // All twenty-nine present is the case that must pass, or the loop above is
-        // asserting about a body that was never going to decode.
-        assert!(answered(&report(), head).opened().is_ok());
-    }
-
-    /// Sixty-four bytes, which is [`MAX_STRING`] and so the widest text any of
-    /// these bodies can carry.
-    const WIDEST_TEXT: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-
-    /// The three body caps, against what the encoders actually write.
-    ///
-    /// A caller sizes a buffer from these before a byte is encoded. One byte
-    /// optimistic and the frame that does not fit is the one built at a fully
-    /// configured site with a long model name, which is the failure `limits.rs`
-    /// records twice already.
-    #[test]
-    fn the_widest_body_of_each_message_is_the_size_these_caps_promise() {
-        assert_eq!(WIDEST_TEXT.len(), MAX_STRING, "the fixture is the cap");
-        let widest = Header {
-            kind: MessageType::DiscoverResponse,
-            session: SessionId::from(0xFFFF),
-            req_id: ReqId(u32::MAX),
-        };
-        let mut buf = [0u8; MAX_PAYLOAD];
-        let len = Discovery {
-            version: Version {
-                major: u8::MAX,
-                minor: u8::MAX,
-            },
-            device_id: [0xFF; BSTR16],
-            model: WIDEST_TEXT,
-            provisioned: true,
-            pairing_open: true,
-            challenge: [0xFF; BSTR16],
-            epoch: Epoch::new(u32::MAX).expect("the top of the counter is an epoch"),
-        }
-        .write(widest, &mut buf)
-        .expect("the widest Discover fits a payload");
-        assert_eq!(
-            len,
-            11 + MAX_DISCOVER_BODY,
-            "eleven bytes of envelope and the widest body"
-        );
-
-        let mut scratch = [0u8; MAX_HELLO_INNER];
-        let request = HelloInner {
-            version: Version {
-                major: u8::MAX,
-                minor: u8::MAX,
-            },
-            client_id: ClientId::new(u32::MAX).expect("the top slot is a slot"),
-            client_version: WIDEST_TEXT,
-            client_nonce: [0xFF; BSTR16],
-        }
-        .prove(&enrolment().client_key(), &CHALLENGE, &mut scratch)
-        .expect("the widest inner body fits its own cap exactly");
-        assert_eq!(request.payload().len(), MAX_HELLO_INNER);
-
-        let (_, len) = encoded(&HelloReport {
-            topology: Topology {
-                rev: u32::MAX,
-                digest: [0xFF; 8],
-                buses: u8::MAX,
-                devices: u16::MAX,
-                components: u16::MAX,
-                signals: u16::MAX,
-                series_elements: u16::MAX,
-                params: u16::MAX,
-                concerns: u16::MAX,
-                selectors: u8::MAX,
-                history_signals: u16::MAX,
-                topology_depth: u8::MAX,
-            },
-            version: Version {
-                major: u8::MAX,
-                minor: u8::MAX,
-            },
-            session: SessionId::from(0xFFFF),
-            fw_controller: WIDEST_TEXT,
-            fw_comms: WIDEST_TEXT,
-            capabilities: u32::MAX,
-            log_oldest_seq: LogSeq(u64::MAX),
-            log_newest_seq: LogSeq(u64::MAX),
-            state_seq: StateSeq(u64::MAX),
-            time_known: true,
-            counter: u64::MAX,
-            caps: Caps {
-                sessions: u8::MAX,
-                channels: Caps::CHANNEL_CEILING,
-                clients: u8::MAX,
-                event_queue: u16::MAX,
-                inflight: u8::MAX,
-                cmd_dedup: u16::MAX,
-            },
-        });
-        assert_eq!(len, MAX_HELLO_REPORT);
-    }
-
-    /// A destination one byte short is refused, never filled to the brim.
-    ///
-    /// A truncated body still parses at the far end — as a shorter, perfectly
-    /// well formed message carrying other fields — so half an answer in a
-    /// caller's buffer is worse than no answer at all.
-    #[test]
-    fn a_body_that_will_not_fit_is_refused_rather_than_truncated() {
-        let head = header(MessageType::DiscoverResponse);
-        let mut buf = [0u8; SCRATCH];
-        let whole = discovery().write(head, &mut buf).expect("the fixture fits");
-        for short in 0..whole {
-            let mut narrow = [0xAAu8; SCRATCH];
-            let dst = narrow.get_mut(..short).expect("short is below the scratch");
-            assert!(
-                discovery().write(head, dst).is_err(),
-                "a {short}-byte destination for a {whole}-byte answer"
-            );
-        }
-
-        let mut scratch = [0u8; MAX_HELLO_INNER];
-        let key = enrolment().client_key();
-        let whole = inner()
-            .prove(&key, &CHALLENGE, &mut scratch)
-            .expect("the fixture fits")
-            .payload()
-            .len();
-        for short in 0..whole {
-            let dst = scratch.get_mut(..short).expect("short is below the cap");
-            assert!(
-                inner().prove(&key, &CHALLENGE, dst).is_err(),
-                "a {short}-byte scratch for a {whole}-byte inner body"
-            );
+    fn every_truncation_of_a_discover_is_refused() {
+        let (out, len) = written(&discovery());
+        for cut in 0..len {
+            let refused = Envelope::decode(&out[..cut])
+                .ok()
+                .map(Discovery::decode)
+                .is_none_or(|r| r.is_err());
+            assert!(refused, "cut {cut}");
         }
     }
 
-    /// An envelope naming another message is refused before its body is read.
-    ///
-    /// Without it a `Readings 0x8E` gets decoded as a `Hello 0x81`: every key
-    /// number the two happen to share taken at face value, and the rest reported
-    /// missing, which is a refusal naming the wrong cause at best.
-    #[test]
-    fn an_envelope_naming_another_message_is_not_decoded_as_this_one() {
-        for kind in [
-            MessageType::Readings,
-            MessageType::ReadingsResponse,
-            MessageType::Hello,
-            MessageType::ErrorResponse,
-        ] {
-            let wire = discover_wire();
-            let elsewhere = wire.replaced(2, kind as u8);
-            assert_eq!(
-                elsewhere.discovered().err(),
-                Some(HandshakeError::WrongMessage {
-                    expected: MessageType::DiscoverResponse,
-                    found: kind,
-                }),
-                "a {kind:?} body read as a Discover"
-            );
-        }
-
-        let head = header(MessageType::HelloResponse);
-        let wire = answered(&report(), head);
-        assert_eq!(
-            wire.replaced(2, MessageType::ReadLogResponse as u8)
-                .opened()
-                .err(),
-            Some(HandshakeError::WrongMessage {
-                expected: MessageType::HelloResponse,
-                found: MessageType::ReadLogResponse,
-            })
-        );
-    }
-
-    /// Every key number this version allocates, and nothing either side of it.
-    ///
-    /// The list and the numbers live in four places apiece — `of`, `number`,
-    /// `name` and the encoder — and a key that maps to a number nothing decodes
-    /// is a field silently dropped on one side of a link.
-    #[test]
-    fn every_key_number_maps_back_to_the_key_that_claims_it() {
-        for n in 1..=DiscoverKey::COUNT {
-            let number = i64::try_from(n).expect("the counts here are small");
-            let key = DiscoverKey::of(number).expect("a key this version allocates");
-            assert_eq!(key.number(), number);
-        }
-        for n in 1..=HelloKey::COUNT {
-            let number = i64::try_from(n).expect("the counts here are small");
-            assert_eq!(HelloKey::of(number).expect("a key").number(), number);
-        }
-        for n in 1..=InnerKey::COUNT {
-            let number = i64::try_from(n).expect("the counts here are small");
-            assert_eq!(InnerKey::of(number).expect("a key").number(), number);
-        }
-        for key in EVERY_REPORT_KEY {
-            assert_eq!(
-                ReportKey::of(key.number()),
-                Some(key),
-                "{key} does not decode to itself"
-            );
-        }
-
-        for outside in [i64::MIN, -1, 0, 30, 31, 255, i64::MAX] {
-            assert_eq!(ReportKey::of(outside), None, "key {outside}");
-        }
-        assert_eq!(DiscoverKey::of(9), None);
-        assert_eq!(HelloKey::of(3), None);
-        assert_eq!(InnerKey::of(6), None);
-    }
-
-    /// Every refusal renders as its own sentence. Two that share a line send
-    /// somebody reading a bench log to the wrong half, and the pair here that
-    /// somebody will be telling apart is "the proof did not match" and "the
-    /// wrapper's tag did not match" — one is a client that proved wrong, the
-    /// other is a session key the two ends disagree about.
-    #[test]
-    fn every_refusal_says_something_of_its_own() {
-        let every: [HandshakeError; 16] = [
-            HandshakeError::Missing(BodyKey::Discover(DiscoverKey::Challenge)),
-            HandshakeError::Missing(BodyKey::Inner(InnerKey::ClientNonce)),
-            HandshakeError::Missing(BodyKey::Report(ReportKey::MaxChannels)),
-            HandshakeError::Duplicate(BodyKey::Hello(HelloKey::Payload)),
-            HandshakeError::UnknownKey(3),
-            HandshakeError::WrongWidth {
-                key: BodyKey::Discover(DiscoverKey::DeviceId),
-                len: 12,
-            },
-            HandshakeError::WrongMessage {
-                expected: MessageType::HelloResponse,
-                found: MessageType::Readings,
-            },
-            HandshakeError::SessionMismatch {
-                envelope: SessionId::from(3),
-                body: SessionId::from(4),
-            },
-            HandshakeError::MajorMismatch { ours: 1, theirs: 2 },
-            HandshakeError::ChannelsAboveCeiling(33),
-            HandshakeError::NoSuchSlot,
-            HandshakeError::ZeroEpoch,
-            HandshakeError::Proof(MacError::Mismatch),
-            HandshakeError::Wrapper(WrapperError::Mac(MacError::Mismatch)),
-            HandshakeError::Envelope(EnvelopeError::WrongLength),
-            HandshakeError::Cbor(CborError::WrongType),
-        ];
-        Rendering::<96>::each_says_something_of_its_own(&every);
-    }
-
-    /// A `Discovery` says nothing a hostile peer chose.
-    ///
-    /// `model` is up to sixty-four bytes somebody else picked, and this is the
-    /// one message with no MAC at all — one `?discovery` in a span and those
-    /// bytes are in a log a person reads as if the site had said them.
-    #[test]
-    fn a_discovery_does_not_hand_the_bytes_a_hostile_peer_chose_to_a_formatter() {
-        let ours = Rendering::<160>::debugged(&discovery());
-        let theirs = Rendering::<160>::debugged(&Discovery {
-            device_id: [0x5A; BSTR16],
-            model: "01234567890",
-            challenge: [0xA5; BSTR16],
-            ..discovery()
-        });
-        assert_eq!(
-            ours.bytes(),
-            theirs.bytes(),
-            "two models rendered differently, so the rendering carries one"
-        );
-        let text = core::str::from_utf8(ours.bytes()).expect("a rendering is UTF-8");
-        assert!(
-            text.contains("unauthenticated"),
-            "a reader has to be told nobody signed this: {text}"
-        );
-    }
-
-    /// A fixed-seed xorshift, so a failure below reproduces byte for byte.
-    struct Xorshift(u64);
-
-    impl Xorshift {
-        fn byte(&mut self) -> u8 {
-            let mut state = self.0;
-            state ^= state << 13;
-            state ^= state >> 7;
-            state ^= state << 17;
-            self.0 = state;
-            let [low, ..] = state.to_le_bytes();
-            low
-        }
-    }
-
-    /// Whatever a hostile `Discover` response says, it cannot make this decoder
-    /// panic — and neither can a link that dropped carrier mid-frame.
-    ///
-    /// Nothing in this message is authenticated, so the bytes reaching the
-    /// decoder are whatever passed a CRC. Every flip, every truncation and a run
-    /// of noise has to end in a value or a named refusal, and a value that does
-    /// come back has to obey the widths this module promises.
+    /// Two thousand frames of a real `Discover` with random bytes overwritten
+    /// never panic the decoder.
     #[test]
     fn whatever_a_hostile_discover_says_it_cannot_make_the_decoder_panic() {
-        let good = discover_wire();
-        assert!(
-            good.discovered().is_ok(),
-            "the fixture must decode, or every mutation below proves nothing"
-        );
-
-        for at in 0..good.len {
-            for bit in 0..8u8 {
-                if let Ok(seen) = good.flipped(at, bit).discovered() {
-                    assert!(seen.model.len() <= MAX_STRING, "byte {at} bit {bit}");
+        let mut state = 0x9E37_79B9_7F4A_7C15u64;
+        let (template, len) = written(&discovery());
+        for _ in 0..2000 {
+            let mut frame = template;
+            for byte in frame.iter_mut().take(len) {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                if state.is_multiple_of(7) {
+                    *byte = state.to_le_bytes()[0];
                 }
             }
+            if let Ok(envelope) = Envelope::decode(&frame[..len]) {
+                let _ = Discovery::decode(envelope);
+            }
         }
-        for cut in 0..good.len {
-            assert!(
-                good.cut_to(cut).discovered().is_err(),
-                "a Discover cut at {cut} of {} bytes decoded anyway",
-                good.len
+    }
+
+    /// The report comes back as it went out, all thirty-one keys, with the slot
+    /// and generation it names (P-239).
+    #[test]
+    fn p_239_a_report_round_trips_with_its_slot_and_generation() {
+        let mut out = [0u8; MAX_HELLO_REPORT];
+        let len = report().encode(&mut out).expect("encodes");
+        let back = HelloReport::decode(&out[..len], SessionId::from(3)).expect("reads");
+        assert_eq!(back, report());
+        assert_eq!(back.generation, Generation::FIRST);
+    }
+
+    /// Key 3 must name the session the envelope names (P-072).
+    #[test]
+    fn p_072_a_report_naming_another_session_is_refused() {
+        let mut out = [0u8; MAX_HELLO_REPORT];
+        let len = report().encode(&mut out).expect("encodes");
+        assert!(matches!(
+            HelloReport::decode(&out[..len], SessionId::from(4)),
+            Err(HandshakeError::SessionMismatch { .. })
+        ));
+    }
+
+    /// P-006: more than 32 channels is refused both ways.
+    #[test]
+    fn a_report_of_thirty_three_channels_is_refused_both_ways() {
+        let mut too_many = report();
+        too_many.caps.channels = Caps::CHANNEL_CEILING + 1;
+        let mut out = [0u8; MAX_HELLO_REPORT];
+        assert_eq!(
+            too_many.encode(&mut out).err(),
+            Some(HandshakeError::ChannelsAboveCeiling(33))
+        );
+    }
+
+    /// A report missing any one of its thirty-one keys is refused by name, never
+    /// defaulted: a report without key 11 would send a client counting from a
+    /// counter nobody told it.
+    #[test]
+    fn a_report_missing_any_one_key_is_refused_by_name() {
+        let mut full = [0u8; MAX_HELLO_REPORT];
+        let len = report().encode(&mut full).expect("encodes");
+        for skip in 1..=31i64 {
+            let mut reader = CborReader::new(&full[..len]);
+            let pairs = reader.map().expect("a map");
+            let mut out = [0u8; MAX_HELLO_REPORT];
+            let mut cbor = CborWriter::new(&mut out);
+            cbor.map(pairs - 1).expect("head");
+            for _ in 0..pairs {
+                let key = reader.key().expect("key");
+                let value = reader.raw().expect("value");
+                if key != skip {
+                    cbor.key(key).expect("k");
+                    cbor.raw(value).expect("v");
+                }
+            }
+            let short = cbor.finish().expect("done");
+            let refused = HelloReport::decode(&out[..short], SessionId::from(3));
+            let key = ReportKey::of(skip).expect("a report key");
+            assert_eq!(
+                refused.err(),
+                Some(HandshakeError::Missing(key.into())),
+                "{key}"
             );
         }
+    }
 
-        let mut rng = Xorshift(0x2545_F491_4F6C_DD1D);
-        let mut noise = [0u8; 96];
-        for _ in 0..2048 {
-            for slot in &mut noise {
-                *slot = rng.byte();
-            }
-            for len in [0usize, 1, 6, 32, 96] {
-                let bytes = noise.get(..len).expect("inside the buffer");
-                if let Ok(seen) = Envelope::decode(bytes)
-                    .map_err(HandshakeError::Envelope)
-                    .and_then(Discovery::decode)
-                {
-                    assert!(seen.model.len() <= MAX_STRING);
-                    assert!(seen.epoch.get() > 0, "epoch zero is not an epoch");
+    /// A zero slot or generation in a report names nothing and is refused.
+    #[test]
+    fn a_report_naming_slot_zero_or_generation_zero_is_refused() {
+        for (key, want) in [
+            (30, HandshakeError::NoSuchSlot),
+            (31, HandshakeError::ZeroGeneration),
+        ] {
+            let mut full = [0u8; MAX_HELLO_REPORT];
+            let len = report().encode(&mut full).expect("encodes");
+            let mut reader = CborReader::new(&full[..len]);
+            let pairs = reader.map().expect("a map");
+            let mut out = [0u8; MAX_HELLO_REPORT];
+            let mut cbor = CborWriter::new(&mut out);
+            cbor.map(pairs).expect("head");
+            for _ in 0..pairs {
+                let k = reader.key().expect("key");
+                let value = reader.raw().expect("value");
+                cbor.key(k).expect("k");
+                if k == key {
+                    cbor.u64(0).expect("zero");
+                } else {
+                    cbor.raw(value).expect("v");
                 }
             }
+            let n = cbor.finish().expect("done");
+            assert_eq!(
+                HelloReport::decode(&out[..n], SessionId::from(3)).err(),
+                Some(want)
+            );
         }
     }
-    /// Every strict prefix of a frame is refused, at the envelope or in the
-    /// body it carries.
-    fn refused_at_every_cut(
-        bytes: &[u8],
-        decode: impl Fn(Envelope<'_>) -> Result<(), HandshakeError>,
-    ) {
-        for cut in 0..bytes.len() {
-            let prefix = bytes.get(..cut).expect("a prefix");
-            let read = Envelope::decode(prefix)
-                .map_err(|_| ())
-                .and_then(|envelope| decode(envelope).map_err(|_| ()));
-            assert!(read.is_err(), "a prefix of {cut} bytes decoded");
-        }
-        let whole = Envelope::decode(bytes).expect("the whole frame");
-        assert!(
-            decode(whole).is_ok(),
-            "the whole frame must decode, or the loop proves nothing"
+
+    /// P-074: the two sequence spaces are two types, so a comparison across
+    /// them does not compile (see [`LogSeq`]); the report keeps them apart even
+    /// where their numbers sit side by side.
+    #[test]
+    fn p_074_the_report_keeps_the_log_and_state_spaces_apart() {
+        let r = report();
+        assert_eq!(r.log_newest_seq, LogSeq(256));
+        assert_eq!(r.state_seq, StateSeq(255));
+    }
+
+    /// P-073: a major mismatch refuses, a minor mismatch proceeds at the lower.
+    #[test]
+    fn p_073_a_major_mismatch_refuses_and_a_minor_one_takes_the_lower() {
+        let ours = Version { major: 1, minor: 3 };
+        assert_eq!(
+            ours.agreed(Version { major: 1, minor: 1 }),
+            Ok(Version { major: 1, minor: 1 })
+        );
+        assert_eq!(
+            ours.agreed(Version { major: 2, minor: 0 }),
+            Err(HandshakeError::MajorMismatch { ours: 1, theirs: 2 })
+        );
+        assert_eq!(
+            HandshakeError::MajorMismatch { ours: 1, theirs: 2 }.refusal(),
+            Refusal::Client(ErrorCode::ProtocolMajorMismatch)
         );
     }
 
-    /// The three handshake frames a peer reads, cut at every byte. Each had
-    /// tests for a missing key and a wrong width and none for a body that
-    /// simply stops.
+    fn fields(challenge: &[u8; 16]) -> PrologueFields<'_> {
+        PrologueFields {
+            suite: Suite::X25519ChachapolySha256,
+            version: Version::V1_0,
+            device_id: DeviceId::new(*b"ORIGIN89 DEMO 01"),
+            epoch: Epoch::new(0x0102_0304).expect("non-zero"),
+            challenge,
+            handle: SessionId::from(0x0A0B),
+        }
+    }
+
+    /// P-040 and P-227: the prologue is the label, then every field in order,
+    /// fixed width, integers big-endian.
     #[test]
-    fn every_handshake_frame_cut_short_at_any_byte_is_refused() {
-        let mut frame = [0u8; SCRATCH];
-        let len = discovery()
-            .write(header(MessageType::DiscoverResponse), &mut frame)
-            .expect("encodes");
-        refused_at_every_cut(frame.get(..len).expect("the frame"), |e| {
-            Discovery::decode(e).map(|_| ())
-        });
+    fn p_040_every_integer_in_the_prologue_is_big_endian_and_fixed_width() {
+        let challenge = [0xC5; 16];
+        let bytes = *Prologue::new(&fields(&challenge)).as_bytes();
+        assert_eq!(&bytes[..16], b"km43/v1/prologue");
+        assert_eq!(bytes[16], 1, "suite");
+        assert_eq!(bytes[17..19], [1, 0], "version");
+        assert_eq!(&bytes[19..35], b"ORIGIN89 DEMO 01");
+        assert_eq!(bytes[35..39], [1, 2, 3, 4], "epoch, big-endian");
+        assert_eq!(bytes[39..55], [0xC5; 16], "challenge");
+        assert_eq!(bytes[55..57], [0x0A, 0x0B], "handle, big-endian");
+    }
 
-        let key = enrolment().client_key();
-        let mut scratch = [0u8; MAX_HELLO_INNER];
-        let request = inner()
-            .prove(&key, &CHALLENGE, &mut scratch)
-            .expect("the body encodes and proves");
-        let len = request
-            .write(header(MessageType::Hello), &mut frame)
-            .expect("encodes");
-        refused_at_every_cut(frame.get(..len).expect("the frame"), |e| {
-            HelloClaim::decode(e).map(|_| ())
-        });
-
-        let wire = answered(&report(), header(MessageType::HelloResponse));
-        refused_at_every_cut(wire.bytes(), |e| {
-            Session::open(e, &enrolment(), &handshake(), Version::V1_0).map(|_| ())
-        });
+    /// Every field a client takes from `Discover` moves the prologue, so a
+    /// rewrite of any of them is a transcript the controller does not hash.
+    #[test]
+    fn p_227_every_field_a_client_takes_from_discover_moves_the_prologue() {
+        let challenge = [0xC5; 16];
+        let base = Prologue::new(&fields(&challenge));
+        let other_challenge = [0xC6; 16];
+        let variants = [
+            PrologueFields {
+                version: Version { major: 1, minor: 1 },
+                ..fields(&challenge)
+            },
+            PrologueFields {
+                device_id: DeviceId::new([0; 16]),
+                ..fields(&challenge)
+            },
+            PrologueFields {
+                epoch: Epoch::FIRST,
+                ..fields(&challenge)
+            },
+            fields(&other_challenge),
+            PrologueFields {
+                handle: SessionId::from(4),
+                ..fields(&challenge)
+            },
+        ];
+        for variant in &variants {
+            assert_ne!(Prologue::new(variant), base, "{variant:?}");
+        }
+        let discovered = Prologue::from_discovery(
+            &discovery(),
+            Suite::X25519ChachapolySha256,
+            &discovery().challenge,
+            SessionId::from(3),
+        );
+        assert_eq!(&discovered.as_bytes()[19..35], &[0xAB; 16]);
     }
 }

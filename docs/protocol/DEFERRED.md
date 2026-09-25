@@ -15,7 +15,7 @@ tableOfContents:
 <dl class="o89-doc-facts">
   <div>
     <dt>Open entries</dt>
-    <dd>Twelve</dd>
+    <dd>Ten</dd>
   </div>
   <div>
     <dt>Normative</dt>
@@ -39,11 +39,17 @@ tableOfContents:
 
 ## How deferral works
 
-Twelve things this corpus deliberately does not answer — ten of them questions
+Ten things this corpus deliberately does not answer — eight of them questions
 about the wire, entry 11 about how these documents get checked for the
-questions nobody thought to ask, and entry 13 the equipment model the first ten
-quietly assumed was flat. Entry 12 was answered and moved into P-022; its number
-is not reused, so a reference to entry 13 still means the same thing. They live
+questions nobody thought to ask, and entry 13 the equipment model the wire
+entries quietly assumed was flat. Three entries were answered and left. Entry
+12, `req_id` admission, moved into P-022. Entry 5, the Noise handshake, moved
+into [PROTOCOL.md](../PROTOCOL.md) as P-226 through P-243, and entry 2, cloud
+confidentiality, was settled with it: every transport is sealed, and the cloud
+reads plaintext because the owner chose an alerting service over one the relay
+cannot read, which the [rationale](../PROTOCOL-RATIONALE.md) records under
+*What v1 deliberately did not provide*. Their numbers are not reused, so a
+reference to any other entry still means the same thing. They live
 here rather than inline because an open question sitting in a normative
 document reads as a specification to somebody who skimmed to their section and
 stopped. A paragraph saying "most
@@ -59,10 +65,8 @@ is not deferred, it is forgotten.
 | | Question | Trigger |
 |---|---|---|
 | 1 | Channel identity across reassignment | First channel repointed at a deployed site, or the first site running a configuration that is not ours |
-| 2 | Cloud confidentiality | First cloud client enrolled at a site we do not own |
 | 3 | Aggregate record shape | Decidable a month after the first shadow deployment; **hard deadline: before the ring starts filling for a winter** |
 | 4 | Rate limiting policy | Measurements the first time a browser talks to real hardware; before any off-site transport |
-| 5 | Noise handshake | The first unit that leaves our hands |
 | 6 | Firmware bodies and the signing manifest | **Manifest before the first unit ships with a locked bootloader** |
 | 7 | BLE and MQTT conformance | The first byte over either link |
 | 8 | Command argument schemas | The first output granted authority — it needs exactly one kind |
@@ -103,35 +107,6 @@ that comes up running a configuration that is not ours — whichever is first.
 Until then the interim rule is operator advice and not a wire rule: **do not
 reuse a channel number, allocate a new one.** It costs nothing to follow now and
 it does not bind the decision.
-
----
-
-## 2. Cloud confidentiality
-
-**The question.** TLS terminates on the comms processor and again at the relay,
-so the cloud can read every reading it forwards. Should telemetry be encrypted
-end to end between the controller and the phone, leaving the relay a blind pipe?
-
-**Why it is not guessed.** Because "encrypt it, obviously" deletes the feature.
-A relay that can read telemetry is a relay that can notice a bank at 30 % at
-3 a.m. and wake a phone that is asleep with the app closed. Move the telemetry
-behind a key the relay does not hold and notification generation moves to the
-phone — which then has to be running and connected to notice anything, in exactly
-the case where nobody is looking. Push notification already requires the cloud;
-this decides whether it also requires the cloud to be trusted with readings.
-
-Commands are MAC'd end to end either way. A compromised relay can never forge a
-start, a setpoint change or a firmware acceptance, in any version of this. What
-is at stake is only who may **read**, and that is a product question in a crypto
-costume.
-
-**What must be true first.** Somebody has to say what is being sold: an alerting
-service, or a private one. That answer does not exist while every site is ours and
-every alert goes to our own phone.
-
-**Trigger.** The first `client_kind = 3` enrolment at a site we do not own.
-Nothing before the first shadow deployment needs it — that deployment has no
-cloud at all.
 
 ---
 
@@ -279,15 +254,16 @@ limit — it already sees every frame — and it is the component this protocol
 insists must not interpret anything. A limit enforced only there is a limit that
 an attacker who owns that chip simply lifts. So the limit that matters has to
 also exist at the controller, where the budget is thin and known: fanning events
-out as N authenticated copies already costs 0.026 % of the UART and 0.014 % CPU
-duty at 8 sessions. That is a calculation, not a measurement, and it covers the
-cheap path. Nobody has measured the expensive ones.
+out as N sealed copies already costs 0.026 % of the UART at 8 sessions, and its
+CPU cost, 0.014 % under v1's HMAC, is a bound rather than a figure under the
+cipher that replaced it. Both are calculations, not measurements, and they cover
+the cheap path. Nobody has measured the expensive ones.
 
 The transports genuinely differ, which is why one number will not do. A BLE
 client at BLE throughput cannot flood anything. A WebSocket client on the LAN can
 ask for `ReadLog` from `oldest_seq` in a loop, and each answer is a NOR read plus
 a page of up to `MAX_LOG_PAGE_BYTES` — 896 bytes, roughly 30 records — encoded
-and MAC'd. `MAX_LOG_PAGE_ENTRIES` never binds: a `LogEntry` with a real `seq`
+and sealed. `MAX_LOG_PAGE_ENTRIES` never binds: a `LogEntry` with a real `seq`
 and a timestamp is 27 bytes before its body carries anything, so the byte arm
 runs out first every time. A `Snapshot` at the 32-channel cap is the other
 expensive one. Neither of those has a millisecond figure attached to it.
@@ -301,36 +277,6 @@ requests get timed and the numbers get written down. The policy follows the
 numbers. **Hard deadline: before any transport reachable from off-site is
 enabled.** Until then every client is somebody standing inside the building, and
 the cost of a flood is that they have to stop and go home.
-
----
-
-## 5. When to move to a Noise handshake
-
-**The question.** When does the symmetric scheme get replaced by an
-authenticated key agreement — X25519 with ChaCha20-Poly1305, Noise-style, which
-is what Matter does for this exact problem under this exact constraint?
-
-**Why it is not guessed.** The symmetric scheme is not a placeholder. It
-transmits no key, so a comms processor that watches every pairing for the life of
-the device learns nothing it can use. What it does not have is forward secrecy,
-and it cannot survive a camera. A label photographed once yields every client key
-that device will ever mint, permanently, and the label cannot be reprinted into a
-unit already on a wall. That is a real limitation with a known price —
-10–15 KB of flash against ~256 KB, tens of milliseconds per session on an M0+ —
-and it is not urgent while every label is in our building.
-
-**What must be true first.** This cannot be an edit. The handshake is final the
-first time units are paired in cabins: their `client_key` and stored counters are
-derived from those exact formulas, and changing a label or a field width
-un-pairs them from four hours away. So the upgrade is a **second** handshake
-offered alongside the first, chosen at `Discover`, with v1 supported for the
-service life of every unit already fielded. Which means version negotiation has
-to have been exercised in the field at least once before it is trusted to carry
-something this load-bearing.
-
-**Trigger.** The first unit that leaves our hands — a site we do not own, or a
-unit shipped to somebody else. Not a date: the day a label we cannot reprint is
-in a building we cannot walk into.
 
 ---
 
@@ -467,7 +413,7 @@ the same traces, then demonstrate discovery/subscription, platform value limits,
 FIFO queue order through wrap, bounded stack memory and send-stall cleanup,
 concurrent upload/notifications, reconnect/callback isolation, BLE/Wi-Fi coexistence
 and controller-loss shutdown on the board. Pair must fail outside/after the
-STM32 physical window and with a wrong proof, including on a bonded connection.
+STM32 physical window and with a wrong label, including on a bonded connection.
 Record supported phone OS versions, negotiated MTUs and implementation revisions
 with that evidence. [km43#81](https://github.com/origin89hq/km43/issues/81) owns
 protocol qualification; [firmware#96](https://github.com/origin89hq/firmware/issues/96)
@@ -502,7 +448,7 @@ reasons are unknown is a kind whose arguments are unknown, because half of what
 an argument does is give the controller something to refuse.
 
 **Why the numbers are allocated now regardless.** `kind` is a `u16` inside a
-MAC'd operation. A number squatted by somebody's bench experiment is a number that
+signed, sealed operation. A number squatted by somebody's bench experiment is a number that
 cannot be reclaimed once a client has shipped using it, and routing around a
 squatted low number is a permanent ugly seam in a registry that will outlive all
 of us. Allocating in REGISTRY is what stops that; it is the opposite of squatting,
@@ -736,8 +682,8 @@ never been asked at a real site.
 **A warning about the vectors.** The event vector in
 [`vectors/v1.json`](vectors/v1.json) encodes kind `0x0201` with a body of
 `{1: 3, 2: 1}`. Those two keys are allocated nowhere and are not a schema — the
-vector exists to pin framing, the wrapper and the MAC, and the body inside it is
-filler that had to be some bytes. Reading it as an allocation is exactly the
+vector exists to pin framing and the authenticated body around it, and the body
+inside it is filler that had to be some bytes. Reading it as an allocation is exactly the
 failure this file exists to prevent. Pinning it, or replacing it, is the first
 thing this entry does when it lands.
 
@@ -765,12 +711,12 @@ runs them — which is what this entry asked for. Each is narrower than the entr
 described, and the remainder is what keeps it open.
 
 - **The authentication coverage matrix** became a parse-time property rather
-  than a check. `Auth` in [`registry.rs`](../../crates/xtask/src/registry.rs) has nine
-  variants and no tenth, so a registry naming a rule that does not exist fails
+  than a check. `Auth` in [`registry.rs`](../../crates/xtask/src/registry.rs) has seven
+  variants and no eighth, so a registry naming a rule that does not exist fails
   to load at the line that names it, and `every_message_declares_its_auth`
   catches a direction with no label at all. **What it does not do** is compare a
   label against the rule it claims: nothing checks that the `signed` in the
-  table agrees with P-052, P-053 or P-054. The `Error` row — *session or none*,
+  table agrees with P-052, P-053 or P-054. The `Error` row — *sealed or bare*,
   which is P-142's answer about the sender rather than a lookup — is still
   settled by whoever reads it, and it is the row this entry named as the one
   showing why a generated matrix beats reading a column.
@@ -794,8 +740,9 @@ described, and the remainder is what keeps it open.
   the encoded bodies in `vectors/v1.json`, so it catches a secret that reached a
   vector. **It does not read the message definitions**, so a field that would
   leak key material in an implementation but was never put in a vector passes.
-  The check it stands in for — no *definition* names a field derived from
-  `device_key`, `pair_key`, `client_key`, `session_key` or the printed secret —
+  The check it stands in for — no *definition* names a field derived from the
+  printed secret, `pair_psk`, `refusal_key`, `admit_key`, the controller's
+  private key, the random bit generator's state or a transport key —
   needs the body schemas that entry 10 defers, and cannot be finished before
   them.
 
@@ -899,7 +846,7 @@ questions are preserved in [Equipment coverage research](COVERAGE-RESEARCH.md).
 | Firmware targets | Controller and comms images are discussed, while attached-device and component firmware identity, compatibility, progress, and ownership are not modelled | Entry 6 owns firmware bodies and manifest; its target vocabulary depends on this entry's inventory rather than inventing a second device-id space |
 | Communication health | Value staleness cannot distinguish an absent instrument, unsupported signal, bad CRC, open/short/reversed sensor, changing module list, or a healthy device behind a broken bus | This entry: device/component presence and health separate from signal validity, with last-seen and bounded diagnostic counters where a source provides them |
 | Evolution and limits | There is no topology generation, descriptor/schema identity, per-device capability negotiation, or reported cap for devices, components, signals, vector length, and descriptor pages | This entry: every new collection is bounded, capability-discovered, and versioned; unknown normalized and vendor extensions remain skippable under P-019 |
-| Security and conformance | A complete data model would still sit on known open security and verification work | Entries 2, 4, 5, 7, and 11 remain the owners of confidentiality, rate limiting, the later Noise handshake, BLE/MQTT evidence, and spec checks. This entry does not duplicate or hide them. `req_id` admission, once entry 12, is settled in P-022 |
+| Security and conformance | A complete data model would still sit on known open security and verification work | Entries 4, 7, and 11 remain the owners of rate limiting, BLE/MQTT evidence, and spec checks. This entry does not duplicate or hide them. `req_id` admission, once entry 12, is settled in P-022; confidentiality and key agreement, once entries 2 and 5, are settled in P-226 through P-243 |
 
 **The minimum proof before choosing bytes.** Build six source-backed fixtures:
 

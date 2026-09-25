@@ -25,9 +25,9 @@ use crate::registry::{Auth, Message, Registry, Status};
 enum Stage {
     /// No key exists yet on either side.
     BeforeAnyKey,
-    /// The printed secret and the button.
+    /// The label and the button.
     Enrolment,
-    /// Proving a client key and minting a session key.
+    /// A Noise handshake: pairing messages 1 and 3, or a session's.
     Handshake,
     /// A session is running.
     InSession,
@@ -39,9 +39,9 @@ impl Stage {
     fn of(auth: Auth) -> Self {
         match auth {
             Auth::None => Self::BeforeAnyKey,
-            Auth::PairKey => Self::Enrolment,
-            Auth::Proof => Self::Handshake,
-            Auth::Wrq | Auth::Rsp | Auth::Evt | Auth::Signed | Auth::RspOrBare => Self::InSession,
+            Auth::PairReply | Auth::PairSealed => Self::Enrolment,
+            Auth::Handshake => Self::Handshake,
+            Auth::Sealed | Auth::Signed | Auth::SealedOrBare => Self::InSession,
             Auth::Link => Self::Link,
         }
     }
@@ -49,8 +49,8 @@ impl Stage {
     fn title(self) -> &'static str {
         match self {
             Self::BeforeAnyKey => "Before any key exists",
-            Self::Enrolment => "Enrolment — printed secret, and somebody at the panel",
-            Self::Handshake => "Handshake — proving a client key",
+            Self::Enrolment => "Enrolment — the label, and somebody at the panel",
+            Self::Handshake => "Handshake — agreeing keys",
             Self::InSession => "In session",
             Self::Link => "The internal UART",
         }

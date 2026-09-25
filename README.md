@@ -2,16 +2,16 @@
 
 # KM43
 
-KM43 is the bounded, authenticated message protocol between an Origin89
-controller and its clients. It is link-agnostic: UART, WebSocket, USB, BLE and
-MQTT change the framing beneath it, not the message semantics above it. The
+KM43 is the bounded, authenticated and encrypted message protocol between an
+Origin89 controller and its clients. It is link-agnostic: UART, WebSocket, USB,
+BLE and MQTT change the framing beneath it, not the message semantics above it. The
 reasoning is in the [protocol rationale](docs/PROTOCOL-RATIONALE.md); the
 controller that speaks it lives in
 [origin89](https://github.com/origin89hq/origin89).
 
 The specification is a normative draft. Nothing has shipped, so a wire format,
 a number and a public signature are all free to change until the first paired
-unit freezes key derivation, protocol versioning and serial numbers.
+unit freezes the handshake, protocol versioning and serial numbers.
 
 | Part | What it holds | Where |
 | --- | --- | --- |

@@ -18,6 +18,7 @@ mod check;
 mod codegen;
 mod diagram;
 mod index;
+mod noise_vectors;
 mod preimage;
 mod registry;
 mod rows;

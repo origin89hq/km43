@@ -10,7 +10,7 @@ tableOfContents:
 
 <p class="o89-doc-kicker">KM43 / reproducible bytes</p>
 
-<p class="o89-doc-deck">One machine-readable answer for every key derivation, MAC preimage, encoding boundary, and complete frame an implementation must reproduce.</p>
+<p class="o89-doc-deck">One machine-readable answer for every key derivation, tag preimage, handshake message, encoding boundary, and complete frame an implementation must reproduce.</p>
 
 <dl class="o89-doc-facts">
   <div>
@@ -41,7 +41,7 @@ tableOfContents:
 
 A key-derivation disagreement is invisible on the wire. Two
 implementations that parameterise HKDF differently produce frames that look
-perfect in a hex dump and fail every MAC, and the only symptom is "it does not
+perfect in a hex dump and fail every tag, and the only symptom is "it does not
 work" on a bench day. A CRC is the same: `CRC-16/CCITT-FALSE` names one algorithm
 but nobody remembers which of the CCITT variants that is at 11 p.m.
 
@@ -60,6 +60,8 @@ fails:
 |---|---|
 | HKDF-SHA256 | RFC 5869 A.1 and A.3 |
 | HMAC-SHA256 | RFC 4231 case 2 |
+| X25519 | RFC 7748 section 6.1 |
+| ChaCha20-Poly1305 | RFC 8439 section 2.8.2 |
 | CRC-16/CCITT-FALSE | catalogue check value `0x29B1` |
 | COBS | Cheshire & Baker, all nine cases |
 | CBOR | RFC 8949 Appendix A |
@@ -78,13 +80,16 @@ produces the shorter string.
 
 | Section | Contents |
 |---|---|
-| `conventions` | Byte order, truncation, HKDF argument assignment, CBOR profile |
-| `inputs` | The fixed, obviously-fake secret, device id, challenge and nonce |
+| `conventions` | Byte order, truncation, HKDF argument assignment, the Noise names and revision, CBOR profile |
+| `inputs` | The fixed, obviously-fake secret, device id, challenge, controller and client keys, and every ephemeral key a handshake draws |
 | `limits` | `MAX_PAYLOAD` and the derivation of `MAX_FRAME` |
-| `derived_keys` | `client_key`, `session_key` and `pair_key` with every HKDF argument spelled out |
+| `derived_keys` | `pair_psk`, `refusal_key` and `admit_key` with every HKDF argument spelled out |
+| `keys` | The controller and client public keys, and the controller fingerprint the label prints |
 | `qr` | The label payload P-049 counts, and its length |
-| `macs` | `pair_proof`, `pair_ack_mac`, `hello_proof`, `signed_request`, `wrapper_request`, `response`, `event`, `error_response` — each with its full preimage in hex |
-| `bodies` | Every published body, readable and as CBOR; `pair_0x0B`, `pair_0x8B` and the bare `error_0xFF` also as the whole envelope, because the crate writes those only whole |
+| `macs` | The pairing refusal tag and the `Hello` admission tag, each with its full preimage in hex |
+| `handshakes` | The pairing (`XXpsk0`) and the session (`IK`) message by message: prologue, payload, message bytes, handshake hash and the two transport keys |
+| `sealed` | A request, a signed request, a response, an event, a sealed error and `Enrol 0x93`, each with its key, nonce, associated data, inner body and ciphertext |
+| `bodies` | Every published body, readable and as CBOR; the handshake messages (`pair_0x0B`, both `Pair 0x8B` answers, `enrol_0x13`, `hello_0x01`, `hello_0x81`) and the bare `error_0xFF` also as the whole envelope, because the crate writes those only whole |
 | `crc16`, `cobs` | Edge cases: empty, a single zero, embedded zeros, the 254-byte block boundary |
 | `frame` | One complete encoded frame, envelope through delimiter |
 | `link_local` | Eight controller–comms frames, envelope through delimiter, with their CRCs |

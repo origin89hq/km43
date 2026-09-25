@@ -17,6 +17,8 @@ use serde_json::{Value, json, map::Map};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 
+use crate::noise_vectors as noise;
+
 type HmacSha256 = Hmac<Sha256>;
 
 fn hmac(key: &[u8], msg: &[u8]) -> Result<[u8; 32]> {
@@ -278,6 +280,47 @@ impl SelfCheck {
         Ok(())
     }
 
+    /// The two primitives the handshakes and the transport stand on, against
+    /// the RFCs that define them: a vector built on a wrong X25519 or a wrong
+    /// AEAD is a vector every correct implementation fails.
+    fn dh_and_aead(&mut self) -> Result<()> {
+        let key = |s: &str| -> Result<[u8; 32]> {
+            hex_to_bytes(s)?
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("an X25519 key is thirty-two bytes"))
+        };
+        let alice = key("77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a")?;
+        let bob = key("5dab087e624a8a4b79e17f8b83800ee66f3bb1292618b6fd1c2f8b27ff88e0eb")?;
+        self.expect(
+            "X25519 RFC 7748 6.1 Alice's public key",
+            &hex(&noise::public(&alice)),
+            "8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a",
+        );
+        self.expect(
+            "X25519 RFC 7748 6.1 shared secret",
+            &hex(&noise::agree(&alice, &noise::public(&bob))),
+            "4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742",
+        );
+
+        let aead_key: [u8; 32] =
+            std::array::from_fn(|i| 0x80u8.wrapping_add(u8::try_from(i).unwrap_or(0)));
+        let nonce: [u8; 12] = hex_to_bytes("070000004041424344454647")?
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("the RFC 8439 nonce is twelve bytes"))?;
+        let sealed = noise::seal_raw(
+            &aead_key,
+            &nonce,
+            &hex_to_bytes("50515253c0c1c2c3c4c5c6c7")?,
+            b"Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, sunscreen would be it.",
+        )?;
+        self.expect(
+            "ChaCha20-Poly1305 RFC 8439 2.8.2",
+            &hex(&sealed),
+            "d31a8d34648e60db7b86afbc53ef7ec2a4aded51296e08fea9e2b5a736ee62d63dbea45e8ca9671282fafb69da92728b1a71de0a9e060b2905d6a5b67ecd3b3692ddbd7f2d778b8c9803aee328091b58fab324e4fad675945585808b4831d7bc3ff4def08e4b7a9de576d26586cec64b61161ae10b594f09e26a7e902ecbd0600691",
+        );
+        Ok(())
+    }
+
     fn cobs(&mut self) -> Result<()> {
         // Cheshire & Baker's own examples. Cases 6-9 are the 254-byte boundary.
         let r = |a: u8, b: u8| -> Vec<u8> { (a..=b).collect() };
@@ -502,7 +545,7 @@ impl SelfCheck {
 
     /// Byte and text strings share the head, so they share the boundary.
     ///
-    /// A 16-byte MAC sits under it and a 32-byte tag over it, and an encoder
+    /// A 16-byte tag sits under it and a 32-byte key over it, and an encoder
     /// that writes a one-byte head for 24 makes the next field start a byte
     /// early — the map after it decodes as garbage rather than as an error.
     fn cbor_string_widths(&mut self) -> Result<()> {
@@ -536,7 +579,7 @@ impl SelfCheck {
             // A label is UTF-8 and somebody will name a room with an accent in
             // it. The length is bytes, not characters, and the two differ by
             // one here — count characters and the reader is left a byte short
-            // in the middle of a MAC.
+            // in the middle of a sealed body.
             (
                 "CBOR tstr \"café\", 4 characters but 5 bytes",
                 Cb::T("café".into()),
@@ -662,7 +705,7 @@ impl SelfCheck {
             "0801",                             // 8: epoch = 1
         );
         const HELLO: &str = concat!(
-            "b81d", // map, 29 keys — past 23, so the header grows its own byte
+            "b81f", // map, 31 keys — past 23, so the header grows its own byte
             "0101", // 1: protocol_major = 1
             "0200", // 2: protocol_minor = 0
             "0303", // 3: session_id = 3
@@ -702,10 +745,12 @@ impl SelfCheck {
             "181b0c",     // 27: max_selectors = 12
             "181c1818",   // 28: max_history_signals = 24
             "181d04",     // 29: max_topology_depth = 4
+            "181e07",     // 30: client_id = 7
+            "181f01",     // 31: generation = 1
         );
 
         self.expect("Discover 0x80 body", &hex(&b.discover_body()?), DISCOVER);
-        self.expect("Hello 0x81 inner body", &hex(&b.hello_body()?), HELLO);
+        self.expect("HelloReport body", &hex(&b.hello_body()?), HELLO);
         Ok(())
     }
 
@@ -728,6 +773,7 @@ impl SelfCheck {
 fn self_check(b: &Builder) -> Result<()> {
     let mut c = SelfCheck::new();
     c.kdf_and_mac()?;
+    c.dh_and_aead()?;
     c.cobs()?;
     c.cbor()?;
     c.pre_session_bodies(b)?;
@@ -751,16 +797,15 @@ fn hex_to_bytes(s: &str) -> Result<Vec<u8>> {
         .collect()
 }
 
-const L_CLIENT_KEY: &[u8] = b"km43/v1/client-key";
-const L_SESSION_KEY: &[u8] = b"km43/v1/session-key";
-const L_PAIR_KEY: &[u8] = b"km43/v1/pair-key";
-const L_PAIR_PROOF: &[u8] = b"km43/v1/pair-proof";
-const L_PAIR_ACK: &[u8] = b"km43/v1/pair-ack";
-const L_HELLO_PROOF: &[u8] = b"km43/v1/hello-proof";
-const L_REQ: &[u8] = b"km43/v1/req";
-const L_WRQ: &[u8] = b"km43/v1/wrq";
-const L_RSP: &[u8] = b"km43/v1/rsp";
-const L_EVT: &[u8] = b"km43/v1/evt";
+const L_PAIR_PSK: &[u8] = b"km43/v1/pair-psk";
+const L_PAIR_REFUSAL: &[u8] = b"km43/v1/pair-refusal";
+const L_ADMIT_KEY: &[u8] = b"km43/v1/admit-key";
+const L_PAIR_REFUSED: &[u8] = b"km43/v1/pair-refused";
+const L_HELLO_ADMIT: &[u8] = b"km43/v1/hello-admit";
+const L_CONTROLLER_FP: &[u8] = b"km43/v1/controller-fp";
+
+/// The one suite (P-226), carried in `Pair` and `Hello` and in every prologue.
+const SUITE: u8 = 1;
 
 const MAX_PAYLOAD: usize = 1024;
 
@@ -789,11 +834,14 @@ enum ClientKind {
 #[derive(Clone, Copy)]
 enum PairOutcome {
     Enrolled = 1,
+    WindowClosed = 2,
+    Proceed = 6,
 }
 
 /// The message types the vectors exercise.
 #[derive(Clone, Copy)]
 enum Msg {
+    HelloRequest = 0x01,
     Event = 0x04,
     ReadLog = 0x05,
     GetConfig = 0x06,
@@ -802,8 +850,8 @@ enum Msg {
     Time = 0x0A,
     Pair = 0x0B,
     WifiScan = 0x11,
+    Enrol = 0x13,
     Discover = 0x80,
-    // `Hello` is the 0x81 *response*; the request 0x01 has no vector here.
     Hello = 0x81,
     LogPage = 0x85,
     Config = 0x86,
@@ -813,15 +861,16 @@ enum Msg {
     PairAck = 0x8B,
     WifiScanAnswer = 0x91,
     WifiStatusAnswer = 0x92,
+    EnrolAnswer = 0x93,
     Error = 0xFF,
 }
 
 /// The two error codes the published `Error 0xFF` bodies carry.
 ///
-/// One from each side of the registry's MAC'd column: `hello_required_first`
+/// One from each side of the registry's sealed column: `hello_required_first`
 /// is the refusal a controller sends with no key in hand, so it goes bare;
 /// `busy_retry` is one a receiver refuses to read out of a bare body (P-051),
-/// so it only ever travels wrapped. A vector for each is what pins the column
+/// so it only ever travels sealed. A vector for each is what pins the column
 /// from outside the crate.
 #[derive(Clone, Copy)]
 enum ErrorCode {
@@ -1010,14 +1059,16 @@ impl SelfReport {
 /// Everything the vectors are computed from.
 ///
 /// The inputs are obviously fake so nobody mistakes one for a real device
-/// secret in a log, and the keys are derived once here rather than at each use.
+/// secret in a log. Every private key is a fixed run of bytes: X25519 clamps
+/// whatever it is given, so any thirty-two bytes are a key, and a run is easy
+/// to recognise in a dump.
 pub struct Builder {
     printed_secret: Vec<u8>,
     device_id: Vec<u8>,
     challenge: Vec<u8>,
     next_challenge: Vec<u8>,
-    client_nonce: Vec<u8>,
     client_id: u32,
+    generation: u32,
     session_id: u16,
     req_id: u32,
     counter: u64,
@@ -1025,12 +1076,21 @@ pub struct Builder {
     epoch: u32,
     report: SelfReport,
 
-    pair_key: Vec<u8>,
-    client_key: Vec<u8>,
-    session_key: Vec<u8>,
-    client_key_info: Vec<u8>,
-    session_key_info: Vec<u8>,
-    session_salt: Vec<u8>,
+    controller_key: [u8; 32],
+    client_key: [u8; 32],
+    pairing_client_ephemeral: [u8; 32],
+    pairing_controller_ephemeral: [u8; 32],
+    hello_client_ephemeral: [u8; 32],
+    hello_controller_ephemeral: [u8; 32],
+
+    pair_psk: Vec<u8>,
+    refusal_key: Vec<u8>,
+    admit_ikm: [u8; 32],
+    admit_key: Vec<u8>,
+    pairing_prologue: Vec<u8>,
+    session_prologue: Vec<u8>,
+    pairing: noise::Pairing,
+    session: noise::Session,
 }
 
 /// One of the bodies the crate writes only as a whole envelope, published both
@@ -1042,152 +1102,293 @@ struct WholeEnvelope {
     req_id: u32,
     body: Vec<u8>,
     authentication: &'static str,
-    body_readable: &'static str,
+    /// `None` for a body whose keys depend on its outcome, which the spec check
+    /// has no way to compare against one field list.
+    body_readable: Option<&'static str>,
     envelope_readable: &'static str,
 }
 
 impl WholeEnvelope {
     fn entry(self) -> Result<(&'static str, Value)> {
         let whole = Builder::envelope(self.kind, self.session, self.req_id, &self.body)?;
-        Ok((
-            self.name,
-            obj(vec![
-                ("type", json!(self.kind as u8)),
-                ("authentication", json!(self.authentication)),
-                ("session_id", json!(self.session)),
-                ("req_id", json!(self.req_id)),
-                ("body_readable", json!(self.body_readable)),
-                ("body_cbor", json!(hex(&self.body))),
-                ("body_len", json!(self.body.len())),
-                ("envelope_readable", json!(self.envelope_readable)),
-                ("whole_envelope_cbor", json!(hex(&whole))),
-                ("whole_envelope_len", json!(whole.len())),
-            ]),
-        ))
+        let mut pairs = vec![
+            ("type", json!(self.kind as u8)),
+            ("authentication", json!(self.authentication)),
+            ("session_id", json!(self.session)),
+            ("req_id", json!(self.req_id)),
+        ];
+        if let Some(readable) = self.body_readable {
+            pairs.push(("body_readable", json!(readable)));
+        }
+        pairs.extend([
+            ("body_cbor", json!(hex(&self.body))),
+            ("body_len", json!(self.body.len())),
+            ("envelope_readable", json!(self.envelope_readable)),
+            ("whole_envelope_cbor", json!(hex(&whole))),
+            ("whole_envelope_len", json!(whole.len())),
+        ]);
+        Ok((self.name, obj(pairs)))
     }
 }
 
-/// A response body and its MAC, kept so the frame vector wraps the same bytes.
-struct Response {
-    inner: Vec<u8>,
-    mac: Vec<u8>,
+/// A run of thirty-two bytes from `first`, wrapping.
+fn run(first: u8) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    for (slot, byte) in out.iter_mut().zip(first..=u8::MAX) {
+        *slot = byte;
+    }
+    out
 }
+
+/// The pre-session `req_id`s, one per exchange, and the ones the session uses.
+/// A session issues its own from 1 (P-232); these are the seventeenth to the
+/// nineteenth, so the vectors sit mid-session rather than at a boundary.
+const PAIR_REQ_ID: u32 = 1;
+const ENROL_REQ_ID: u32 = 2;
+const HELLO_REQ_ID: u32 = 3;
+const COMMAND_REQ_ID: u32 = 18;
+const REFUSED_REQ_ID: u32 = 19;
+
+/// The controller's nonces in the session the transport vectors run in.
+const RESPONSE_NONCE: u64 = 0;
+const EVENT_NONCE: u64 = 1;
+const ERROR_NONCE: u64 = 2;
+
+/// The version string both offers carry.
+const CLIENT_VERSION: &str = "o89-cli 0.1.0";
 
 impl Builder {
     fn new() -> Result<Self> {
         let printed_secret: Vec<u8> = (0u8..32).collect();
         let device_id = b"ORIGIN89 DEMO 01".to_vec();
         let challenge = hex_to_bytes("a0a1a2a3a4a5a6a7a8a9aaabacadaeaf")?;
-        let client_nonce = hex_to_bytes("b0b1b2b3b4b5b6b7b8b9babbbcbdbebf")?;
+        let next_challenge = hex_to_bytes("c0c1c2c3c4c5c6c7c8c9cacbcccdcecf")?;
         let client_id: u32 = 7;
+        let generation: u32 = 1;
         let session_id: u16 = 3;
-
-        // Bumped on every factory reset, and the only input to a client key
-        // anybody can change: the device id is etched and the printed secret is
-        // on a label nobody can reprint into a unit already on a wall.
+        let counter: u64 = 0x42;
+        let label = "kitchen phone";
         let epoch: u32 = 1;
+        let report = SelfReport::new();
 
-        let client_key_info =
-            [L_CLIENT_KEY, &epoch.to_be_bytes(), &client_id.to_be_bytes()].concat();
-        let session_salt = [challenge.clone(), client_nonce.clone()].concat();
-        let session_key_info = [L_SESSION_KEY, &session_id.to_be_bytes()].concat();
-        let client_key = hkdf(&device_id, &printed_secret, &client_key_info, 32)?;
+        let controller_key = run(0x40);
+        let client_key = run(0x60);
+        let pairing_client_ephemeral = run(0x80);
+        let pairing_controller_ephemeral = run(0xE0);
+        let hello_client_ephemeral = run(0x20);
+        let mut hello_controller_ephemeral = run(0xE0);
+        hello_controller_ephemeral.reverse();
+
+        let pair_psk = hkdf(&device_id, &printed_secret, L_PAIR_PSK, 32)?;
+        let psk: [u8; 32] = pair_psk
+            .clone()
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("the pre-shared key is thirty-two bytes"))?;
+        let refusal_key = hkdf(&device_id, &printed_secret, L_PAIR_REFUSAL, 32)?;
+        let admit_ikm = noise::agree(&client_key, &noise::public(&controller_key));
+        if admit_ikm != noise::agree(&controller_key, &noise::public(&client_key)) {
+            bail!("the two ends of the admission key's DH disagree");
+        }
+        let admit_key = hkdf(&device_id, &admit_ikm, L_ADMIT_KEY, 32)?;
+
+        let major = u8::try_from(PROTOCOL_MAJOR).context("the major fits a byte")?;
+        let minor = u8::try_from(PROTOCOL_MINOR).context("the minor fits a byte")?;
+        let pairing_prologue = noise::PrologueFields {
+            suite: SUITE,
+            major,
+            minor,
+            device_id: &device_id,
+            epoch,
+            challenge: &challenge,
+            handle: session_id,
+        }
+        .bytes()?;
+        // The `Hello` after an enrolment presents the challenge `Enrol 0x93`
+        // handed back (P-058, P-227), never the one message 1 spent.
+        let session_prologue = noise::PrologueFields {
+            suite: SUITE,
+            major,
+            minor,
+            device_id: &device_id,
+            epoch,
+            challenge: &next_challenge,
+            handle: session_id,
+        }
+        .bytes()?;
+
+        let pairing = noise::pair(&noise::PairingInputs {
+            prologue: &pairing_prologue,
+            psk: &psk,
+            client: &client_key,
+            controller: &controller_key,
+            client_ephemeral: &pairing_client_ephemeral,
+            controller_ephemeral: &pairing_controller_ephemeral,
+            offer: &Self::pair_offer_body(label)?,
+            empty: &cbor(&Cb::M(BTreeMap::new()))?,
+        })?;
+        let session = noise::hello(&noise::SessionInputs {
+            prologue: &session_prologue,
+            client: &client_key,
+            controller: &controller_key,
+            client_ephemeral: &hello_client_ephemeral,
+            controller_ephemeral: &hello_controller_ephemeral,
+            offer: &Self::hello_offer_body()?,
+            report: &Self::report_body(&report, session_id, counter, client_id, generation)?,
+        })?;
 
         Ok(Self {
-            pair_key: hkdf(&device_id, &printed_secret, L_PAIR_KEY, 32)?,
-            session_key: hkdf(&session_salt, &client_key, &session_key_info, 32)?,
-            client_key,
-            client_key_info,
-            session_key_info,
-            session_salt,
             printed_secret,
             device_id,
             challenge,
-            next_challenge: hex_to_bytes("c0c1c2c3c4c5c6c7c8c9cacbcccdcecf")?,
-            client_nonce,
+            next_challenge,
             client_id,
+            generation,
             session_id,
             req_id: 0x11,
-            counter: 0x42,
-            label: "kitchen phone",
+            counter,
+            label,
             epoch,
-            report: SelfReport::new(),
+            report,
+            controller_key,
+            client_key,
+            pairing_client_ephemeral,
+            pairing_controller_ephemeral,
+            hello_client_ephemeral,
+            hello_controller_ephemeral,
+            pair_psk,
+            refusal_key,
+            admit_ikm,
+            admit_key,
+            pairing_prologue,
+            session_prologue,
+            pairing,
+            session,
         })
     }
 
-    /// The client's pairing proof preimage. `label` goes last because it is
-    /// the only variable-width field: nothing follows it, so no length prefix
-    /// is needed.
-    ///
-    /// One function feeds both the `macs` entry and the `Pair 0x0B` body, so
-    /// the tag the body carries in key 3 is the tag the file publishes, by
-    /// construction rather than by a reader checking.
-    fn pair_proof_preimage(&self) -> Vec<u8> {
-        [
-            L_PAIR_PROOF,
-            &self.device_id,
-            &self.challenge,
-            &self.client_nonce,
-            &[ClientKind::App as u8],
-            self.label.as_bytes(),
-        ]
-        .concat()
+    /// `PairOffer`, sealed under the pre-shared key inside message 1.
+    fn pair_offer_body(label: &str) -> Result<Vec<u8>> {
+        cbor(&cmap! {
+            1 => Cb::U(PROTOCOL_MAJOR),
+            2 => Cb::U(PROTOCOL_MINOR),
+            3 => Cb::T(CLIENT_VERSION.into()),
+            4 => Cb::U(ClientKind::App as u64),
+            5 => Cb::T(label.into()),
+        })
     }
 
-    /// The preimage of the controller's answer, which fixes the client's
-    /// identity and carries the challenge for the handshake that follows.
-    fn pair_ack_preimage(&self) -> Vec<u8> {
-        [
-            L_PAIR_ACK,
-            &self.device_id,
-            &self.challenge,
-            &self.client_nonce,
-            &[PairOutcome::Enrolled as u8],
-            &self.client_id.to_be_bytes(),
-            &self.epoch.to_be_bytes(),
-            &self.next_challenge,
-        ]
-        .concat()
+    /// `HelloOffer`, the payload of the session's message 1.
+    fn hello_offer_body() -> Result<Vec<u8>> {
+        cbor(&cmap! {
+            1 => Cb::U(PROTOCOL_MAJOR),
+            2 => Cb::U(PROTOCOL_MINOR),
+            3 => Cb::T(CLIENT_VERSION.into()),
+        })
     }
 
-    fn pair_proof(&self) -> Result<(&'static str, Value)> {
-        Ok((
-            "pair_proof",
-            MacVector::new(DerivedKey::Pair, self.pair_proof_preimage(), "'km43/v1/pair-proof' | device_id[16] | challenge[16] | client_nonce[16] | client_kind:u8 | label (UTF-8, no NUL, last)").finish(&self.pair_key)?,
-        ))
-    }
-
-    fn pair_ack(&self) -> Result<(&'static str, Value)> {
-        Ok((
-            "pair_ack_mac",
-            MacVector::new(DerivedKey::Pair, self.pair_ack_preimage(), "'km43/v1/pair-ack' | device_id[16] | challenge[16] | client_nonce[16] | outcome:u8 | client_id:u32be | epoch:u32be | next_challenge[16]").finish(&self.pair_key)?,
-        ))
-    }
-
-    /// The `Pair 0x0B` body: the fields the proof attests, the proof, and the
-    /// nonce both preimages share (P-069).
+    /// The `Pair 0x0B` body: the suite and message 1.
     fn pair_request_body(&self) -> Result<Vec<u8>> {
         cbor(&cmap! {
-            1 => Cb::U(ClientKind::App as u64),
-            2 => Cb::T(self.label.into()),
-            3 => Cb::B(t16(hmac(&self.pair_key, &self.pair_proof_preimage())?)),
-            4 => Cb::B(self.client_nonce.clone()),
+            1 => Cb::U(u64::from(SUITE)),
+            2 => Cb::B(self.pairing.message_1.clone()),
         })
     }
 
-    /// The `Pair 0x8B` body. `epoch` is under the MAC and not in the body:
-    /// P-087 has `Discover 0x80` say it, and both ends supply it from there.
-    fn pair_ack_body(&self) -> Result<Vec<u8>> {
+    /// `Pair 0x8B` when the pairing proceeds: outcome 6 and message 2.
+    fn pair_proceed_body(&self) -> Result<Vec<u8>> {
+        cbor(&cmap! {
+            1 => Cb::U(PairOutcome::Proceed as u64),
+            2 => Cb::B(self.pairing.message_2.clone()),
+        })
+    }
+
+    /// The refusal tag of P-241, over the same message 1, for a window that had
+    /// closed by the time it arrived.
+    fn refusal_preimage(&self) -> Vec<u8> {
+        [
+            L_PAIR_REFUSED,
+            self.pairing.h1.as_slice(),
+            &[PairOutcome::WindowClosed as u8],
+        ]
+        .concat()
+    }
+
+    fn pair_refused_body(&self) -> Result<Vec<u8>> {
+        cbor(&cmap! {
+            1 => Cb::U(PairOutcome::WindowClosed as u64),
+            3 => Cb::B(t16(hmac(&self.refusal_key, &self.refusal_preimage())?)),
+        })
+    }
+
+    fn pair_refusal(&self) -> Result<(&'static str, Value)> {
+        Ok((
+            "pair_refusal",
+            MacVector::new(
+                DerivedKey::Refusal,
+                self.refusal_preimage(),
+                "'km43/v1/pair-refused' | h1[32] | outcome:u8",
+            )
+            .with("outcome", PairOutcome::WindowClosed as u8)
+            .with("h1", hex(&self.pairing.h1))
+            .body(hex(&self.pair_refused_body()?))
+            .finish(&self.refusal_key)?,
+        ))
+    }
+
+    /// `Enrol 0x13`: message 3.
+    fn enrol_request_body(&self) -> Result<Vec<u8>> {
+        cbor(&cmap! { 1 => Cb::B(self.pairing.message_3.clone()) })
+    }
+
+    /// `Enrol 0x93`'s inner body, before it is sealed.
+    fn enrol_answer_body(&self) -> Result<Vec<u8>> {
         cbor(&cmap! {
             1 => Cb::U(PairOutcome::Enrolled as u64),
             2 => Cb::U(u64::from(self.client_id)),
-            3 => Cb::B(t16(hmac(&self.pair_key, &self.pair_ack_preimage())?)),
+            3 => Cb::U(u64::from(self.generation)),
             4 => Cb::B(self.next_challenge.clone()),
         })
     }
 
+    fn admit_preimage(&self) -> Vec<u8> {
+        [
+            L_HELLO_ADMIT,
+            self.session_prologue.as_slice(),
+            &self.session.message_1,
+        ]
+        .concat()
+    }
+
+    fn hello_admit(&self) -> Result<(&'static str, Value)> {
+        Ok((
+            "hello_admit",
+            MacVector::new(
+                DerivedKey::Admit,
+                self.admit_preimage(),
+                "'km43/v1/hello-admit' | prologue[57] | handshake",
+            )
+            .with("prologue", hex(&self.session_prologue))
+            .body(hex(&self.hello_request_body()?))
+            .finish(&self.admit_key)?,
+        ))
+    }
+
+    /// `Hello 0x01`: the suite, message 1 and the admission tag.
+    fn hello_request_body(&self) -> Result<Vec<u8>> {
+        cbor(&cmap! {
+            1 => Cb::U(u64::from(SUITE)),
+            2 => Cb::B(self.session.message_1.clone()),
+            3 => Cb::B(t16(hmac(&self.admit_key, &self.admit_preimage())?)),
+        })
+    }
+
+    /// `Hello 0x81`: message 2, whose payload is the report.
+    fn hello_answer_body(&self) -> Result<Vec<u8>> {
+        cbor(&cmap! { 1 => Cb::B(self.session.message_2.clone()) })
+    }
+
     /// `ReadLog 0x05`: from 1216, at most 64. One function so the body
-    /// published on its own and the one inside `macs.wrapper_request` are the
+    /// published on its own and the one inside `sealed.readlog_request` are the
     /// same bytes.
     fn readlog_body() -> Result<Vec<u8>> {
         cbor(&cmap! {1 => Cb::U(0x04C0), 2 => Cb::U(64)})
@@ -1242,28 +1443,6 @@ impl Builder {
         .concat())
     }
 
-    fn hello_proof(&self) -> Result<(&'static str, Value)> {
-        let inner = cbor(&cmap! {
-            1 => Cb::U(PROTOCOL_MAJOR), 2 => Cb::U(PROTOCOL_MINOR),
-            3 => Cb::U(u64::from(self.client_id)),
-            4 => Cb::T("o89-cli 0.1.0".into()), 5 => Cb::B(self.client_nonce.clone()),
-        })?;
-        let preimage = [
-            L_HELLO_PROOF,
-            &self.challenge,
-            &self.client_nonce,
-            &self.client_id.to_be_bytes(),
-            &inner,
-        ]
-        .concat();
-        Ok((
-            "hello_proof",
-            MacVector::new(DerivedKey::Client, preimage, "'km43/v1/hello-proof' | challenge[16] | client_nonce[16] | client_id:u32be | payload")
-                .with("inner_body_cbor", hex(&inner))
-                .finish(&self.client_key)?,
-        ))
-    }
-
     /// `Discover 0x80`, the only thing an unauthenticated peer is given.
     ///
     /// The challenge is the one the `Pair` and `Hello` proofs below are computed
@@ -1282,17 +1461,31 @@ impl Builder {
         })
     }
 
-    /// `Hello 0x81`'s inner body — what key 1 of the wrapper carries.
-    ///
+    /// `HelloReport`, the payload of the session's message 2.
+    fn hello_body(&self) -> Result<Vec<u8>> {
+        Self::report_body(
+            &self.report,
+            self.session_id,
+            self.counter,
+            self.client_id,
+            self.generation,
+        )
+    }
+
     /// Key 11 is one below the counter the signed request uses, because it is
     /// the highest value already *accepted*: publish the two as equal and the
     /// request beside it is a replay.
-    fn hello_body(&self) -> Result<Vec<u8>> {
-        let r = &self.report;
+    fn report_body(
+        r: &SelfReport,
+        session_id: u16,
+        counter: u64,
+        client_id: u32,
+        generation: u32,
+    ) -> Result<Vec<u8>> {
         cbor(&cmap! {
             1 => Cb::U(PROTOCOL_MAJOR),
             2 => Cb::U(PROTOCOL_MINOR),
-            3 => Cb::U(u64::from(self.session_id)),
+            3 => Cb::U(u64::from(session_id)),
             4 => Cb::T(r.fw_controller.into()),
             5 => Cb::T(r.fw_comms.into()),
             6 => Cb::U(u64::from(r.capabilities)),
@@ -1300,7 +1493,7 @@ impl Builder {
             8 => Cb::U(r.log_newest_seq),
             9 => Cb::U(r.state_seq),
             10 => Cb::Bool(r.time_known),
-            11 => Cb::U(self.counter.saturating_sub(1)),
+            11 => Cb::U(counter.saturating_sub(1)),
             12 => Cb::U(u64::from(r.limits.sessions)),
             13 => Cb::U(u64::from(r.limits.channels)),
             14 => Cb::U(u64::from(r.limits.clients)),
@@ -1323,10 +1516,11 @@ impl Builder {
             27 => Cb::U(12),
             28 => Cb::U(24),
             29 => Cb::U(4),
+            30 => Cb::U(u64::from(client_id)),
+            31 => Cb::U(u64::from(generation)),
         })
     }
 
-    /// The three bodies that carry no MAC of their own.
     /// A `MAX_LABEL` label and a `MAX_IDENT` identifier, written out rather than
     /// generated, because a vector built by a loop is a vector that agrees with
     /// whatever the loop believed.
@@ -1516,7 +1710,7 @@ impl Builder {
             (
                 "authentication",
                 json!(
-                    "this is the inner body; on the wire it is key 1 of the wrapper, whose key 2 is a MAC under session_key with the label 'km43/v1/rsp'"
+                    "this is the inner body; on the wire it is sealed (P-231) under the session's controller-to-client key, as sealed.response is"
                 ),
             ),
             ("request_body_cbor", json!(hex(&request))),
@@ -1629,7 +1823,7 @@ impl Builder {
             (
                 "authentication",
                 json!(
-                    "this is the inner body; on the wire it is key 1 of the wrapper, whose key 2 is a MAC under session_key with the label 'km43/v1/rsp'"
+                    "this is the inner body; on the wire it is sealed (P-231) under the session's controller-to-client key, as sealed.response is"
                 ),
             ),
             ("request_body_cbor", json!(hex(&request))),
@@ -1736,7 +1930,7 @@ impl Builder {
             (
                 "authentication",
                 json!(
-                    "this is the inner body; on the wire it is key 1 of the wrapper, whose key 2 is a MAC under session_key with the label 'km43/v1/rsp'"
+                    "this is the inner body; on the wire it is sealed (P-231) under the session's controller-to-client key, as sealed.response is"
                 ),
             ),
             ("request_body_cbor", json!(hex(&request))),
@@ -1798,7 +1992,7 @@ impl Builder {
                     (
                         "authentication",
                         json!(
-                            "an event body; on the wire it is Event 0x04 key 4, inside a wrapper MAC'd under session_key with the label 'km43/v1/evt'"
+                            "an event body; on the wire it is Event 0x04 key 4, and the event is sealed under the session's controller-to-client key, as sealed.event is"
                         ),
                     ),
                     ("body_cbor", json!(hex(&raised))),
@@ -1820,7 +2014,7 @@ impl Builder {
                     (
                         "authentication",
                         json!(
-                            "an event body; on the wire it is Event 0x04 key 4, inside a wrapper MAC'd under session_key with the label 'km43/v1/evt'"
+                            "an event body; on the wire it is Event 0x04 key 4, and the event is sealed under the session's controller-to-client key, as sealed.event is"
                         ),
                     ),
                     ("body_cbor", json!(hex(&changed))),
@@ -1864,7 +2058,7 @@ impl Builder {
             ]),
         })?;
 
-        let auth = "an event body; on the wire it is Event 0x04 key 4, inside a wrapper MAC'd under session_key with the label 'km43/v1/evt'";
+        let auth = "an event body; on the wire it is Event 0x04 key 4, and the event is sealed under the session's controller-to-client key, as sealed.event is";
         Ok(vec![
             (
                 "validitychanged_0x0102",
@@ -1939,7 +2133,7 @@ impl Builder {
                 (
                     "authentication",
                     json!(
-                        "an event body; on the wire it is Event 0x04 key 4, inside a wrapper MAC'd under session_key with the label 'km43/v1/evt'"
+                        "an event body; on the wire it is Event 0x04 key 4, and the event is sealed under the session's controller-to-client key, as sealed.event is"
                     ),
                 ),
                 ("body_cbor", json!(hex(&panicked))),
@@ -2347,8 +2541,8 @@ impl Builder {
     /// controller writes. The answer's rows are the link result's, byte for
     /// byte, because the controller relays them (L-202).
     fn wifi_entries() -> Result<Vec<(&'static str, Value)>> {
-        const REQUEST: &str = "this is the inner body; on the wire it is key 1 of the wrapper, whose key 2 is a MAC under session_key with the label 'km43/v1/wrq'";
-        const WRAPPED: &str = "this is the inner body; on the wire it is key 1 of the wrapper, whose key 2 is a MAC under session_key with the label 'km43/v1/rsp'";
+        const REQUEST: &str = "this is the inner body; on the wire it is sealed (P-231) under the session's client-to-controller key, its nonce the req_id, as sealed.readlog_request is";
+        const WRAPPED: &str = "this is the inner body; on the wire it is sealed (P-231) under the session's controller-to-client key, as sealed.response is";
         const RECORD: &str = "this is an event body, kind 0x0806 wifi status changed, class A; on the wire it is key 4 of Event 0x04";
         let bodies: Vec<WifiBody<'_>> = vec![
             (
@@ -2513,6 +2707,7 @@ impl Builder {
         .chain(Self::boot_events()?)
         .chain(Self::controller_events()?)
         .chain(self.whole_envelope_entries()?)
+        .chain(self.handshake_payload_entries()?)
         .chain([Self::readlog_entry()?, Self::logpage_entry()?])
         .chain(Self::time_entries()?)
         .chain(Self::wifi_entries()?)
@@ -2526,9 +2721,9 @@ impl Builder {
     /// that reads it back without the passphrase, and the answer for a section
     /// never written, which has no key 3 at all (P-108).
     fn config_message_entries() -> Result<Vec<(&'static str, Value)>> {
-        const WRAPPED: &str = "this is the inner body; on the wire it is key 1 of the wrapper, whose key 2 is a MAC under session_key with the label 'km43/v1/rsp'";
-        const REQUEST: &str = "this is the inner body; on the wire it is key 1 of the wrapper, whose key 2 is a MAC under session_key with the label 'km43/v1/wrq'";
-        const OPERATION: &str = "this is the operation body; on the wire it is key 3 of the signed body, and the MAC in key 4 covers these bytes as they arrived";
+        const WRAPPED: &str = "this is the inner body; on the wire it is sealed (P-231) under the session's controller-to-client key, as sealed.response is";
+        const REQUEST: &str = "this is the inner body; on the wire it is sealed (P-231) under the session's client-to-controller key, its nonce the req_id, as sealed.readlog_request is";
+        const OPERATION: &str = "this is the operation body; on the wire it is key 3 of the signed body, which is sealed like every request, as sealed.signed_request is";
         let network = || {
             cmap! {
                 1 => Cb::T("cabin".into()),
@@ -2610,8 +2805,8 @@ impl Builder {
     /// one is held (P-106). The keep and clear writes and the empty read have
     /// no readable form because they omit keys the definition lists.
     fn config_section_entries() -> Result<Vec<(&'static str, Value)>> {
-        const WRITE: &str = "this is a section body; on the wire it is key 3 of the SetConfig 0x07 operation, and the MAC in the signed body's key 4 covers the operation as it arrived";
-        const READ: &str = "this is a section body; on the wire it is key 3 of Config 0x86, inside a wrapper MAC'd under session_key with the label 'km43/v1/rsp'";
+        const WRITE: &str = "this is a section body; on the wire it is key 3 of the SetConfig 0x07 operation, inside a signed body that is sealed like every request";
+        const READ: &str = "this is a section body; on the wire it is key 3 of Config 0x86, whose body is sealed under the session's controller-to-client key";
         const BOTH: &str = "this is a section body; on the wire it is key 3 of Config 0x86 or of the SetConfig 0x07 operation, the same in both";
         let site = Cb::T("Chalet du Lac-\u{e0}-l'Eau".into());
         let ssid = || Cb::T("cabin".into());
@@ -2708,8 +2903,8 @@ impl Builder {
     /// at all. The second is the one that catches a decoder defaulting an
     /// absent `at` to 0, which is 1970 on a client's screen (P-093).
     fn time_entries() -> Result<Vec<(&'static str, Value)>> {
-        const OPERATION: &str = "this is the operation body; on the wire it is key 3 of the signed body, and the MAC in key 4 covers these bytes as they arrived (P-110)";
-        const ACK: &str = "this is the inner body; on the wire it is key 1 of the wrapper, whose key 2 is a MAC under session_key with the label 'km43/v1/rsp'";
+        const OPERATION: &str = "this is the operation body; on the wire it is key 3 of the signed body, which is sealed like every request, as sealed.signed_request is (P-110)";
+        const ACK: &str = "this is the inner body; on the wire it is sealed (P-231) under the session's controller-to-client key, as sealed.response is";
         [
             (
                 "time_0x0A",
@@ -2754,37 +2949,74 @@ impl Builder {
         .collect()
     }
 
-    /// The three bodies the crate writes only as a whole envelope: a `Pair`
-    /// carries its proof in the body it proves, its ack the same, and a bare
-    /// `Error` puts its two keys straight into the envelope's map. Each is
-    /// published twice — the body map on its own, under the name the spec
-    /// check reads, and the whole `[type, session_id, req_id, body]` a decoder
-    /// meets on a wire.
+    /// The bodies the crate writes only as a whole envelope: the handshake
+    /// messages, which carry a Noise message rather than a sealed body, and a
+    /// bare `Error`, which puts its two keys straight into the envelope's map.
+    /// Each is published twice — the body map on its own, under the name the
+    /// spec check reads, and the whole `[type, session_id, req_id, body]` a
+    /// decoder meets on a wire. Every one after `Discover` carries the handle
+    /// the `Discover` answer gave the client (P-024).
     fn whole_envelope_entries(&self) -> Result<Vec<(&'static str, Value)>> {
         [
             WholeEnvelope {
-                // `session_id` 0: the client has no session yet (P-021), and the
-                // comms processor stamps the handle in on the way past.
                 name: "pair_0x0B",
                 kind: Msg::Pair,
-                session: 0,
-                req_id: self.req_id,
+                session: self.session_id,
+                req_id: PAIR_REQ_ID,
                 body: self.pair_request_body()?,
-                authentication: "key 3 is macs.pair_proof.out16, computed over keys 1 and 2 and the trio the Discover above fixed; no wrapper, the proof is the authentication",
-                body_readable: "{1:client_kind=1, 2:label, 3:proof, 4:client_nonce}",
-                envelope_readable: "[type:0x0B, session_id:0, req_id:17, {1:client_kind, 2:label, 3:proof, 4:client_nonce}]",
+                authentication: "key 2 is handshakes.pairing.message_1, sealed under derived_keys.pair_psk; nothing outside it is authenticated",
+                body_readable: Some("{1:suite=1, 2:handshake}"),
+                envelope_readable: "[type:0x0B, session_id:3, req_id:1, {1:suite, 2:handshake}]",
             },
             WholeEnvelope {
-                // The handle the comms processor assigned, echoed back so the
-                // answer routes to the connection that asked (P-026).
-                name: "pair_0x8B",
+                name: "pair_proceed_0x8B",
                 kind: Msg::PairAck,
                 session: self.session_id,
-                req_id: self.req_id,
-                body: self.pair_ack_body()?,
-                authentication: "key 3 is macs.pair_ack_mac.out16, computed over keys 1, 2 and 4, the trio, and an epoch the body does not carry (P-087); no wrapper",
-                body_readable: "{1:outcome=enrolled, 2:client_id=7, 3:mac, 4:next_challenge}",
-                envelope_readable: "[type:0x8B, session_id:3, req_id:17, {1:outcome, 2:client_id, 3:mac, 4:next_challenge}]",
+                req_id: PAIR_REQ_ID,
+                body: self.pair_proceed_body()?,
+                authentication: "key 2 is handshakes.pairing.message_2, authenticated by the pre-shared key and es",
+                body_readable: None,
+                envelope_readable: "[type:0x8B, session_id:3, req_id:1, {1:outcome=6, 2:handshake}]",
+            },
+            WholeEnvelope {
+                name: "pair_refused_0x8B",
+                kind: Msg::PairAck,
+                session: self.session_id,
+                req_id: PAIR_REQ_ID,
+                body: self.pair_refused_body()?,
+                authentication: "key 3 is macs.pair_refusal.out16, over h1 of the same message 1 and the outcome",
+                body_readable: None,
+                envelope_readable: "[type:0x8B, session_id:3, req_id:1, {1:outcome=2, 3:refusal}]",
+            },
+            WholeEnvelope {
+                name: "enrol_0x13",
+                kind: Msg::Enrol,
+                session: self.session_id,
+                req_id: ENROL_REQ_ID,
+                body: self.enrol_request_body()?,
+                authentication: "key 1 is handshakes.pairing.message_3",
+                body_readable: Some("{1:handshake}"),
+                envelope_readable: "[type:0x13, session_id:3, req_id:2, {1:handshake}]",
+            },
+            WholeEnvelope {
+                name: "hello_0x01",
+                kind: Msg::HelloRequest,
+                session: self.session_id,
+                req_id: HELLO_REQ_ID,
+                body: self.hello_request_body()?,
+                authentication: "key 2 is handshakes.session.message_1 and key 3 is macs.hello_admit.out16",
+                body_readable: Some("{1:suite=1, 2:handshake, 3:admit}"),
+                envelope_readable: "[type:0x01, session_id:3, req_id:3, {1:suite, 2:handshake, 3:admit}]",
+            },
+            WholeEnvelope {
+                name: "hello_0x81",
+                kind: Msg::Hello,
+                session: self.session_id,
+                req_id: HELLO_REQ_ID,
+                body: self.hello_answer_body()?,
+                authentication: "key 1 is handshakes.session.message_2, whose payload is bodies.helloreport",
+                body_readable: Some("{1:handshake}"),
+                envelope_readable: "[type:0x81, session_id:3, req_id:3, {1:handshake}]",
             },
             WholeEnvelope {
                 // The bare shape: a refusal from a controller holding no session
@@ -2795,14 +3027,57 @@ impl Builder {
                 session: self.session_id,
                 req_id: self.req_id,
                 body: Self::error_body(ErrorCode::HelloRequiredFirst, "no session on this connection")?,
-                authentication: "none; this is the bare shape, and the wrapped one is macs.error_response",
-                body_readable: "{1:code=4, 2:detail}",
+                authentication: "none; this is the bare shape, and the sealed one is sealed.error_response",
+                body_readable: Some("{1:code=4, 2:detail}"),
                 envelope_readable: "[type:0xFF, session_id:3, req_id:17, {1:code, 2:detail}]",
             },
         ]
         .into_iter()
         .map(WholeEnvelope::entry)
         .collect()
+    }
+
+    /// The two offers and the enrolment's answer, which travel inside a Noise
+    /// message or a sealed body and have no envelope of their own.
+    fn handshake_payload_entries(&self) -> Result<Vec<(&'static str, Value)>> {
+        let entry = |kind: &str, authentication: &str, readable: &str, bytes: Vec<u8>| {
+            obj(vec![
+                ("type", json!(kind)),
+                ("authentication", json!(authentication)),
+                ("body_readable", json!(readable)),
+                ("body_cbor", json!(hex(&bytes))),
+                ("body_len", json!(bytes.len())),
+            ])
+        };
+        Ok(vec![
+            (
+                "pairoffer",
+                entry(
+                    "PairOffer",
+                    "the payload of handshakes.pairing.message_1, sealed under the pre-shared key",
+                    "{1:protocol_major=1, 2:protocol_minor=0, 3:client_version, 4:client_kind=1, 5:label}",
+                    Self::pair_offer_body(self.label)?,
+                ),
+            ),
+            (
+                "hellooffer",
+                entry(
+                    "HelloOffer",
+                    "the payload of handshakes.session.message_1, authenticated by ss",
+                    "{1:protocol_major=1, 2:protocol_minor=0, 3:client_version}",
+                    Self::hello_offer_body()?,
+                ),
+            ),
+            (
+                "enrol_0x93",
+                entry(
+                    "0x93",
+                    "the inner body of sealed.enrol_0x93, sealed under the pairing's controller-to-client key",
+                    "{1:outcome=1, 2:client_id=7, 3:generation=1, 4:next_challenge}",
+                    self.enrol_answer_body()?,
+                ),
+            ),
+        ])
     }
 
     fn readlog_entry() -> Result<(&'static str, Value)> {
@@ -2814,7 +3089,7 @@ impl Builder {
                 (
                     "authentication",
                     json!(
-                        "this is the inner body; on the wire it is key 1 of the wrapper, whose key 2 is a MAC under session_key with the label 'km43/v1/wrq' — macs.wrapper_request wraps these same bytes"
+                        "this is the inner body; on the wire it is sealed under the session's client-to-controller key, and sealed.readlog_request seals these same bytes"
                     ),
                 ),
                 (
@@ -2836,7 +3111,7 @@ impl Builder {
                 (
                     "authentication",
                     json!(
-                        "this is the inner body; on the wire it is key 1 of the wrapper, whose key 2 is a MAC under session_key with the label 'km43/v1/rsp'"
+                        "this is the inner body; on the wire it is sealed (P-231) under the session's controller-to-client key, as sealed.response is"
                     ),
                 ),
                 (
@@ -2869,7 +3144,9 @@ impl Builder {
                 ("type", json!(Msg::Discover as u8)),
                 (
                     "authentication",
-                    json!("none; no key exists yet, so there is no MAC to publish"),
+                    json!(
+                        "none; no key exists yet, and every field it carries enters the prologue (P-227)"
+                    ),
                 ),
                 (
                     "body_readable",
@@ -2886,19 +3163,19 @@ impl Builder {
     fn hello_entry(&self) -> Result<(&'static str, Value)> {
         let hello = self.hello_body()?;
         Ok((
-            "hello_0x81",
+            "helloreport",
             obj(vec![
                 ("type", json!(Msg::Hello as u8)),
                 (
                     "authentication",
                     json!(
-                        "this is the inner body; on the wire it is key 1 of the wrapper, whose key 2 is a MAC under session_key with the label 'km43/v1/rsp'"
+                        "this is the inner body; on the wire it is sealed (P-231) under the session's controller-to-client key, as sealed.response is"
                     ),
                 ),
                 (
                     "body_readable",
                     json!(
-                        "{1:protocol_major=1, 2:protocol_minor=0, 3:session_id=3, 4:fw_controller, 5:fw_comms, 6:capabilities=0xf7, 7:log_oldest_seq=1, 8:log_newest_seq=256, 9:state_seq=255, 10:time_known=true, 11:counter=65, 12:max_sessions=8, 13:max_channels=32, 14:max_clients=8, 15:max_event_queue=16, 16:max_inflight=4, 17:max_cmd_dedup=32, 18:rev=0, 19:topo_digest, 20:max_buses=8, 21:max_devices=24, 22:max_components=160, 23:max_signals=384, 24:max_series_elements=512, 25:max_params=96, 26:max_concerns=48, 27:max_selectors=12, 28:max_history_signals=24, 29:max_topology_depth=4}"
+                        "{1:protocol_major=1, 2:protocol_minor=0, 3:session_id=3, 4:fw_controller, 5:fw_comms, 6:capabilities=0xf7, 7:log_oldest_seq=1, 8:log_newest_seq=256, 9:state_seq=255, 10:time_known=true, 11:counter=65, 12:max_sessions=8, 13:max_channels=32, 14:max_clients=8, 15:max_event_queue=16, 16:max_inflight=4, 17:max_cmd_dedup=32, 18:rev=0, 19:topo_digest, 20:max_buses=8, 21:max_devices=24, 22:max_components=160, 23:max_signals=384, 24:max_series_elements=512, 25:max_params=96, 26:max_concerns=48, 27:max_selectors=12, 28:max_history_signals=24, 29:max_topology_depth=4, 30:client_id=7, 31:generation=1}"
                     ),
                 ),
                 (
@@ -2925,150 +3202,256 @@ impl Builder {
         ))
     }
 
-    fn signed_request(&self) -> Result<(&'static str, Value)> {
+    /// One transport message: the inner body sealed under a session key, the
+    /// body it travels in, and the envelope around that (P-231, P-232, P-234).
+    fn sealed_entry(&self, s: &Sealing<'_>) -> Result<Value> {
+        let ad = noise::ad(s.kind as u8, self.session_id, s.req_id);
+        let sealed = noise::seal(s.key, s.nonce, &ad, &s.inner)?;
+        if noise::open(s.key, s.nonce, &ad, &sealed)? != s.inner {
+            bail!("a sealed vector does not open to the bytes it sealed");
+        }
+        let body = match s.direction {
+            Direction::Request => cbor(&cmap! { 1 => Cb::B(sealed.clone()) })?,
+            Direction::Controller => cbor(&cmap! {
+                1 => Cb::B(sealed.clone()),
+                2 => Cb::U(s.nonce),
+            })?,
+        };
+        let whole = Self::envelope(s.kind, self.session_id, s.req_id, &body)?;
+        let mut pairs = vec![
+            ("key", json!(s.key_name)),
+            ("type", json!(s.kind as u8)),
+            ("session_id", json!(self.session_id)),
+            ("req_id", json!(s.req_id)),
+            ("nonce", json!(s.nonce)),
+            ("ad", json!(hex(&ad))),
+            ("ad_readable", json!(noise::AD_READABLE)),
+            ("inner_body_cbor", json!(hex(&s.inner))),
+        ];
+        pairs.extend(s.extra.iter().map(|(k, v)| (*k, v.clone())));
+        pairs.extend([
+            ("sealed", json!(hex(&sealed))),
+            ("full_body_cbor", json!(hex(&body))),
+            ("whole_envelope_cbor", json!(hex(&whole))),
+        ]);
+        Ok(obj(pairs))
+    }
+
+    /// Every sealed vector: the enrolment's answer under the pairing's keys, and
+    /// one of each direction and shape under the session's.
+    fn sealed(&self) -> Result<Value> {
+        let from_client = &self.session.client_to_controller;
+        let from_controller = &self.session.controller_to_client;
         let operation = cbor(&cmap! {
             1 => Cb::U(0x2A), 2 => Cb::U(0x0101), 3 => cmap!{1 => Cb::U(900)},
         })?;
-        let preimage = [
-            L_REQ,
-            &[Msg::Command as u8],
-            &self.session_id.to_be_bytes(),
-            &self.req_id.to_be_bytes(),
-            &self.client_id.to_be_bytes(),
-            &self.counter.to_be_bytes(),
-            &operation,
-        ]
-        .concat();
-        let mac = t16(hmac(&self.session_key, &preimage)?);
-        let body = cbor(&cmap! {
-            1 => Cb::U(u64::from(self.client_id)), 2 => Cb::U(self.counter),
-            3 => Cb::B(operation.clone()), 4 => Cb::B(mac.clone()),
+        let signed = cbor(&cmap! {
+            1 => Cb::U(u64::from(self.client_id)),
+            2 => Cb::U(self.counter),
+            3 => Cb::B(operation.clone()),
         })?;
-        Ok((
-            "signed_request",
-            MacVector::new(DerivedKey::Session, preimage, "'km43/v1/req' | type:u8 | session_id:u16be | req_id:u32be | client_id:u32be | counter:u64be | operation")
-                .with("type", Msg::Command as u8)
-                .with("operation_cbor", hex(&operation))
-                .body(hex(&body))
-                .finish(&self.session_key)?,
-        ))
+        let entries = [
+            (
+                "enrol_0x93",
+                Sealing {
+                    kind: Msg::EnrolAnswer,
+                    key: &self.pairing.controller_to_client,
+                    key_name: "handshakes.pairing.controller_to_client",
+                    direction: Direction::Controller,
+                    req_id: ENROL_REQ_ID,
+                    nonce: 0,
+                    inner: self.enrol_answer_body()?,
+                    extra: vec![],
+                },
+            ),
+            (
+                "readlog_request",
+                Sealing {
+                    kind: Msg::ReadLog,
+                    key: from_client,
+                    key_name: "handshakes.session.client_to_controller",
+                    direction: Direction::Request,
+                    req_id: self.req_id,
+                    nonce: u64::from(self.req_id),
+                    inner: Self::readlog_body()?,
+                    extra: vec![],
+                },
+            ),
+            (
+                "signed_request",
+                Sealing {
+                    kind: Msg::Command,
+                    key: from_client,
+                    key_name: "handshakes.session.client_to_controller",
+                    direction: Direction::Request,
+                    req_id: COMMAND_REQ_ID,
+                    nonce: u64::from(COMMAND_REQ_ID),
+                    inner: signed,
+                    extra: vec![("operation_cbor", json!(hex(&operation)))],
+                },
+            ),
+            (
+                "response",
+                Sealing {
+                    kind: Msg::Ack,
+                    key: from_controller,
+                    key_name: "handshakes.session.controller_to_client",
+                    direction: Direction::Controller,
+                    req_id: COMMAND_REQ_ID,
+                    nonce: RESPONSE_NONCE,
+                    inner: Self::ack_body()?,
+                    extra: vec![],
+                },
+            ),
+            (
+                "event",
+                Sealing {
+                    kind: Msg::Event,
+                    key: from_controller,
+                    key_name: "handshakes.session.controller_to_client",
+                    direction: Direction::Controller,
+                    req_id: 0,
+                    nonce: EVENT_NONCE,
+                    inner: Self::event_body()?,
+                    extra: vec![],
+                },
+            ),
+            (
+                "error_response",
+                Sealing {
+                    kind: Msg::Error,
+                    key: from_controller,
+                    key_name: "handshakes.session.controller_to_client",
+                    direction: Direction::Controller,
+                    req_id: REFUSED_REQ_ID,
+                    nonce: ERROR_NONCE,
+                    inner: Self::error_body(
+                        ErrorCode::BusyRetry,
+                        "four requests already in flight",
+                    )?,
+                    extra: vec![],
+                },
+            ),
+        ];
+        let mut out = Vec::with_capacity(entries.len());
+        for (name, sealing) in &entries {
+            out.push((*name, self.sealed_entry(sealing)?));
+        }
+        Ok(obj(out))
     }
 
-    /// Read-only requests carry no counter, so they need their own label.
-    fn wrapper_request(&self) -> Result<(&'static str, Value)> {
-        let inner = Self::readlog_body()?;
-        let preimage = [
-            L_WRQ,
-            &[Msg::ReadLog as u8],
-            &self.session_id.to_be_bytes(),
-            &self.req_id.to_be_bytes(),
-            &inner,
-        ]
-        .concat();
-        let mac = t16(hmac(&self.session_key, &preimage)?);
-        Ok((
-            "wrapper_request",
-            MacVector::new(
-                DerivedKey::Session,
-                preimage,
-                "'km43/v1/wrq' | type:u8 | session_id:u16be | req_id:u32be | payload",
-            )
-            .with("type", Msg::ReadLog as u8)
-            .with("inner_body_cbor", hex(&inner))
-            .body(wrapped(&inner, &mac)?)
-            .finish(&self.session_key)?,
-        ))
-    }
-
-    fn response(&self) -> Result<((&'static str, Value), Response)> {
-        let inner = cbor(&cmap! {
+    fn ack_body() -> Result<Vec<u8>> {
+        cbor(&cmap! {
             1 => Cb::U(0x2A), 2 => Cb::U(1), 3 => Cb::T("generator starting".into()),
-        })?;
-        let preimage = [
-            L_RSP,
-            &[Msg::Ack as u8],
-            &self.session_id.to_be_bytes(),
-            &self.req_id.to_be_bytes(),
-            &inner,
-        ]
-        .concat();
-        let mac = t16(hmac(&self.session_key, &preimage)?);
-        let entry = MacVector::new(
-            DerivedKey::Session,
-            preimage,
-            "'km43/v1/rsp' | type:u8 | session_id:u16be | req_id:u32be | payload",
-        )
-        .with("type", Msg::Ack as u8)
-        .with("inner_body_cbor", hex(&inner))
-        .body(wrapped(&inner, &mac)?)
-        .finish(&self.session_key)?;
-        Ok((("response", entry), Response { inner, mac }))
+        })
     }
 
-    /// The wrapped `Error 0xFF`: the shape P-142 gives a refusal from a
-    /// controller that holds a session for the `session_id`, carrying the one
-    /// kind of code that never goes bare.
-    fn error_response(&self) -> Result<(&'static str, Value)> {
-        let inner = Self::error_body(ErrorCode::BusyRetry, "four requests already in flight")?;
-        let preimage = [
-            L_RSP,
-            &[Msg::Error as u8],
-            &self.session_id.to_be_bytes(),
-            &self.req_id.to_be_bytes(),
-            &inner,
-        ]
-        .concat();
-        let mac = t16(hmac(&self.session_key, &preimage)?);
-        Ok((
-            "error_response",
-            MacVector::new(
-                DerivedKey::Session,
-                preimage,
-                "'km43/v1/rsp' | type:u8 | session_id:u16be | req_id:u32be | payload",
-            )
-            .with("type", Msg::Error as u8)
-            .with("inner_body_cbor", hex(&inner))
-            .body(wrapped(&inner, &mac)?)
-            .finish(&self.session_key)?,
-        ))
-    }
-
-    fn event(&self) -> Result<(&'static str, Value)> {
-        let inner = cbor(&cmap! {
+    fn event_body() -> Result<Vec<u8>> {
+        cbor(&cmap! {
             1 => Cb::U(0x04D2), 2 => Cb::U(0x0000_018F_1E2A_3B40), 3 => Cb::U(0x0201),
             4 => cmap!{1 => Cb::U(3), 2 => Cb::U(1)},
-        })?;
-        let preimage = [
-            L_EVT,
-            &[Msg::Event as u8],
-            &self.session_id.to_be_bytes(),
-            &0u32.to_be_bytes(),
-            &inner,
-        ]
-        .concat();
-        let mac = t16(hmac(&self.session_key, &preimage)?);
-        Ok((
-            "event",
-            MacVector::new(
-                DerivedKey::Session,
-                preimage,
-                "'km43/v1/evt' | type:u8 | session_id:u16be | 0x00000000 | payload",
-            )
-            .with("type", Msg::Event as u8)
-            .with("inner_body_cbor", hex(&inner))
-            .body(wrapped(&inner, &mac)?)
-            .finish(&self.session_key)?,
-        ))
+        })
     }
 
-    /// One complete frame, envelope through delimiter.
-    fn frame(&self, rsp: &Response) -> Result<Value> {
-        let envelope = cbor(&Cb::A(vec![
-            Cb::U(Msg::Ack as u64),
-            Cb::U(u64::from(self.session_id)),
-            Cb::U(u64::from(self.req_id)),
-            cmap! {1 => Cb::B(rsp.inner.clone()), 2 => Cb::B(rsp.mac.clone())},
-        ]))?;
+    /// Both handshakes, message by message, with the prologue each was run
+    /// under and the keys each split into.
+    fn handshakes(&self) -> Result<Value> {
+        let p = &self.pairing;
+        let s = &self.session;
+        Ok(obj(vec![
+            (
+                "pairing",
+                obj(vec![
+                    ("protocol_name", json!(noise::PAIRING_NAME)),
+                    ("prologue", json!(hex(&self.pairing_prologue))),
+                    ("prologue_readable", json!(noise::PrologueFields::READABLE)),
+                    ("psk", json!("derived_keys.pair_psk")),
+                    (
+                        "message_1",
+                        obj(vec![
+                            ("tokens", json!("psk, e")),
+                            (
+                                "payload_cbor",
+                                json!(hex(&Self::pair_offer_body(self.label)?)),
+                            ),
+                            ("message", json!(hex(&p.message_1))),
+                        ]),
+                    ),
+                    ("h1", json!(hex(&p.h1))),
+                    (
+                        "message_2",
+                        obj(vec![
+                            ("tokens", json!("e, ee, s, es")),
+                            ("payload_cbor", json!(hex(&cbor(&Cb::M(BTreeMap::new()))?))),
+                            ("message", json!(hex(&p.message_2))),
+                        ]),
+                    ),
+                    (
+                        "message_3",
+                        obj(vec![
+                            ("tokens", json!("s, se")),
+                            ("payload_cbor", json!(hex(&cbor(&Cb::M(BTreeMap::new()))?))),
+                            ("message", json!(hex(&p.message_3))),
+                        ]),
+                    ),
+                    ("handshake_hash", json!(hex(&p.hash))),
+                    ("client_to_controller", json!(hex(&p.client_to_controller))),
+                    ("controller_to_client", json!(hex(&p.controller_to_client))),
+                ]),
+            ),
+            (
+                "session",
+                obj(vec![
+                    ("protocol_name", json!(noise::SESSION_NAME)),
+                    ("prologue", json!(hex(&self.session_prologue))),
+                    ("prologue_readable", json!(noise::PrologueFields::READABLE)),
+                    (
+                        "challenge_readable",
+                        json!(
+                            "the prologue's challenge is inputs.next_challenge, the one Enrol 0x93 key 4 handed back"
+                        ),
+                    ),
+                    (
+                        "message_1",
+                        obj(vec![
+                            ("tokens", json!("e, es, s, ss")),
+                            ("payload_cbor", json!(hex(&Self::hello_offer_body()?))),
+                            ("message", json!(hex(&s.message_1))),
+                        ]),
+                    ),
+                    (
+                        "message_2",
+                        obj(vec![
+                            ("tokens", json!("e, ee, se")),
+                            ("payload_cbor", json!(hex(&self.hello_body()?))),
+                            ("message", json!(hex(&s.message_2))),
+                        ]),
+                    ),
+                    ("handshake_hash", json!(hex(&s.hash))),
+                    ("client_to_controller", json!(hex(&s.client_to_controller))),
+                    ("controller_to_client", json!(hex(&s.controller_to_client))),
+                ]),
+            ),
+        ]))
+    }
+
+    /// One complete frame, envelope through delimiter: the sealed `Ack`.
+    fn frame(&self) -> Result<Value> {
+        let ack = self.sealed_entry(&Sealing {
+            kind: Msg::Ack,
+            key: &self.session.controller_to_client,
+            key_name: "handshakes.session.controller_to_client",
+            direction: Direction::Controller,
+            req_id: COMMAND_REQ_ID,
+            nonce: RESPONSE_NONCE,
+            inner: Self::ack_body()?,
+            extra: vec![],
+        })?;
+        let envelope = hex_to_bytes(
+            ack.get("whole_envelope_cbor")
+                .and_then(Value::as_str)
+                .context("the sealed Ack has an envelope")?,
+        )?;
         let crc = crc16(&envelope);
         let framed = [envelope.clone(), crc.to_le_bytes().to_vec()].concat();
         let mut encoded = cobs_encode(&framed)?;
@@ -3085,7 +3468,9 @@ impl Builder {
             ("envelope_cbor", json!(hex(&envelope))),
             (
                 "envelope_readable",
-                json!("[type:0x88, session_id:3, req_id:17, {1:payload, 2:mac}]"),
+                json!(
+                    "[type:0x88, session_id:3, req_id:18, {1:sealed, 2:nonce}], the sealed.response vector"
+                ),
             ),
             ("crc16_ccitt_false", json!(format!("{crc:#06x}"))),
             (
@@ -3105,14 +3490,28 @@ impl Builder {
     /// day the protocol was renamed.
     fn qr(&self) -> Value {
         let payload = format!(
-            "km43:1:{}:{}",
+            "km43:2:{}:{}:{}",
             hex(&self.device_id),
-            hex(&self.printed_secret)
+            hex(&self.printed_secret),
+            hex(&self.controller_fp()),
         );
         obj(vec![
             ("len", json!(payload.len())),
             ("payload", json!(payload)),
         ])
+    }
+
+    fn controller_fp_input(&self) -> Vec<u8> {
+        [L_CONTROLLER_FP, &noise::public(&self.controller_key)].concat()
+    }
+
+    /// P-236: the first sixteen bytes of SHA-256 over the label and the key.
+    fn controller_fp(&self) -> Vec<u8> {
+        Sha256::digest(self.controller_fp_input())
+            .iter()
+            .take(16)
+            .copied()
+            .collect()
     }
 
     fn inputs(&self) -> Value {
@@ -3121,15 +3520,38 @@ impl Builder {
             ("device_id", json!(hex(&self.device_id))),
             ("challenge", json!(hex(&self.challenge))),
             ("next_challenge", json!(hex(&self.next_challenge))),
-            ("client_nonce", json!(hex(&self.client_nonce))),
             ("client_id", json!(self.client_id)),
+            ("generation", json!(self.generation)),
             ("session_id", json!(self.session_id)),
             ("req_id", json!(self.req_id)),
             ("counter", json!(self.counter)),
             ("label", json!(self.label)),
             ("epoch", json!(self.epoch)),
+            ("suite", json!(SUITE)),
             ("protocol_major", json!(PROTOCOL_MAJOR)),
             ("protocol_minor", json!(PROTOCOL_MINOR)),
+            ("client_version", json!(CLIENT_VERSION)),
+            ("controller_key", json!(hex(&self.controller_key))),
+            ("client_key", json!(hex(&self.client_key))),
+            (
+                "pairing_client_ephemeral",
+                json!(hex(&self.pairing_client_ephemeral)),
+            ),
+            (
+                "pairing_controller_ephemeral",
+                json!(hex(&self.pairing_controller_ephemeral)),
+            ),
+            (
+                "hello_client_ephemeral",
+                json!(hex(&self.hello_client_ephemeral)),
+            ),
+            (
+                "hello_controller_ephemeral",
+                json!(hex(&self.hello_controller_ephemeral)),
+            ),
+            ("pair_req_id", json!(PAIR_REQ_ID)),
+            ("enrol_req_id", json!(ENROL_REQ_ID)),
+            ("hello_req_id", json!(HELLO_REQ_ID)),
         ];
         pairs.extend(self.report.inputs());
         obj(pairs)
@@ -3138,50 +3560,71 @@ impl Builder {
     fn derived_keys(&self) -> Value {
         obj(vec![
             (
-                "client_key",
+                "pair_psk",
                 key_entry(
                     &self.device_id,
                     &self.printed_secret,
-                    &self.client_key_info,
-                    "'km43/v1/client-key' | epoch:u32be | client_id:u32be",
-                    &self.client_key,
+                    L_PAIR_PSK,
+                    "'km43/v1/pair-psk'",
+                    &self.pair_psk,
                 ),
             ),
             (
-                "session_key",
-                key_entry(
-                    &self.session_salt,
-                    &self.client_key,
-                    &self.session_key_info,
-                    "'km43/v1/session-key' | session_id:u16be",
-                    &self.session_key,
-                ),
-            ),
-            (
-                "pair_key",
+                "refusal_key",
                 key_entry(
                     &self.device_id,
                     &self.printed_secret,
-                    L_PAIR_KEY,
-                    "'km43/v1/pair-key'",
-                    &self.pair_key,
+                    L_PAIR_REFUSAL,
+                    "'km43/v1/pair-refusal'",
+                    &self.refusal_key,
+                ),
+            ),
+            (
+                "admit_key",
+                key_entry(
+                    &self.device_id,
+                    &self.admit_ikm,
+                    L_ADMIT_KEY,
+                    "'km43/v1/admit-key'",
+                    &self.admit_key,
                 ),
             ),
         ])
     }
 
+    /// The public halves, and the fingerprint the label carries.
+    fn keys(&self) -> Value {
+        obj(vec![
+            (
+                "controller_public",
+                json!(hex(&noise::public(&self.controller_key))),
+            ),
+            (
+                "client_public",
+                json!(hex(&noise::public(&self.client_key))),
+            ),
+            (
+                "admit_ikm_readable",
+                json!(
+                    "X25519(client_key, controller_public), which equals X25519(controller_key, client_public)"
+                ),
+            ),
+            (
+                "controller_fp",
+                obj(vec![
+                    ("input", json!(hex(&self.controller_fp_input()))),
+                    (
+                        "input_readable",
+                        json!("'km43/v1/controller-fp' | controller_public[32]"),
+                    ),
+                    ("out", json!(hex(&self.controller_fp()))),
+                ]),
+            ),
+        ])
+    }
+
     fn document(&self) -> Result<Value> {
-        let (response, rsp) = self.response()?;
-        let macs = vec![
-            self.pair_proof()?,
-            self.pair_ack()?,
-            self.hello_proof()?,
-            self.signed_request()?,
-            self.wrapper_request()?,
-            response,
-            self.event()?,
-            self.error_response()?,
-        ];
+        let macs = vec![self.pair_refusal()?, self.hello_admit()?];
         let (crc_v, cobs_v) = edge_cases()?;
         let cobs_input = MAX_PAYLOAD
             .checked_add(2)
@@ -3196,7 +3639,7 @@ impl Builder {
             (
                 "note",
                 json!(
-                    "Generated by xtask. Every primitive is validated against its RFC's published vectors before these are computed. Regenerate with `cargo xtask vectors`, never hand-edit."
+                    "Generated by xtask. Every primitive is validated against its RFC's published vectors before these are computed. Both handshakes are run by snow, a Noise implementation independent of km43; the primitives beneath it and beneath the sealed bodies and tags are the same audited crates km43 uses, which is why they are checked against their RFCs first. Regenerate with `cargo xtask vectors`, never hand-edit."
                 ),
             ),
             ("conventions", conventions()),
@@ -3212,21 +3655,46 @@ impl Builder {
                 ]),
             ),
             ("derived_keys", self.derived_keys()),
+            ("keys", self.keys()),
             ("macs", obj(macs)),
+            ("handshakes", self.handshakes()?),
+            ("sealed", self.sealed()?),
             ("bodies", self.bodies()?),
             ("crc16", Value::Array(crc_v)),
             ("cobs", Value::Array(cobs_v)),
-            ("frame", self.frame(&rsp)?),
+            ("frame", self.frame()?),
             ("link_local", Self::link()?),
         ]))
     }
+}
+
+/// Which way a sealed message travels, which decides its body's shape: a
+/// request's nonce is its `req_id`, a controller message carries its own.
+#[derive(Clone, Copy)]
+enum Direction {
+    Request,
+    Controller,
+}
+
+/// What one sealed vector is made of.
+struct Sealing<'a> {
+    kind: Msg,
+    key: &'a [u8; 32],
+    key_name: &'static str,
+    direction: Direction,
+    req_id: u32,
+    nonce: u64,
+    inner: Vec<u8>,
+    extra: Vec<(&'static str, Value)>,
 }
 
 fn conventions() -> Value {
     obj(vec![
         (
             "integers",
-            json!("big-endian, fixed width, no padding, no length prefix"),
+            json!(
+                "big-endian, fixed width, no padding, no length prefix; the one exception is the ChaCha20-Poly1305 nonce, four zero bytes then the nonce as a little-endian u64"
+            ),
         ),
         (
             "concatenation",
@@ -3240,29 +3708,32 @@ fn conventions() -> Value {
             "hkdf",
             json!("HKDF-SHA256 (RFC 5869) with salt, IKM and info as named arguments"),
         ),
+        (
+            "noise",
+            json!(
+                "Noise revision 34: Noise_XXpsk0_25519_ChaChaPoly_SHA256 to pair, Noise_IK_25519_ChaChaPoly_SHA256 for a session, the client initiating both"
+            ),
+        ),
         ("cbor", json!("RFC 8949 section 4.2 deterministic encoding")),
     ])
 }
 
 /// Which derived key a MAC is computed under.
 ///
-/// A `&'static str` here meant `MacVector::new(DerivedKey::Pair, ..).finish(&session_key)`
-/// compiled and published a vector whose name and bytes disagreed — the one
-/// mistake this file cannot catch, because it is the file everything else is
-/// checked against.
+/// A `&'static str` here meant a vector could name one key and be computed
+/// under another — the one mistake this file cannot catch, because it is the
+/// file everything else is checked against.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DerivedKey {
-    Pair,
-    Client,
-    Session,
+    Refusal,
+    Admit,
 }
 
 impl std::fmt::Display for DerivedKey {
     fn fmt(&self, w: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         w.write_str(match self {
-            Self::Pair => "pair_key",
-            Self::Client => "client_key",
-            Self::Session => "session_key",
+            Self::Refusal => "refusal_key",
+            Self::Admit => "admit_key",
         })
     }
 }
@@ -3328,12 +3799,6 @@ fn key_entry(salt: &[u8], ikm: &[u8], info: &[u8], readable: &str, out: &[u8]) -
     ])
 }
 
-fn wrapped(inner: &[u8], mac: &[u8]) -> Result<String> {
-    Ok(hex(&cbor(
-        &cmap! {1 => Cb::B(inner.to_vec()), 2 => Cb::B(mac.to_vec())},
-    )?))
-}
-
 /// The inputs that break a careless encoder.
 fn edge_cases() -> Result<(Vec<Value>, Vec<Value>)> {
     let mut crc_v = Vec::new();
@@ -3376,9 +3841,9 @@ fn edge_cases() -> Result<(Vec<Value>, Vec<Value>)> {
 pub fn build() -> Result<String> {
     let b = Builder::new()?;
     self_check(&b)?;
-    println!("client_key   = {}", hex(&b.client_key));
-    println!("session_key  = {}", hex(&b.session_key));
-    println!("pair_key     = {}", hex(&b.pair_key));
+    println!("controller_fp = {}", hex(&b.controller_fp()));
+    println!("pairing hash  = {}", hex(&b.pairing.hash));
+    println!("session hash  = {}", hex(&b.session.hash));
     let mut document = b.document()?;
     let envelope = document
         .get("frame")
@@ -3394,7 +3859,8 @@ pub fn build() -> Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Builder, Cb, PROTOCOL_MAJOR, SelfReport, cbor, hex};
+    use super::{Builder, Cb, PROTOCOL_MAJOR, SelfReport, Sha256, cbor, hex};
+    use sha2::Digest as _;
 
     #[test]
     fn regenerated_vectors_match_the_committed_witness() {
@@ -3528,27 +3994,27 @@ mod tests {
             .expect("valid vector fixture")
             .hello_body()
             .expect("valid vector fixture");
-        // Twenty-nine pairs is past twenty-three, so the map header is two
-        // bytes: `b8 1d` and not a single `bN`.
+        // Thirty-one pairs is past twenty-three, so the map header is two
+        // bytes: `b8 1f` and not a single `bN`.
         assert_eq!(
             body.get(..2),
-            Some(&[0xB8, 0x1D][..]),
-            "the Hello map must carry all twenty-nine keys"
+            Some(&[0xB8, 0x1F][..]),
+            "the report must carry all thirty-one keys"
         );
-        // Key 29 and its value are the last three bytes — the key itself is two
+        // Key 31 and its value are the last three bytes — the key itself is two
         // of them, because a map key past 23 stops fitting one. A truncated tail
         // shows up here rather than in a hex dump nobody reads.
         assert_eq!(
             body.get(body.len().saturating_sub(3)..),
-            Some(&[0x18, 0x1D, 0x04][..])
+            Some(&[0x18, 0x1F, 0x01][..])
         );
     }
 
-    /// A `Discover` without key 8 sends a client off to derive a client key
-    /// under an epoch the controller has already left behind, and the only
-    /// symptom is a proof that will not verify.
+    /// A `Discover` without key 8 leaves the client building a prologue with
+    /// no epoch in it (P-227), and the only symptom is a handshake whose first
+    /// tag will not open.
     #[test]
-    fn a_discover_without_the_epoch_leaves_a_client_deriving_under_a_dead_one() {
+    fn a_discover_without_the_epoch_leaves_a_prologue_nobody_can_build() {
         let b = Builder::new().expect("valid vector fixture");
         let body = b.discover_body().expect("valid vector fixture");
         assert_eq!(body.first().copied(), Some(0xA8));
@@ -3581,11 +4047,11 @@ mod tests {
         );
     }
 
-    /// Both bodies announce the same version the `Hello 0x01` proof covers. Two
+    /// The `Discover`, the offer and the report announce one version. Two
     /// numbers in two places is a vector set negotiating a downgrade with
-    /// itself, and the proof is what would have caught it on the wire.
+    /// itself, and the prologue is what would have caught it on the wire.
     #[test]
-    fn the_two_bodies_and_the_hello_proof_cannot_announce_different_versions() {
+    fn the_discover_the_offer_and_the_report_cannot_announce_different_versions() {
         let b = Builder::new().expect("valid vector fixture");
         let major = u8::try_from(PROTOCOL_MAJOR).expect("the fixture major fits in a byte");
         assert_eq!(
@@ -3594,7 +4060,36 @@ mod tests {
         );
         assert_eq!(
             b.hello_body().expect("valid vector fixture").get(..4),
-            Some(&[0xB8, 0x1D, 0x01, major][..])
+            Some(&[0xB8, 0x1F, 0x01, major][..])
         );
+        assert_eq!(
+            Builder::hello_offer_body()
+                .expect("valid vector fixture")
+                .get(..3),
+            Some(&[0xA3, 0x01, major][..])
+        );
+    }
+
+    /// The label's fingerprint is of the controller key the handshake proves,
+    /// so a published QR whose fingerprint came from any other key is a label
+    /// that sends every client away from the controller it is stuck to.
+    #[test]
+    fn the_qr_fingerprint_is_of_the_key_message_2_carries() {
+        let b = Builder::new().expect("valid vector fixture");
+        let qr = b.qr();
+        let payload = qr
+            .get("payload")
+            .and_then(serde_json::Value::as_str)
+            .expect("a payload");
+        assert_eq!(payload.len(), 137);
+        assert!(payload.ends_with(&hex(&b.controller_fp())));
+        let digest = Sha256::digest(
+            [
+                b"km43/v1/controller-fp".as_slice(),
+                &super::noise::public(&b.controller_key),
+            ]
+            .concat(),
+        );
+        assert_eq!(b.controller_fp(), digest.get(..16).expect("32 bytes"));
     }
 }

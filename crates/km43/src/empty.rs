@@ -76,6 +76,8 @@ impl EmptyBody {
             | MessageType::TimeResponse
             | MessageType::Pair
             | MessageType::PairResponse
+            | MessageType::Enrol
+            | MessageType::EnrolResponse
             | MessageType::ErrorResponse => false,
         }
     }
@@ -339,86 +341,83 @@ mod tests {
         Rendering::<80>::each_says_something_of_its_own(&EVERY);
     }
 
-    /// The whole of `Goodbye`, both directions, through the wrapper that
-    /// authenticates it — because the body says nothing, and everything this
-    /// message *is* lives in the type and the label around it.
+    /// The whole of `Goodbye`, both directions, sealed — because the body says
+    /// nothing, and everything this message *is* lives in the type and the
+    /// keys around it.
     ///
-    /// P-052 puts `0x0C` under `km43/v1/wrq` and `0x8C` under `km43/v1/rsp`.
-    /// The request tagged as its own answer must not verify: that is a frame a
-    /// relay gets for free, and on a message with no body it is the only thing
-    /// there is to get wrong.
+    /// The request lifted into the response's envelope must not open: that is a
+    /// frame a relay gets for free, and on a message with no body it is the only
+    /// thing there is to get wrong. It fails twice over, on the key (each
+    /// direction has its own, P-230) and on the associated data (P-046).
     #[test]
-    fn a_goodbye_verifies_as_itself_and_not_as_its_own_answer() {
-        use crate::envelope::{Envelope, Header, ReqId, SessionId};
-        use crate::mac::SessionKey;
-        use crate::wrapper::{Tagged, Wrapper};
+    fn a_goodbye_opens_as_itself_and_not_as_its_own_answer() {
+        use crate::envelope::{Envelope, Header, SessionId};
+        use crate::sealed::{Sealed, channels};
 
-        let key = SessionKey::new([0x5a; 32]);
+        let (mut client, mut controller) = channels([0x5a; 32], [0xa5; 32]);
         let mut body = [0u8; 8];
         let len = EmptyBody
             .encode(MessageType::Goodbye, &mut body)
             .expect("the body encodes");
         let payload = body.get(..len).expect("the writer's own length");
 
-        for kind in [MessageType::Goodbye, MessageType::GoodbyeResponse] {
-            let header = Header {
-                kind,
-                session: SessionId::from(3),
-                req_id: ReqId(17),
-            };
-            let mut frame = [0u8; 64];
-            let wrote = Tagged::over(header, payload, &key)
-                .expect("P-052 wraps both directions")
-                .write(&mut frame)
-                .expect("the frame fits");
-
-            let envelope =
-                Envelope::decode(frame.get(..wrote).expect("the length")).expect("it decodes");
-            let verified = Wrapper::decode(envelope)
-                .expect("the wrapper decodes")
-                .verify(&key)
-                .expect("the tag checks out");
-            assert_eq!(
-                EmptyBody::decode(kind, verified.payload()),
-                Ok(EmptyBody),
-                "{kind:?}"
-            );
-        }
-
-        // The request's own payload and tag, lifted into the response envelope.
-        let request = Header {
-            kind: MessageType::Goodbye,
-            session: SessionId::from(3),
-            req_id: ReqId(17),
-        };
-        let answer = Header {
-            kind: MessageType::GoodbyeResponse,
-            ..request
-        };
-        let asked = Tagged::over(request, payload, &key).expect("a request tags");
-        let answered = Tagged::over(answer, payload, &key).expect("a response tags");
-        assert_ne!(
-            asked.mac().as_bytes(),
-            answered.mac().as_bytes(),
-            "the two directions of a message whose body is identical must not share a tag"
+        let mut asked = [0u8; 64];
+        let (req_id, wrote) = client
+            .tx
+            .seal(
+                MessageType::Goodbye,
+                SessionId::from(3),
+                payload,
+                &mut asked,
+            )
+            .expect("a request seals");
+        let mut plain = [0u8; 8];
+        let opened = Sealed::decode(Envelope::decode(&asked[..wrote]).expect("decodes"))
+            .expect("a sealed body")
+            .open(&mut controller.rx, &mut plain)
+            .expect("the controller opens it");
+        assert_eq!(
+            EmptyBody::decode(MessageType::Goodbye, opened.inner()),
+            Ok(EmptyBody)
         );
 
-        // The request's own tag, lifted into the response envelope — the frame a
-        // relay gets for free when the two bodies are the same two bytes.
-        let mut frame = [0u8; 64];
-        let wrote = answered.write(&mut frame).expect("the frame fits");
-        let mac_at = wrote.checked_sub(16).expect("the tag is the tail");
-        frame
-            .get_mut(mac_at..wrote)
-            .expect("the tag's own bytes")
-            .copy_from_slice(asked.mac().as_bytes());
-
-        let envelope =
-            Envelope::decode(frame.get(..wrote).expect("the length")).expect("it decodes");
+        let answer = Header {
+            kind: MessageType::GoodbyeResponse,
+            session: SessionId::from(3),
+            req_id,
+        };
+        let mut answered = [0u8; 64];
+        let wrote_answer = controller
+            .tx
+            .seal(answer, payload, &mut answered)
+            .expect("a response seals");
+        let mut plain = [0u8; 8];
         assert!(
-            Wrapper::decode(envelope)
-                .expect("the wrapper still decodes")
-                .verify(&key)
+            Sealed::decode(Envelope::decode(&answered[..wrote_answer]).expect("decodes"))
+                .expect("a sealed body")
+                .open(&mut client.rx, &mut plain)
+                .is_ok(),
+            "the real answer opens"
+        );
+
+        // The request's own ciphertext, lifted into a response envelope under a
+        // nonce the client has not seen.
+        let lifted = {
+            let mut out = [0u8; 64];
+            let mut cbor = answer.write(2, &mut out).expect("fits");
+            let ciphertext = &asked[wrote - (payload.len() + 16)..wrote];
+            cbor.key(1).expect("key");
+            cbor.bytes(ciphertext).expect("bytes");
+            cbor.key(2).expect("key");
+            cbor.u64(7).expect("nonce");
+            let n = cbor.finish().expect("done");
+            (out, n)
+        };
+        let mut plain = [0u8; 8];
+        assert!(
+            Sealed::decode(Envelope::decode(&lifted.0[..lifted.1]).expect("decodes"))
+                .expect("a sealed body")
+                .open(&mut client.rx, &mut plain)
                 .is_err(),
             "a Goodbye request was accepted as its own answer"
         );

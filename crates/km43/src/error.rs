@@ -127,9 +127,9 @@ impl<'a> ErrorBody<'a> {
         let pairs = envelope.keys();
         let found = Self::read(envelope.into_body(), pairs)?;
         if let Incoming::Client(code) = found.code
-            && code.needs_a_mac()
+            && code.needs_a_seal()
         {
-            return Err(ErrorBodyError::BareCodeNeedsAMac(code));
+            return Err(ErrorBodyError::BareCodeNeedsASeal(code));
         }
         Ok(Hint(found))
     }
@@ -151,9 +151,9 @@ impl<'a> ErrorBody<'a> {
     pub fn bare(payload: &'a [u8]) -> Result<Hint<'a>, ErrorBodyError> {
         let body = Self::decode(payload)?;
         if let Incoming::Client(code) = body.code
-            && code.needs_a_mac()
+            && code.needs_a_seal()
         {
-            return Err(ErrorBodyError::BareCodeNeedsAMac(code));
+            return Err(ErrorBodyError::BareCodeNeedsASeal(code));
         }
         Ok(Hint(body))
     }
@@ -258,7 +258,7 @@ pub enum ErrorBodyError {
     /// A bare body carrying a code the registry marks MAC'd — discarded rather
     /// than acted on, because the controller only ever sends this one with a key
     /// in hand.
-    BareCodeNeedsAMac(ErrorCode),
+    BareCodeNeedsASeal(ErrorCode),
     /// The CBOR underneath was refused.
     Cbor(CborError),
     /// An envelope whose `type` is not `Error`.
@@ -281,7 +281,7 @@ impl ErrorBodyError {
     #[must_use]
     pub const fn refusal(self) -> Refusal {
         match self {
-            Self::Missing(_) | Self::Duplicate(_) | Self::BareCodeNeedsAMac(_) | Self::Cbor(_) => {
+            Self::Missing(_) | Self::Duplicate(_) | Self::BareCodeNeedsASeal(_) | Self::Cbor(_) => {
                 Refusal::Client(ErrorCode::MalformedFrame)
             }
             // Error 2 rather than error 1: the bytes were well formed, they
@@ -297,7 +297,7 @@ impl fmt::Display for ErrorBodyError {
         match self {
             Self::Missing(key) => write!(f, "error carries no {key}"),
             Self::Duplicate(key) => write!(f, "error carries {key} twice"),
-            Self::BareCodeNeedsAMac(code) => write!(
+            Self::BareCodeNeedsASeal(code) => write!(
                 f,
                 "error {} arrived bare and a receiver only reads it under a MAC",
                 *code as u16
@@ -404,7 +404,7 @@ mod tests {
         let envelope = Envelope::decode(dst.get(..len).expect("the frame")).expect("an envelope");
         assert_eq!(
             ErrorBody::from_envelope(envelope).map(|_| ()),
-            Err(ErrorBodyError::BareCodeNeedsAMac(ErrorCode::BusyRetry))
+            Err(ErrorBodyError::BareCodeNeedsASeal(ErrorCode::BusyRetry))
         );
     }
 
@@ -472,7 +472,7 @@ mod tests {
             ErrorCode::CounterNotFresh,
         ] {
             assert!(
-                code.needs_a_mac(),
+                code.needs_a_seal(),
                 "{code:?} is marked MAC'd in the registry"
             );
             let (dst, len) = encoded(ErrorBody {
@@ -481,7 +481,7 @@ mod tests {
             });
             assert_eq!(
                 ErrorBody::bare(dst.get(..len).expect("the length")).map(|_| ()),
-                Err(ErrorBodyError::BareCodeNeedsAMac(code)),
+                Err(ErrorBodyError::BareCodeNeedsASeal(code)),
                 "{code:?} was read out of a bare body"
             );
             // The same bytes under a MAC are read, because that is the other
@@ -543,11 +543,11 @@ mod tests {
             ErrorCode::PayloadTooLarge,
             ErrorCode::SessionTableFull,
             ErrorCode::SessionExpired,
-            ErrorCode::BadMAC,
+            ErrorCode::AuthenticationFailed,
             ErrorCode::UnknownClient,
             ErrorCode::StaleChallengeReconnectAndRetry,
         ] {
-            assert!(!code.needs_a_mac(), "{code:?}");
+            assert!(!code.needs_a_seal(), "{code:?}");
             let (dst, len) = encoded(ErrorBody {
                 code: Incoming::Client(code),
                 detail: "why",
@@ -682,7 +682,7 @@ mod tests {
     #[test]
     fn a_frame_cut_short_or_run_on_is_refused() {
         let (dst, len) = encoded(ErrorBody {
-            code: Incoming::Client(ErrorCode::BadMAC),
+            code: Incoming::Client(ErrorCode::AuthenticationFailed),
             detail: "tag",
         });
         for cut in 0..len {
@@ -708,7 +708,7 @@ mod tests {
         const EVERY: [ErrorBodyError; 4] = [
             ErrorBodyError::Missing(ErrorKey::Code),
             ErrorBodyError::Duplicate(ErrorKey::Detail),
-            ErrorBodyError::BareCodeNeedsAMac(ErrorCode::BusyRetry),
+            ErrorBodyError::BareCodeNeedsASeal(ErrorCode::BusyRetry),
             ErrorBodyError::Cbor(CborError::WrongType),
         ];
         Rendering::<112>::each_says_something_of_its_own(&EVERY);

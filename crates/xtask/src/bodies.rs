@@ -49,13 +49,16 @@ impl Bodies {
             if let Some(found) = heading(line) {
                 Self::keep(&mut bodies, name.take(), &mut fields);
                 name = Some(found);
-            } else if nested(line) {
-                // A type the message above embeds — `Value` inside `Snapshot
-                // 0x82`, `LogEntry` inside `LogPage`. Its keys are its own and
-                // they start again at 1. Without this they append to the message
-                // and `snapshot_0x82` reads as an eight-key body with `1` twice,
-                // which is a shape no message has.
+            } else if let Some(found) = nested(line) {
+                // A type the message above embeds — `LogEntry` inside `LogPage`,
+                // `HelloReport` inside `Hello 0x81`'s handshake message. Its keys
+                // are its own and they start again at 1, so it is a body of its
+                // own, named the way the vector file names it: `helloreport`.
+                // Appended to the message instead, `hello_0x81` read as a
+                // thirty-two-key body with `1` twice, which is a shape no
+                // message has.
                 Self::keep(&mut bodies, name.take(), &mut fields);
+                name = Some(found);
             } else if let (Some(_), Some(pair)) = (name.as_ref(), field(line)) {
                 fields.push(pair);
             }
@@ -143,16 +146,17 @@ fn heading(line: &str) -> Option<String> {
     Some(format!("{}_{opcode}", name.to_ascii_lowercase()))
 }
 
-/// `Value` on its own line: a type embedded in the message above, rather than a
-/// message of its own. One bare word, no opcode, hard against the left margin.
-fn nested(line: &str) -> bool {
+/// `HelloReport` on its own line: a type embedded in the message above, rather
+/// than a message of its own. One bare word, no opcode, hard against the left
+/// margin, and named in lower case as the vector file names it.
+fn nested(line: &str) -> Option<String> {
     let mut words = line.split_whitespace();
-    let Some(word) = words.next() else {
-        return false;
-    };
-    !line.starts_with(char::is_whitespace)
+    let word = words.next()?;
+    (!line.starts_with(char::is_whitespace)
         && words.next().is_none()
-        && word.chars().all(|c| c.is_ascii_alphanumeric())
+        && word.starts_with(|c: char| c.is_ascii_uppercase())
+        && word.chars().all(|c| c.is_ascii_alphanumeric()))
+    .then(|| word.to_ascii_lowercase())
 }
 
 /// `  8: epoch            u32      provisioning epoch` becomes `(8, "epoch")`.
@@ -216,6 +220,14 @@ mod tests {
             heading("operation body of SetConfig  0x07").as_deref(),
             Some("setconfig_0x07")
         );
+    }
+
+    #[test]
+    fn an_embedded_type_is_a_body_of_its_own_under_its_lower_case_name() {
+        assert_eq!(nested("HelloReport").as_deref(), Some("helloreport"));
+        assert_eq!(nested("  1: handshake    bstr"), None);
+        assert_eq!(nested("Hello  0x81"), None);
+        assert_eq!(nested(""), None);
     }
 
     #[test]
