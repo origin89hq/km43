@@ -13,16 +13,16 @@
 //! The window, the table and the button are the controller's; what is here is
 //! the messages and the order they are read in.
 //!
-//! cites: P-054, P-057, P-058, P-064, P-105, P-229, P-236, P-240, P-241, P-242
+//! cites: P-054, P-057, P-058, P-064, P-105, P-229, P-236, P-240, P-241, P-242, P-250, P-258
 
 use core::fmt;
 
 use crate::cbor::{CborError, CborReader, CborWriter};
 use crate::envelope::{Envelope, EnvelopeError, Header, Refusal, ReqId};
-use crate::generated::{ClientKind, ErrorCode, MessageType, Pair, Suite};
+use crate::generated::{ClientKind, ErrorCode, MessageType, Pair, Role, Suite};
 use crate::handshake::{Prologue, Version};
 use crate::kdf::{ClientId, Fingerprint, Generation, Label};
-use crate::limits::{MAX_LABEL, MAX_STRING};
+use crate::limits::{MAX_ADMINS, MAX_LABEL, MAX_STRING};
 use crate::mac::{MAC_TAG_BYTES as REFUSAL_BYTES, MacError, RefusalKey};
 use crate::noise::{
     CHALLENGE_BYTES, Entropy, KEY_BYTES, NoiseError, PairInitiator, PairReplied, PairResponder,
@@ -374,16 +374,41 @@ impl EnrolAnswer {
     }
 }
 
-/// One slot of the client table as P-240 reads it: its number, and the key and
-/// label it holds if it is occupied. "Occupied" is P-239's — the record passes
-/// its check, says occupied, and was written in the current epoch — and the
-/// caller decides it; a slot from an earlier epoch is `None` here.
+/// One slot of the client table as P-240 reads it: its number, and what it
+/// holds if it is occupied. "Occupied" is P-239's — the record passes its
+/// check, says occupied, and was written in the current epoch — and the caller
+/// decides it; a slot from an earlier epoch is `None` here.
 #[derive(Debug, Clone, Copy)]
 pub struct SlotView<'a> {
     /// The slot's `client_id`.
     pub client_id: ClientId,
-    /// The key and label of an occupied slot, or `None` for a free one.
-    pub held: Option<(PublicKey, &'a str)>,
+    /// What an occupied slot holds, or `None` for a free one.
+    pub held: Option<Occupant<'a>>,
+}
+
+/// What an occupied slot holds that P-240 reads. The role is here because
+/// without it a label could reclaim the owner's slot, and a seventh admin could
+/// take the row kept for an owner (P-258).
+#[derive(Debug, Clone, Copy)]
+pub struct Occupant<'a> {
+    /// The enrolled client key.
+    pub key: PublicKey,
+    /// The label it paired under, as the bytes `PairOffer` carried.
+    pub label: &'a str,
+    /// The role written with the key record (P-250).
+    pub role: Role,
+}
+
+/// A slot P-240 gives an enrolment and the role the enrolment takes with it.
+/// The two are decided together because the role decides which slots were
+/// candidates at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct Placement {
+    /// The slot's `client_id`.
+    pub client_id: ClientId,
+    /// The role to write with the new key record.
+    pub role: Role,
 }
 
 /// Which slot P-240 gives an enrolment.
@@ -391,48 +416,76 @@ pub struct SlotView<'a> {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Allocation {
     /// The slot that already holds this client key: the same install pairing
-    /// again. Answered as a reclaim, because the slot is re-keyed with a new
-    /// generation all the same.
-    SameKey(ClientId),
-    /// The lowest free slot (P-086), answered `enrolled`.
-    Free(ClientId),
-    /// The lowest occupied slot whose label is byte-identical, answered
-    /// `reclaimed`: the old install's key is erased with it.
-    Reclaim(ClientId),
+    /// again, keeping its role. Answered as a reclaim, because the slot is
+    /// re-keyed with a new generation all the same.
+    SameKey(Placement),
+    /// The lowest free slot (P-086) the role may take, answered `enrolled`.
+    Free(Placement),
+    /// The lowest `admin` slot whose label is byte-identical, answered
+    /// `reclaimed`: the old install's key is erased with it and the role stays
+    /// `admin`.
+    Reclaim(Placement),
     /// Nothing to allocate: `table_full`.
     Full,
 }
 
 impl Allocation {
     /// P-240, in its order: the same key, then the lowest free slot, then the
-    /// lowest slot with this exact label, then nothing. Labels are compared as
-    /// bytes — no case folding, trimming or normalisation — because two
+    /// lowest `admin` slot with this exact label, then nothing. `key` is `None`
+    /// at message 1, which carries no client key, so the first step is skipped
+    /// there and runs at message 3. Labels are compared as bytes, because two
     /// implementations that normalise differently hand one phone another's slot.
     ///
-    /// A free slot comes before a reclaim because a reclaim now revokes: two
-    /// phones that both call themselves "iPhone" would otherwise take the slot
-    /// from each other on every pairing, and only the one that just paired would
-    /// be told.
+    /// A new enrolment is `owner` when no slot holds one and `admin` otherwise
+    /// (P-250), and an `admin` finds no free slot once [`MAX_ADMINS`] hold
+    /// `admin` (P-258). A free slot comes before a reclaim because a reclaim
+    /// revokes: two phones both called "iPhone" would otherwise take the slot
+    /// from each other on every pairing.
     #[must_use]
-    pub fn choose(slots: &[SlotView<'_>], key: &PublicKey, label: &str) -> Self {
-        let lowest = |pick: &dyn Fn(&SlotView<'_>) -> bool| {
+    pub fn choose(slots: &[SlotView<'_>], key: Option<&PublicKey>, label: &str) -> Self {
+        let occupants = || {
             slots
                 .iter()
-                .filter(|slot| pick(slot))
-                .map(|slot| slot.client_id)
-                .min_by_key(|id| id.get())
+                .filter_map(|slot| Some((slot.client_id, slot.held?)))
         };
-        if let Some(id) = lowest(&|slot| slot.held.is_some_and(|(held, _)| held.matches(key))) {
-            return Self::SameKey(id);
+        let lowest = |pick: &dyn Fn(&Occupant<'_>) -> bool| {
+            occupants()
+                .filter(|(_, occupant)| pick(occupant))
+                .min_by_key(|(id, _)| id.get())
+        };
+        if let Some(key) = key
+            && let Some((client_id, occupant)) = lowest(&|occupant| occupant.key.matches(key))
+        {
+            return Self::SameKey(Placement {
+                client_id,
+                role: occupant.role,
+            });
         }
-        if let Some(id) = lowest(&|slot| slot.held.is_none()) {
-            return Self::Free(id);
+        let holding = |role: Role| {
+            occupants()
+                .filter(|(_, occupant)| occupant.role == role)
+                .count()
+        };
+        let (role, room) = if holding(Role::Owner) == 0 {
+            (Role::Owner, true)
+        } else {
+            (Role::Admin, holding(Role::Admin) < MAX_ADMINS)
+        };
+        let free = slots
+            .iter()
+            .filter(|slot| slot.held.is_none())
+            .map(|slot| slot.client_id)
+            .min_by_key(|id| id.get());
+        if room && let Some(client_id) = free {
+            return Self::Free(Placement { client_id, role });
         }
-        if let Some(id) = lowest(&|slot| {
-            slot.held
-                .is_some_and(|(_, held)| held.as_bytes() == label.as_bytes())
+        if let Some((client_id, _)) = lowest(&|occupant| {
+            occupant.role == Role::Admin && occupant.label.as_bytes() == label.as_bytes()
         }) {
-            return Self::Reclaim(id);
+            return Self::Reclaim(Placement {
+                client_id,
+                role: Role::Admin,
+            });
         }
         Self::Full
     }
@@ -997,6 +1050,7 @@ mod tests {
     use super::*;
     use crate::handshake::PrologueFields;
     use crate::kdf::{DeviceId, Epoch, PrintedSecret};
+    use crate::limits::MAX_CLIENTS;
 
     const DEVICE_ID: [u8; 16] = *b"ORIGIN89 DEMO 01";
 
@@ -1463,24 +1517,74 @@ mod tests {
         ));
     }
 
-    fn view(id: u32, held: Option<(u8, &'static str)>) -> SlotView<'static> {
+    fn view(id: u32, held: Option<(u8, &'static str, Role)>) -> SlotView<'static> {
         SlotView {
             client_id: ClientId::new(id).expect("a slot"),
-            held: held.map(|(key, label)| (PublicKey::from_bytes([key; 32]), label)),
+            held: held.map(|(key, label, role)| Occupant {
+                key: PublicKey::from_bytes([key; 32]),
+                label,
+                role,
+            }),
         }
     }
 
-    fn id(n: u32) -> ClientId {
-        ClientId::new(n).expect("a slot")
+    /// A table of [`MAX_CLIENTS`] slots: slot 1 the owner, then `admins` admin
+    /// slots, then free ones. Built from the limits so the bound moves with them.
+    fn owner_and_admins(admins: usize) -> [SlotView<'static>; MAX_CLIENTS] {
+        core::array::from_fn(|index| {
+            let n = u32::try_from(index + 1).expect("MAX_CLIENTS fits");
+            let key = u8::try_from(index + 1).expect("MAX_CLIENTS fits");
+            match index {
+                0 => view(n, Some((key, "owner phone", Role::Owner))),
+                i if i <= admins => view(n, Some((key, "tablet", Role::Admin))),
+                _ => view(n, None),
+            }
+        })
     }
 
-    /// The same key re-pairing takes its own slot back, ahead of a free one.
+    fn placed(n: u32, role: Role) -> Placement {
+        Placement {
+            client_id: ClientId::new(n).expect("a slot"),
+            role,
+        }
+    }
+
+    fn key(byte: u8) -> PublicKey {
+        PublicKey::from_bytes([byte; 32])
+    }
+
+    /// The same key re-pairing takes its own slot back, ahead of a free one, and
+    /// keeps the role it had.
     #[test]
     fn p_240_the_same_key_takes_its_own_slot_before_a_free_one() {
-        let table = [view(1, None), view(2, Some((5, "phone"))), view(3, None)];
+        let table = [
+            view(1, None),
+            view(2, Some((5, "phone", Role::Admin))),
+            view(3, None),
+        ];
         assert_eq!(
-            Allocation::choose(&table, &PublicKey::from_bytes([5; 32]), "renamed"),
-            Allocation::SameKey(id(2))
+            Allocation::choose(&table, Some(&key(5)), "renamed"),
+            Allocation::SameKey(placed(2, Role::Admin))
+        );
+    }
+
+    /// Message 1 carries no client key, so step 1 cannot run there: the same
+    /// install is offered the free slot at message 1 and gets its own at
+    /// message 3.
+    #[test]
+    fn p_240_message_1_has_no_key_and_skips_the_first_step() {
+        let table = [
+            view(1, Some((4, "owner phone", Role::Owner))),
+            view(2, Some((5, "phone", Role::Admin))),
+            view(3, None),
+        ];
+        assert_eq!(
+            Allocation::choose(&table, None, "phone"),
+            Allocation::Free(placed(3, Role::Admin))
+        );
+        assert_eq!(
+            Allocation::choose(&table, Some(&key(5)), "phone"),
+            Allocation::SameKey(placed(2, Role::Admin))
         );
     }
 
@@ -1488,29 +1592,33 @@ mod tests {
     /// own rather than the first one's.
     #[test]
     fn p_240_a_free_slot_comes_before_a_reclaim() {
-        let table = [view(1, Some((5, "iPhone"))), view(2, None), view(3, None)];
+        let table = [
+            view(1, Some((4, "owner phone", Role::Owner))),
+            view(2, Some((5, "iPhone", Role::Admin))),
+            view(3, None),
+        ];
         assert_eq!(
-            Allocation::choose(&table, &PublicKey::from_bytes([6; 32]), "iPhone"),
-            Allocation::Free(id(2))
+            Allocation::choose(&table, Some(&key(6)), "iPhone"),
+            Allocation::Free(placed(3, Role::Admin))
         );
     }
 
-    /// With no free slot, the lowest slot with the byte-identical label is
+    /// With no free slot, the lowest admin slot with the byte-identical label is
     /// reclaimed, and a label that differs only in case is not a match.
     #[test]
     fn p_240_a_full_table_reclaims_the_lowest_byte_identical_label() {
         let table = [
-            view(1, Some((5, "kitchen"))),
-            view(2, Some((6, "Phone"))),
-            view(3, Some((7, "phone"))),
-            view(4, Some((8, "phone"))),
+            view(1, Some((4, "kitchen", Role::Owner))),
+            view(2, Some((6, "Phone", Role::Admin))),
+            view(3, Some((7, "phone", Role::Admin))),
+            view(4, Some((8, "phone", Role::Admin))),
         ];
         assert_eq!(
-            Allocation::choose(&table, &PublicKey::from_bytes([9; 32]), "phone"),
-            Allocation::Reclaim(id(3))
+            Allocation::choose(&table, Some(&key(9)), "phone"),
+            Allocation::Reclaim(placed(3, Role::Admin))
         );
         assert_eq!(
-            Allocation::choose(&table, &PublicKey::from_bytes([9; 32]), "PHONE"),
+            Allocation::choose(&table, Some(&key(9)), "PHONE"),
             Allocation::Full,
             "no case folding"
         );
@@ -1520,16 +1628,135 @@ mod tests {
     /// empty table gives slot 1.
     #[test]
     fn p_240_nothing_to_allocate_is_full_and_an_empty_table_gives_slot_one() {
-        let full = [view(1, Some((5, "a"))), view(2, Some((6, "b")))];
+        let full = [
+            view(1, Some((5, "a", Role::Owner))),
+            view(2, Some((6, "b", Role::Admin))),
+        ];
         assert_eq!(
-            Allocation::choose(&full, &PublicKey::from_bytes([9; 32]), "c"),
+            Allocation::choose(&full, Some(&key(9)), "c"),
             Allocation::Full
         );
+        assert_eq!(Allocation::choose(&full, None, "c"), Allocation::Full);
         let empty = [view(2, None), view(1, None)];
         assert_eq!(
-            Allocation::choose(&empty, &PublicKey::from_bytes([9; 32]), "c"),
-            Allocation::Free(id(1)),
+            Allocation::choose(&empty, Some(&key(9)), "c"),
+            Allocation::Free(placed(1, Role::Owner)),
             "P-086: the lowest free slot, whatever order the table is walked in"
+        );
+    }
+
+    /// The first pairing at the panel is the owner; everybody after is an admin.
+    /// A table whose owner was removed makes the next pairing the owner again,
+    /// or the site has nobody who can invite one.
+    #[test]
+    fn p_250_a_label_enrolment_is_owner_only_while_no_slot_holds_owner() {
+        let empty = [view(1, None), view(2, None)];
+        assert_eq!(
+            Allocation::choose(&empty, None, "phone"),
+            Allocation::Free(placed(1, Role::Owner))
+        );
+        let owned = [view(1, Some((4, "phone", Role::Owner))), view(2, None)];
+        assert_eq!(
+            Allocation::choose(&owned, None, "tablet"),
+            Allocation::Free(placed(2, Role::Admin))
+        );
+        let ownerless = [
+            view(1, Some((5, "tablet", Role::Admin))),
+            view(2, Some((6, "tv", Role::Viewer))),
+            view(3, None),
+        ];
+        assert_eq!(
+            Allocation::choose(&ownerless, None, "phone"),
+            Allocation::Free(placed(3, Role::Owner))
+        );
+    }
+
+    /// Step 1 keeps the role the slot had. A viewer that re-pairs at the panel
+    /// is still a viewer, and an owner that re-pairs is still the owner, even
+    /// though a new pairing would have been an admin.
+    #[test]
+    fn p_250_the_same_key_keeps_its_role_whatever_a_new_pairing_would_get() {
+        let table = [
+            view(1, Some((4, "phone", Role::Owner))),
+            view(2, Some((5, "tv", Role::Viewer))),
+            view(3, None),
+        ];
+        assert_eq!(
+            Allocation::choose(&table, Some(&key(5)), "tv"),
+            Allocation::SameKey(placed(2, Role::Viewer))
+        );
+        assert_eq!(
+            Allocation::choose(&table, Some(&key(4)), "phone"),
+            Allocation::SameKey(placed(1, Role::Owner))
+        );
+    }
+
+    /// One admin short of the bound still gets a free slot; at the bound an
+    /// admin finds none, although the table has room, and the row stays for an
+    /// owner to be invited into.
+    #[test]
+    fn p_258_an_admin_past_the_bound_finds_no_free_slot() {
+        let short = owner_and_admins(MAX_ADMINS - 1);
+        assert_eq!(
+            Allocation::choose(&short, None, "laptop"),
+            Allocation::Free(placed(
+                u32::try_from(MAX_ADMINS + 1).expect("fits"),
+                Role::Admin
+            ))
+        );
+        let bound = owner_and_admins(MAX_ADMINS);
+        assert!(bound.iter().any(|slot| slot.held.is_none()), "room is left");
+        assert_eq!(Allocation::choose(&bound, None, "laptop"), Allocation::Full);
+    }
+
+    /// At the bound, an admin pairing under a label an admin slot holds reclaims
+    /// that slot rather than taking the free row: the admin count does not move.
+    #[test]
+    fn p_258_at_the_bound_a_matching_label_reclaims_rather_than_taking_a_free_slot() {
+        let bound = owner_and_admins(MAX_ADMINS);
+        assert_eq!(
+            Allocation::choose(&bound, None, "tablet"),
+            Allocation::Reclaim(placed(2, Role::Admin))
+        );
+    }
+
+    /// An owner may take any free slot: a table the admins have filled to the
+    /// bound, with its owner removed, still enrols an owner at the panel.
+    #[test]
+    fn p_258_an_owner_takes_a_free_slot_past_the_admin_bound() {
+        let mut table = owner_and_admins(MAX_ADMINS);
+        let first = table.first_mut().expect("MAX_CLIENTS is not zero");
+        first.held = None;
+        assert_eq!(
+            Allocation::choose(&table, None, "new phone"),
+            Allocation::Free(placed(1, Role::Owner))
+        );
+    }
+
+    /// Step 3 considers only slots holding `admin`. A label that matches the
+    /// owner's or the viewer's slot never reclaims it; without that, a label
+    /// holder standing at the panel takes the site from its owner by naming
+    /// their phone.
+    #[test]
+    fn p_258_a_label_never_reclaims_an_owner_or_viewer_slot() {
+        let table = [
+            view(1, Some((4, "phone", Role::Owner))),
+            view(2, Some((5, "phone", Role::Viewer))),
+            view(3, Some((6, "tablet", Role::Admin))),
+            view(4, Some((7, "phone", Role::Admin))),
+        ];
+        assert_eq!(
+            Allocation::choose(&table, None, "phone"),
+            Allocation::Reclaim(placed(4, Role::Admin))
+        );
+        let no_admin_match = [
+            view(1, Some((4, "phone", Role::Owner))),
+            view(2, Some((5, "phone", Role::Viewer))),
+            view(3, Some((6, "tablet", Role::Admin))),
+        ];
+        assert_eq!(
+            Allocation::choose(&no_admin_match, None, "phone"),
+            Allocation::Full
         );
     }
 }
