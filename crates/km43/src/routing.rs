@@ -4,10 +4,10 @@
 //! nothing else to match on. So an `Error` about a request that parsed fine has
 //! to echo that request's pair: stamped `0, 0` it arrives as an unmatchable link
 //! diagnostic, and the request it was meant to answer sits outstanding until it
-//! times out. The echoed values are also what enter the `rsp` MAC preimage —
-//! two sides that disagree about which `req_id` went in compute different tags
-//! for codes 6, 7 and 11, so a refusal somebody needed to read arrives as a
-//! verification failure instead.
+//! times out. The echoed values are also what enter a sealed error's associated
+//! data (P-234) — two sides that disagree about which `req_id` went in fail to
+//! open codes 6 and 7, so a refusal somebody needed to read arrives as an
+//! authentication failure instead.
 //!
 //! A frame too malformed to parse an envelope from has no pair to echo, and
 //! carries `0, 0`. It is still routed: the comms processor sends it back on the

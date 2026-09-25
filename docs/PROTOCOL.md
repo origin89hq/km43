@@ -594,7 +594,7 @@ associated data of a sealed one (P-234). An `Error` about a frame whose envelope
 
 Echoing was only ever implied, and implied is what this document says it must
 never be. Two sides that disagree about which `req_id` went into the associated
-data fail to open codes 6, 7 and 11 — every code the registry marks sealed and
+data fail to open codes 6 and 7 — every code the registry marks sealed and
 live — so a refusal somebody needed to read arrives as an authentication failure
 instead. P-024's carve-out is the other half of it: an error
 about the link answers no request, and a rule that drops everything unmatched
