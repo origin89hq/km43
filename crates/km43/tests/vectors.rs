@@ -3217,6 +3217,28 @@ fn p_244_the_published_vouch_is_the_one_this_controller_writes() {
     );
 }
 
+/// **Both tag widths can be named from outside the crate.** One name exported
+/// for the cipher's tag and the HMAC's left a dependent unable to spell
+/// either, so the firmware sized its vouch buffer with a bare 16. The HMAC
+/// width is `macs.vouch`'s tag; the cipher's is what pairing message 3
+/// carries past its sealed key and its one-byte empty payload.
+#[test]
+fn p_041_both_tag_widths_are_nameable_and_are_the_published_ones() {
+    let out16 = hex_in(object_in(object("macs"), "vouch"), "out16");
+    assert_eq!(out16.len(), km43::MAC_TAG_BYTES);
+
+    let pairing = object_in(object("handshakes"), "pairing");
+    let message_3 = hex_in(object_in(pairing, "message_3"), "message");
+    assert_eq!(message_3.len(), km43::PAIR_MESSAGE_3);
+    assert_eq!(
+        message_3
+            .len()
+            .checked_sub(km43::SEALED_KEY_BYTES + km43::TAG_BYTES),
+        Some(1),
+        "message 3 is the sealed key and a sealed empty map, each with the cipher's tag"
+    );
+}
+
 /// The published low-order request is answered `bad_verifier` and nothing
 /// else. A controller that tagged under it would hand out a tag under a key
 /// every reader of this file can compute.

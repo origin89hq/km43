@@ -51,11 +51,14 @@ const DIGEST_BYTES: usize = 32;
 /// SHA-256's block, the width RFC 2104 pads a key to.
 const BLOCK_BYTES: usize = 64;
 
-/// P-041's leftmost sixteen: a 128-bit authentication tag.
-pub(crate) const TAG_BYTES: usize = 16;
+/// P-041's leftmost sixteen: a 128-bit HMAC tag, as the vouch carries it.
+/// Named apart from the cipher's [`TAG_BYTES`](crate::TAG_BYTES) because the
+/// crate glob-exports both modules, and one name for two constants left
+/// dependents able to name neither.
+pub const MAC_TAG_BYTES: usize = 16;
 
 const_assert!(
-    TAG_BYTES <= DIGEST_BYTES && KEY_BYTES <= BLOCK_BYTES,
+    MAC_TAG_BYTES <= DIGEST_BYTES && KEY_BYTES <= BLOCK_BYTES,
     "the tag is the digest's leftmost bytes and the key is zero-padded to one block; either wider and the zip below silently truncates"
 );
 
@@ -96,19 +99,19 @@ impl fmt::Display for Domain {
 
 /// Sixteen bytes of HMAC, and only [`Tag::verify`] may compare them.
 #[derive(Clone, Copy)]
-pub struct Tag([u8; TAG_BYTES]);
+pub struct Tag([u8; MAC_TAG_BYTES]);
 
 impl Tag {
     /// The bytes, for the wire.
     #[must_use]
-    pub const fn as_bytes(&self) -> &[u8; TAG_BYTES] {
+    pub const fn as_bytes(&self) -> &[u8; MAC_TAG_BYTES] {
         &self.0
     }
 
     /// Constant time, and a candidate of any other width is refused rather
     /// than compared as a prefix.
     pub fn verify(&self, candidate: &[u8]) -> Result<(), MacError> {
-        if candidate.len() != TAG_BYTES {
+        if candidate.len() != MAC_TAG_BYTES {
             return Err(MacError::WrongWidth(candidate.len()));
         }
         if bool::from(self.0.as_slice().ct_eq(candidate)) {
@@ -274,7 +277,7 @@ impl Preimage {
     /// P-041's truncation: the **leftmost** sixteen bytes.
     fn tag(self) -> Tag {
         let mut digest: [u8; DIGEST_BYTES] = self.0.finalize().into_bytes().into();
-        let mut out = [0u8; TAG_BYTES];
+        let mut out = [0u8; MAC_TAG_BYTES];
         for (slot, &byte) in out.iter_mut().zip(&digest) {
             *slot = byte;
         }
@@ -352,7 +355,7 @@ mod tests {
     fn every_flipped_bit_and_every_wrong_width_is_refused() {
         let key = RefusalKey::new(Zeroizing::new([0x44; KEY_BYTES]));
         let tag = key.refusal(&[0x55; KEY_BYTES], Pair::TableFull);
-        for byte in 0..TAG_BYTES {
+        for byte in 0..MAC_TAG_BYTES {
             for bit in 0..8 {
                 let mut flipped = *tag.as_bytes();
                 flipped[byte] ^= 1 << bit;
