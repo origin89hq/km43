@@ -494,23 +494,23 @@ impl From<SealError> for SignedError {
 }
 
 impl SignedError {
-    /// What to answer.
+    /// What to answer. `None` where the sealed layer answers with silence
+    /// (P-022, P-233): a replayed write is dropped, not refused, or a relay
+    /// that replays one collects a second response to a request already
+    /// answered.
     #[must_use]
-    pub const fn refusal(self) -> Refusal {
+    pub const fn refusal(self) -> Option<Refusal> {
         match self {
-            Self::StaleCounter { .. } => Refusal::Client(ErrorCode::CounterNotFresh),
+            Self::Sealed(why) => why.refusal(),
+            Self::StaleCounter { .. } => Some(Refusal::Client(ErrorCode::CounterNotFresh)),
             Self::WrongClient { .. } | Self::ClientZero => {
-                Refusal::Client(ErrorCode::UnknownClient)
+                Some(Refusal::Client(ErrorCode::UnknownClient))
             }
             Self::TooLargeToWrite | Self::OperationTooLong(_) => {
-                Refusal::Client(ErrorCode::PayloadTooLarge)
+                Some(Refusal::Client(ErrorCode::PayloadTooLarge))
             }
-            Self::Sealed(why) => match why.refusal() {
-                Some(refusal) => refusal,
-                None => Refusal::Client(ErrorCode::MalformedFrame),
-            },
             Self::Missing(_) | Self::Duplicate(_) | Self::NotSigned(_) | Self::Cbor(_) => {
-                Refusal::Client(ErrorCode::MalformedFrame)
+                Some(Refusal::Client(ErrorCode::MalformedFrame))
             }
         }
     }
@@ -611,11 +611,10 @@ mod tests {
     fn p_080_a_write_arrives_past_the_identity_and_the_counter_in_that_order() {
         let (mut c, mut k) = channels([1; 32], [2; 32]);
         let mut frame = [0u8; MAX_PAYLOAD];
-        Signed::new(MessageType::Time, client(), Counter(9), &OPERATION)
+        let (_, len) = Signed::new(MessageType::Time, client(), Counter(9), &OPERATION)
             .expect("Time signs")
             .seal(&mut c.tx, SessionId::from(3), &mut frame)
             .expect("seals");
-        let len = frame.iter().rposition(|&b| b != 0).map_or(0, |at| at + 1);
         let mut plain = [0u8; MAX_PAYLOAD];
         let opened = Sealed::decode(Envelope::decode(&frame[..len]).expect("decodes"))
             .expect("sealed")
@@ -631,6 +630,29 @@ mod tests {
         assert_eq!(fresh.counter(), Counter(9));
     }
 
+    /// P-022 and P-233: a relay that replays a signed write gets nothing back.
+    /// A handler that lifts the sealed layer's error with `?` must not turn
+    /// its silence into error 1, or the replay collects a second response.
+    #[test]
+    fn p_233_a_replayed_write_is_not_answered_through_signed_error() {
+        let (mut c, mut k) = channels([1; 32], [2; 32]);
+        let mut frame = [0u8; MAX_PAYLOAD];
+        let (_, len) = Signed::new(MessageType::Time, client(), Counter(9), &OPERATION)
+            .expect("Time signs")
+            .seal(&mut c.tx, SessionId::from(3), &mut frame)
+            .expect("seals");
+        let mut plain = [0u8; MAX_PAYLOAD];
+        let mut open = |plain: &mut [u8]| -> Result<(), SignedError> {
+            let envelope = Envelope::decode(&frame[..len]).expect("decodes");
+            Sealed::decode(envelope)?.open(&mut k.rx, plain)?;
+            Ok(())
+        };
+        open(&mut plain).expect("the first arrival opens");
+        let replayed = open(&mut plain).expect_err("the replay is refused");
+        assert_eq!(replayed, SignedError::Sealed(SealError::Replayed(1)));
+        assert_eq!(replayed.refusal(), None);
+    }
+
     /// P-084: key 1 naming another slot is refused before any counter is read.
     #[test]
     fn p_084_a_write_claiming_another_slot_is_refused_before_the_counter() {
@@ -639,7 +661,7 @@ mod tests {
             let refused = claim.expect("reads").bind(client()).err();
             assert!(matches!(refused, Some(SignedError::WrongClient { .. })));
             assert_eq!(
-                refused.map(SignedError::refusal),
+                refused.and_then(SignedError::refusal),
                 Some(Refusal::Client(ErrorCode::UnknownClient))
             );
         });
@@ -664,7 +686,7 @@ mod tests {
                 })
             );
             assert_eq!(
-                refused.map(SignedError::refusal),
+                refused.and_then(SignedError::refusal),
                 Some(Refusal::Client(ErrorCode::CounterNotFresh))
             );
         });

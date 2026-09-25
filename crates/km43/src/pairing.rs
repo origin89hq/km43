@@ -869,22 +869,19 @@ pub enum PairError {
 
 impl PairError {
     /// What the controller answers. Every answer before `Enrol 0x93` is bare.
+    /// `None` where the sealed layer answers with silence (P-233).
     #[must_use]
-    pub const fn refusal(self) -> Refusal {
+    pub const fn refusal(self) -> Option<Refusal> {
         match self {
-            Self::UnsupportedSuite(_) => Refusal::Client(ErrorCode::UnsupportedSuite),
-            Self::Noise(NoiseError::DestinationTooSmall) => {
-                Refusal::Client(ErrorCode::PayloadTooLarge)
+            Self::Sealed(why) => why.refusal(),
+            Self::UnsupportedSuite(_) => Some(Refusal::Client(ErrorCode::UnsupportedSuite)),
+            Self::Noise(NoiseError::DestinationTooSmall) | Self::TooLargeToWrite => {
+                Some(Refusal::Client(ErrorCode::PayloadTooLarge))
             }
             Self::Noise(_) | Self::Refusal(_) | Self::NotTheLabelsController => {
-                Refusal::Client(ErrorCode::AuthenticationFailed)
+                Some(Refusal::Client(ErrorCode::AuthenticationFailed))
             }
-            Self::TooLargeToWrite => Refusal::Client(ErrorCode::PayloadTooLarge),
-            Self::Envelope(why) => why.refusal(),
-            Self::Sealed(why) => match why.refusal() {
-                Some(refusal) => refusal,
-                None => Refusal::Client(ErrorCode::AuthenticationFailed),
-            },
+            Self::Envelope(why) => Some(why.refusal()),
             Self::UnknownKey(_)
             | Self::Duplicate(_)
             | Self::Missing(_)
@@ -895,7 +892,7 @@ impl PairError {
             | Self::SlotOnARefusal
             | Self::NotThisRequest(_)
             | Self::WrongMessage { .. }
-            | Self::Cbor(_) => Refusal::Client(ErrorCode::MalformedFrame),
+            | Self::Cbor(_) => Some(Refusal::Client(ErrorCode::MalformedFrame)),
         }
     }
 
@@ -1151,7 +1148,7 @@ mod tests {
         assert!(refused.counts());
         assert_eq!(
             refused.refusal(),
-            Refusal::Client(ErrorCode::AuthenticationFailed)
+            Some(Refusal::Client(ErrorCode::AuthenticationFailed))
         );
     }
 
@@ -1242,7 +1239,7 @@ mod tests {
         );
         assert_eq!(
             PairError::UnknownKind(9).refusal(),
-            Refusal::Client(ErrorCode::MalformedFrame)
+            Some(Refusal::Client(ErrorCode::MalformedFrame))
         );
     }
 
