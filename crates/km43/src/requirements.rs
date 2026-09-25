@@ -609,7 +609,7 @@ pub const REQUIREMENTS: &[Requirement] = &[
         id: "P-080",
         document: "docs/PROTOCOL.md",
         section: "Signed requests",
-        statement: "The controller MUST take these steps in this order: 1. Open the sealed body. A `req_id` P-022 refuses is dropped unanswered, and a tag that fails is P-051's error 10. 2. For a `Command 0x08`, look up `(client_id, cmd_id)` in the dedup table, with the `client_id` the session is bound to. A match left **in flight** by a reset is answered from the state store, below; any other match is answered per P-120 and P-124, **without executing**. 3. For a `Command 0x08`, reserve a dedup entry marked **in flight** and persist it. A failure here is P-079's error 7, and a full table is P-122's. 4. Execute. 5. For a `Command 0x08`, mark the reserved entry **complete**, carrying the outcome it produced.",
+        statement: "The controller MUST take these steps in this order: 1. Open the sealed body. A `req_id` P-022 refuses is dropped unanswered, and a tag that fails is P-051's error 10. 2. For a `Command 0x08`, look up `(client_id, cmd_id)` in the dedup table, with the `client_id` the session is bound to. A match whose operation-hash differs is P-124's `rejected`; a match that agrees and was left **in flight** by a reset is answered from the state store, below; any other match is answered per P-120. None of them executes here. 3. For a `Command 0x08`, reserve a dedup entry marked **in flight** and persist it. A failure here is P-079's error 7, and a full table is P-122's. 4. Execute. 5. For a `Command 0x08`, mark the reserved entry **complete**, carrying the outcome it produced.",
     },
     Requirement {
         id: "P-079",
