@@ -32,6 +32,9 @@
     "pair_req_id": 1,
     "enrol_req_id": 2,
     "hello_req_id": 3,
+    "verifier_key": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+    "vouch_nonce": "b0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+    "account_binding": "d0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeef",
     "model": "Origin89 CTRL-1 (G0B1)",
     "provisioned": false,
     "pairing_open": true,
@@ -85,12 +88,22 @@
       "info_readable": "'km43/v1/admit-key'",
       "L": 32,
       "out": "d867f24faa5844c88aaabaeecaea56de89fdc49fb6cf9e4e31b653b59fd158fd"
+    },
+    "vouch_key": {
+      "salt": "4f524947494e38392044454d4f203031",
+      "ikm": "b52d6135428972abd805ef1a50a3ecd24feb7bb3c4643b462849a78ac7796e56",
+      "info": "6b6d34332f76312f766f7563682d6b6579",
+      "info_readable": "'km43/v1/vouch-key'",
+      "L": 32,
+      "out": "27ad6b384a703372431468e47f48236f82869ca41fd6bc8f7520859ba8e19609"
     }
   },
   "keys": {
     "controller_public": "79a631eede1bf9c98f12032cdeadd0e7a079398fc786b88cc846ec89af85a51a",
     "client_public": "675dd574ed7789310b3d2e7681f3790b466c773b1521fecf36577958371ea52f",
     "admit_ikm_readable": "X25519(client_key, controller_public), which equals X25519(controller_key, client_public)",
+    "verifier_public": "605a725d2a4adfeeb1a29e17edd621c1b7593ee8cdbc44ac6c4ab6e2f805d23c",
+    "vouch_ikm_readable": "X25519(controller_key, verifier_public), which equals X25519(verifier_key, controller_public)",
     "controller_fp": {
       "input": "6b6d34332f76312f636f6e74726f6c6c65722d667079a631eede1bf9c98f12032cdeadd0e7a079398fc786b88cc846ec89af85a51a",
       "input_readable": "'km43/v1/controller-fp' | controller_public[32]",
@@ -114,6 +127,97 @@
       "preimage_readable": "'km43/v1/hello-admit' | prologue[57] | handshake",
       "out16": "16cdf33d939ec319db928a6286159d36",
       "full_body_cbor": "a30101025874358072d6365880d1aeea329adf9121383851ed21a28e3b75e965d0d2cd166254968f2291d3613cc849096610c38b3e37a05a058711298511051608f385fbf0d1068ade0fa4b536c800e0c8178c64156894aafde61b369cf7c53475072d0b4cf33ef10fda9694acdbb8e13038d341306109265565035016cdf33d939ec319db928a6286159d36"
+    },
+    "vouch": {
+      "key": "vouch_key",
+      "nonce": "b0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+      "binding": "d0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeef",
+      "preimage": "6b6d34332f76312f766f7563684f524947494e38392044454d4f203031000000010000000700000001b0b1b2b3b4b5b6b7b8b9babbbcbdbebfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeef",
+      "preimage_readable": "'km43/v1/vouch' | device_id[16] | epoch:u32be | client_id:u32be | generation:u32be | nonce[16] | binding[32]",
+      "out16": "5fd32d375484c3f47d844790551a1164",
+      "full_body_cbor": "a5010102010307040105505fd32d375484c3f47d844790551a1164"
+    }
+  },
+  "vouch_verification": {
+    "note": "device_id, epoch, nonce and binding are the verifier's own records (P-247 step 2); controller_fp is the manufacturing record's (P-249), null where the verifier holds none; controller_public, client_id, generation and tag are what the caller presents. The verifier's private key is inputs.verifier_key.",
+    "impostor_key": "505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f",
+    "accepted": {
+      "device_id": "4f524947494e38392044454d4f203031",
+      "epoch": 1,
+      "nonce": "b0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+      "binding": "d0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeef",
+      "controller_fp": "9e2a397cf35e1d886cecf8925d7faa3a",
+      "controller_public": "79a631eede1bf9c98f12032cdeadd0e7a079398fc786b88cc846ec89af85a51a",
+      "client_id": 7,
+      "generation": 1,
+      "tag": "5fd32d375484c3f47d844790551a1164",
+      "verdict": "accept",
+      "why": "the vouch in macs.vouch, presented once by the account it was issued to"
+    },
+    "replayed_nonce": {
+      "device_id": "4f524947494e38392044454d4f203031",
+      "epoch": 1,
+      "nonce": "b0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+      "binding": "d0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeef",
+      "controller_fp": "9e2a397cf35e1d886cecf8925d7faa3a",
+      "controller_public": "79a631eede1bf9c98f12032cdeadd0e7a079398fc786b88cc846ec89af85a51a",
+      "client_id": 7,
+      "generation": 1,
+      "tag": "5fd32d375484c3f47d844790551a1164",
+      "verdict": "refuse at step 1",
+      "why": "the accepted claim again: the tag still verifies, and only the nonce recorded as spent refuses it"
+    },
+    "another_account": {
+      "device_id": "4f524947494e38392044454d4f203031",
+      "epoch": 1,
+      "nonce": "b0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+      "binding": "d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0",
+      "controller_fp": "9e2a397cf35e1d886cecf8925d7faa3a",
+      "controller_public": "79a631eede1bf9c98f12032cdeadd0e7a079398fc786b88cc846ec89af85a51a",
+      "client_id": 7,
+      "generation": 1,
+      "tag": "5fd32d375484c3f47d844790551a1164",
+      "verdict": "refuse at step 4",
+      "why": "the accepted tag presented under another account's binding, which the verifier tags in its place"
+    },
+    "earlier_epoch": {
+      "device_id": "4f524947494e38392044454d4f203031",
+      "epoch": 2,
+      "nonce": "b0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+      "binding": "d0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeef",
+      "controller_fp": "9e2a397cf35e1d886cecf8925d7faa3a",
+      "controller_public": "79a631eede1bf9c98f12032cdeadd0e7a079398fc786b88cc846ec89af85a51a",
+      "client_id": 7,
+      "generation": 1,
+      "tag": "5fd32d375484c3f47d844790551a1164",
+      "verdict": "refuse at step 4",
+      "why": "a tag minted while the controller was at the published epoch, presented to link the next one"
+    },
+    "wrong_controller_key": {
+      "device_id": "4f524947494e38392044454d4f203031",
+      "epoch": 1,
+      "nonce": "b0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+      "binding": "d0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeef",
+      "controller_fp": "9e2a397cf35e1d886cecf8925d7faa3a",
+      "controller_public": "392d174a38b3b1beafaf1fe824870841c5fa531bc6eafdb6402c124664488c1c",
+      "client_id": 7,
+      "generation": 1,
+      "tag": "6089d6d37ec441ddebf5e244e1413a9f",
+      "verdict": "refuse at step 3",
+      "why": "the caller chose the controller key and holds impostor_key: its tag verifies under that key, and only controller_fp refuses it"
+    },
+    "no_manufacturing_record": {
+      "device_id": "4f524947494e38392044454d4f203031",
+      "epoch": 1,
+      "nonce": "b0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+      "binding": "d0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeef",
+      "controller_fp": null,
+      "controller_public": "79a631eede1bf9c98f12032cdeadd0e7a079398fc786b88cc846ec89af85a51a",
+      "client_id": 7,
+      "generation": 1,
+      "tag": "5fd32d375484c3f47d844790551a1164",
+      "verdict": "refuse at step 3",
+      "why": "the honest claim, for a device_id whose record has not reached the verifier: controller_fp is null, and nothing the caller offers stands in for it (P-249)"
     }
   },
   "handshakes": {
@@ -667,6 +771,36 @@
       "values_readable": "section 3 written while the radio still reports version 2 failed auth_failed: the verdict on the previous write, which key 2 says (P-219)",
       "body_cbor": "a40103020203040401",
       "body_len": 9
+    },
+    "vouch_0x14": {
+      "type": 20,
+      "authentication": "this is the inner body; on the wire it is sealed (P-231) under the session's client-to-controller key, its nonce the req_id, as sealed.readlog_request is",
+      "body_readable": "{1:verifier, 2:nonce, 3:binding}",
+      "values_readable": "the verifier's public key, nonce and account binding, from inputs",
+      "body_cbor": "a3015820605a725d2a4adfeeb1a29e17edd621c1b7593ee8cdbc44ac6c4ab6e2f805d23c0250b0b1b2b3b4b5b6b7b8b9babbbcbdbebf035820d0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeef",
+      "body_len": 89
+    },
+    "vouch_0x94": {
+      "type": 148,
+      "authentication": "this is the inner body; on the wire it is sealed (P-231) under the session's controller-to-client key, as sealed.response is",
+      "body_readable": "{1:outcome, 2:epoch, 3:client_id, 4:generation, 5:tag}",
+      "values_readable": "vouched, for the published epoch and slot; key 5 is macs.vouch.out16",
+      "body_cbor": "a5010102010307040105505fd32d375484c3f47d844790551a1164",
+      "body_len": 27
+    },
+    "vouch_low_order_0x14": {
+      "type": 20,
+      "authentication": "this is the inner body; on the wire it is sealed (P-231) under the session's client-to-controller key, its nonce the req_id, as sealed.readlog_request is",
+      "values_readable": "a verifier key of thirty-two zero bytes, a low-order point: X25519 with it is all zero (P-245)",
+      "body_cbor": "a301582000000000000000000000000000000000000000000000000000000000000000000250b0b1b2b3b4b5b6b7b8b9babbbcbdbebf035820d0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeef",
+      "body_len": 89
+    },
+    "vouch_bad_verifier_0x94": {
+      "type": 148,
+      "authentication": "this is the inner body; on the wire it is sealed (P-231) under the session's controller-to-client key, as sealed.response is",
+      "values_readable": "bad_verifier, the answer to vouch_low_order_0x14, and no key 2 to 5",
+      "body_cbor": "a10102",
+      "body_len": 3
     },
     "identity_0x0001": {
       "section": 1,

@@ -512,6 +512,7 @@ pub fn heading_for(key: &str) -> String {
         "set_config" => "## SetConfig outcomes",
         "pair" => "## Pair outcomes",
         "time" => "## Time outcomes",
+        "vouch" => "## Vouch outcomes",
         "firmware" => "## Firmware outcomes",
         "quality" => "## Quality",
         "generator_state" => "## Generator states",

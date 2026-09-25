@@ -870,10 +870,12 @@ nonce, whose layout Noise fixes (P-232).
 **P-041** — `HMAC` means **HMAC-SHA256**. Where 16 bytes are specified it is the
 **leftmost 16 bytes** of the 32-byte output.
 
-Two tags on this wire are HMACs, and both are 128 bits for the reason the cipher's
-tag is: 128 bits is the security target. The pairing refusal (P-241) and the
-`Hello` admission tag (P-238) are checked before any key agreement, which is the
-whole reason they are HMACs and not Noise messages.
+Three tags on this wire are HMACs, and all are 128 bits for the reason the
+cipher's tag is: 128 bits is the security target. The pairing refusal (P-241) and
+the `Hello` admission tag (P-238) are checked before any key agreement, which is
+the whole reason they are HMACs and not Noise messages. The vouch tag (P-244) is
+checked by a verifier that is not on this wire, after the session it was asked
+on has ended.
 
 **P-042** — `HKDF` means **HKDF-SHA256** (RFC 5869) with `salt`, `IKM` and `info`
 as **named arguments**. It MUST NOT be implemented as a hash over a
@@ -893,8 +895,10 @@ wire.
 | `km43/v1/pair-psk` | HKDF `info` | the pre-shared key a pairing handshake mixes in (P-088) |
 | `km43/v1/pair-refusal` | HKDF `info` | the key a pairing refusal is tagged under (P-241) |
 | `km43/v1/admit-key` | HKDF `info` | one enrolment's admission key (P-238) |
+| `km43/v1/vouch-key` | HKDF `info` | the key one vouch is tagged under (P-244) |
 | `km43/v1/pair-refused` | MAC preimage | a pairing refusal (P-241) |
 | `km43/v1/hello-admit` | MAC preimage | a `Hello`'s admission tag (P-238) |
+| `km43/v1/vouch` | MAC preimage | a vouch for an enrolment (P-244) |
 | `km43/v1/controller-fp` | hash prefix | the controller key's printed fingerprint (P-236) |
 | `km43/v1/prologue` | prologue prefix | both handshakes (P-227) |
 
@@ -941,6 +945,8 @@ would leave a slot any stranger can open.
 | `pair_psk`, `refusal_key` | anyone holding the label | the printed secret (P-088) |
 | client key `is`, public half `IS` | one client install | the client's CSPRNG, at enrolment |
 | `admit_key` | the controller's slot, and that client | `X25519(is, CS)` (P-238) |
+| verifier key `vs`, public half `VS` | a verifier, such as the cloud | the verifier's CSPRNG |
+| `vouch_key` | the controller for one answer, and the verifier | `X25519(cs, VS)` (P-244) |
 | handshake and transport keys | both ends of one handshake | Noise, from ephemeral and static DH |
 
 **P-235** — The controller key MUST be generated at manufacture from a CSPRNG,
@@ -1066,7 +1072,8 @@ had no such point: cut the power after the second and the stolen phone in slot
 five still opened a session, and nothing recorded that a reset had been started.
 
 The epoch is also the ownership generation the cloud keys a site's history by: a
-reset starts a new one, and a new first pairing becomes its owner.
+reset starts a new one, and a new first pairing becomes its owner. A site links a
+generation on the controller's vouch (P-244), never on the pair alone.
 
 **P-086** — `client_id` MUST be allocated as the **lowest free slot index in the
 client table, counting from 1**, whenever P-240 allocates a free slot. It is the
@@ -1291,8 +1298,8 @@ conformance item 7 can prove rather than something each firmware picks at a benc
 
 | Messages | Sealed by |
 |---|---|
-| Requests `0x03`, `0x05`, `0x06`, `0x07`, `0x08`, `0x09`, `0x0A`, `0x0C`, `0x0D`, `0x0E`, `0x0F`, `0x10`, `0x11`, `0x12` | the client |
-| Responses `0x83`, `0x85`, `0x86`, `0x87`, `0x88`, `0x89`, `0x8A`, `0x8C`, `0x8D`, `0x8E`, `0x8F`, `0x90`, `0x91`, `0x92`, and `0xFF` in its sealed form (P-142) | the controller |
+| Requests `0x03`, `0x05`, `0x06`, `0x07`, `0x08`, `0x09`, `0x0A`, `0x0C`, `0x0D`, `0x0E`, `0x0F`, `0x10`, `0x11`, `0x12`, `0x14` | the client |
+| Responses `0x83`, `0x85`, `0x86`, `0x87`, `0x88`, `0x89`, `0x8A`, `0x8C`, `0x8D`, `0x8E`, `0x8F`, `0x90`, `0x91`, `0x92`, `0x94`, and `0xFF` in its sealed form (P-142) | the controller |
 | Event `0x04` | the controller |
 | `Enrol 0x93` | the controller, under the keys of the pairing that just completed (P-064) |
 
@@ -1831,7 +1838,8 @@ controller SHOULD compute at most one handshake at a time, serving connections i
 turn. On this controller an X25519 operation costs about 12 million instructions,
 about 190 to 280 milliseconds at 64 MHz; a `Hello` costs the controller
 four of them and a key generation, a pairing costs three at message 2 and two at
-message 3 (the second derives the slot's admission key), and every refusal before
+message 3 (the second derives the slot's admission key), a `Vouch` costs one, and
+every refusal before
 them costs an HMAC or less. Taking turns bounds what any one
 connection can make the others wait.
 
@@ -1966,6 +1974,131 @@ rather than that ceiling.
 The margin is what absorbs a later envelope element or sealed-body key: without
 it, adding one turns an operation that was legal yesterday into a frame the
 controller builds and then has to refuse.
+
+---
+
+## Vouching for an enrolment
+
+The cloud keeps a site's history by ownership generation, the `device_id` and
+`epoch` pair (P-085), and a person links a generation to a site from a phone
+enrolled with it. Both halves of the pair are public: `device_id` is on the
+label, in the mDNS TXT `id` (P-224) and in `Discover`, and `epoch` is in
+`Discover` key 8 (P-087). A link that needed nothing else would go to whoever
+asked first, and once readings reach the cloud (origin89hq/km43#129) that site
+would receive the generation's readings. `Vouch` is the controller telling one
+verifier that the client asking holds an enrolment in this generation, and asked
+for this account.
+
+```text
+Vouch  0x14             sealed
+  1: verifier     bstr32   VS, the verifier's X25519 public key
+  2: nonce        bstr16   issued by the verifier for this vouch alone
+  3: binding      bstr32   issued by the verifier for one account
+
+Vouch  0x94             sealed
+  1: outcome      u8       see REGISTRY: 1 vouched · 2 bad_verifier
+  2: epoch        u32      with outcome 1 only; the controller's current epoch
+  3: client_id    u32      with outcome 1 only; the slot the session is bound to
+  4: generation   u32      with outcome 1 only; that slot's generation (P-239)
+  5: tag          bstr16   with outcome 1 only; P-244
+```
+
+The client takes keys 1 to 3 from the verifier over its own authenticated
+channel, and hands the verifier the answer together with the controller key it
+pinned (P-222). The verifier is the only party that can check the tag, and the
+client cannot make one.
+
+**P-244** — A controller MUST answer `Vouch 0x14` with outcome 1 `vouched`,
+unless P-245 refuses it, and MUST compute its tag as
+
+```text
+vouch_key = HKDF(salt = device_id,
+                 ikm  = X25519(cs, VS),
+                 info = "km43/v1/vouch-key",
+                 L    = 32)
+
+tag       = HMAC(vouch_key, "km43/v1/vouch" | device_id | epoch:u32be
+                 | client_id:u32be | generation:u32be | nonce[16]
+                 | binding[32])[0..16]
+```
+
+The answer carries the `epoch`, `client_id` and `generation` it tagged in keys 2
+to 4, and the tag in key 5. `device_id` and `epoch` are the controller's own, and
+`client_id` and `generation` are those of the slot the session is bound to; none
+of the four is taken from the request. The key is derived for one answer and
+MUST NOT be stored. `Vouch` changes nothing on the controller, so it is not a
+signed request, and any enrolled client may send it.
+
+The DH is what makes the tag a statement from this controller: only the holders
+of `cs` and `vs` can compute `vouch_key`, and a verifier that knows `CS` needs
+no key of the controller's beyond it. The tag reveals nothing from which
+`printed_secret`, `pair_psk`, `refusal_key`, a client key or an admission key
+can be recovered: none of them is an input. A client that sends its own `IS` as
+`VS` gets a tag under a key whose IKM is its admission key's, and whose `info`
+is not (P-043), so it learns neither that key nor a tag under it.
+
+It costs the controller one X25519 operation, a quarter of a second, and it
+takes its turn with the handshakes under P-243.
+
+**P-245** — When `X25519(cs, VS)` is all zero (P-228), the controller MUST
+answer outcome 2 `bad_verifier` with keys 2 to 5 absent. A low-order `VS` makes
+`vouch_key` a constant anybody can compute, and a tag under it vouches for
+nothing.
+
+**P-246** — A controller MUST set capability bit 9 in `Hello 0x81` exactly when
+it answers `Vouch`, and a client MUST NOT send `Vouch` to a controller that does
+not set it. As with P-216, error 2 cannot say the message is unsupported,
+because the comms processor can forge it (P-055).
+
+**P-247** — A verifier MUST check a vouch in this order, and MUST refuse at the
+first step that fails:
+
+1. The nonce is one it issued, less than `VOUCH_NONCE_TTL` (10 minutes) before,
+   to the account now presenting it, and not presented before. The verifier
+   MUST record the nonce as spent before any later step, whether or not the
+   vouch then verifies.
+2. It builds the statement from its own records: `device_id` and `epoch` from
+   the generation the caller asks to link, and the nonce, binding and verifier
+   key it issued together. Only `client_id`, `generation`, `CS` and the tag
+   come from the caller.
+3. The verifier holds a manufacturing record for that `device_id` (P-249), and
+   `CS` hashes to the `controller_fp` (P-236) it holds. The fingerprint MUST
+   come from that record and never from the caller, and this check comes
+   before any DH. A `device_id` with no record is refused here.
+4. `X25519(vs, CS)` is not all zero, and the tag it computes over the statement
+   equals the tag presented, compared in constant time.
+
+Each step refuses one failure. A replayed vouch verifies byte for byte, so only
+the spent nonce refuses it. A vouch minted for another account's binding, or
+under an earlier epoch, fails at step 4 because the verifier tags its own
+binding and the epoch being linked, never the caller's. A `CS` the caller chose
+is a key whose private half the caller holds: it can tag anything under it, and
+the fingerprint in step 3 is the only thing that refuses it.
+
+**P-248** — A verifier MUST draw each nonce from a CSPRNG and issue it once.
+It MUST NOT issue one binding to two accounts, and it MUST keep each spent
+nonce at least until `VOUCH_NONCE_TTL` after issue, after which step 1 refuses
+it as expired. Its verifier key MAY rotate; a nonce is checked under the key it
+was issued with.
+
+The bound is what keeps the spent-nonce record finite: a record older than the
+time-to-live refuses nothing a fresh check would not. A binding shared by two
+accounts would let one link a generation on the other's vouch.
+
+**P-249** — A verifier's manufacturing records MUST come from the manufacturing
+station, over a channel that authenticates the station, and never from a caller,
+a `Discover`, a label, or anything a controller transmits. Each record pairs one
+`device_id` with its `controller_fp`, and a fingerprint is fixed for the life of
+the unit (P-235): a delivery that would change the fingerprint held for a
+`device_id` MUST be refused and reported to a person, never applied.
+
+The record is not secret; every label prints it. What the verifier needs is
+that the station wrote it. A fingerprint taken from anywhere the caller can
+reach lets the caller present a key it holds, and step 3 then passes a forgery.
+Refusing a change bounds what a compromised delivery channel can do: it can add
+records for units not yet recorded, but it cannot move a unit already recorded
+onto a key the attacker holds. A unit whose record has not yet reached the
+verifier cannot be linked until it does, which is a delay and not a hole.
 
 ---
 

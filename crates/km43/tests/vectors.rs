@@ -72,7 +72,7 @@ fn every_published_body_is_one_this_reader_walks_to_the_end() {
             seen += 1;
         }
     }
-    assert_eq!(seen, 67, "the vector file grew or shrank a body");
+    assert_eq!(seen, 72, "the vector file grew or shrank a body");
 }
 
 /// The envelope the generator publishes must decode here to the same four
@@ -729,11 +729,12 @@ fn the_published_sealed_error_is_refused_when_read_bare() {
 /// `Readings 0x8E`, the `Concerns 0x8F`, the six event bodies — the two
 /// concern records `0x0501` and `0x0502`, then `0x0102`, `0x0901` and `0x0902`,
 /// then the boot record `0x0601`, followed by nine controller-record examples —
-/// and the thirty-three read by name rather than by position: the seven
+/// and the thirty-seven read by name rather than by position: the seven
 /// handshake envelopes and the bare `Error 0xFF`, the two offers and the
 /// `Enrol 0x93` answer, `ReadLog 0x05`, `LogPage 0x85`, the `Time 0x0A`
-/// operation, the two `TimeAck 0x8A`, the six Wi-Fi bodies, the seven config
-/// section bodies, and the five configuration messages around them.
+/// operation, the two `TimeAck 0x8A`, the six Wi-Fi bodies, the four vouch
+/// bodies, the seven config section bodies, and the five configuration
+/// messages around them.
 ///
 /// Asserted rather than assumed, so a file that lost one does not hand the
 /// wrong bytes to whichever test still finds something at index 0. The count
@@ -742,7 +743,7 @@ fn the_published_sealed_error_is_refused_when_read_bare() {
 /// after that message was retired.
 fn published_bodies() -> Vec<Vec<u8>> {
     let found = blobs("body_cbor");
-    assert_eq!(found.len(), 53, "the vector file grew or shrank a body");
+    assert_eq!(found.len(), 57, "the vector file grew or shrank a body");
     found
 }
 
@@ -3149,4 +3150,212 @@ fn the_published_config_messages_carry_the_registry_opcodes() {
             .expect("a byte");
         assert_eq!(published, kind as u8, "{name}");
     }
+}
+
+/// The published verifier, as the cloud holds it.
+fn verifier_key() -> StaticKey {
+    StaticKey::from_stored(fixed("verifier_key"))
+}
+
+/// The slot the published session is bound to.
+fn published_slot() -> (km43::ClientId, Generation) {
+    (
+        km43::ClientId::new(input_number("client_id")).expect("a published slot"),
+        Generation::new(input_number("generation")).expect("a published generation"),
+    )
+}
+
+/// **The vouch a controller writes is the one the generator published.** The
+/// request decodes to the verifier's key, nonce and binding under `inputs`;
+/// the controller's answer, built from its own epoch and slot, is
+/// `bodies.vouch_0x94` byte for byte, and its key 5 is `macs.vouch`'s tag.
+/// A tag computed over a field in the wrong order, or under the admission
+/// label, agrees with this crate's verifier and nobody else's.
+#[test]
+fn p_244_the_published_vouch_is_the_one_this_controller_writes() {
+    use km43::{AccountBinding, VouchNonce, VouchRequest};
+
+    let request =
+        VouchRequest::decode(&blob_under("vouch_0x14", "body_cbor")).expect("the request reads");
+    assert_eq!(request.verifier, verifier_key().public());
+    assert_eq!(request.nonce, VouchNonce::new(fixed("vouch_nonce")));
+    assert_eq!(
+        request.binding,
+        AccountBinding::new(fixed("account_binding"))
+    );
+    let mut dst = [0; 128];
+    let len = request.encode(&mut dst).expect("fits");
+    assert_eq!(
+        dst.get(..len),
+        Some(blob_under("vouch_0x14", "body_cbor").as_slice())
+    );
+
+    let answer = request.answer(
+        &controller_key(),
+        DeviceId::new(fixed("device_id")),
+        Epoch::new(input_number("epoch")).expect("the published epoch"),
+        published_slot(),
+    );
+    let len = answer.encode(&mut dst).expect("fits");
+    let published = blob_under("vouch_0x94", "body_cbor");
+    assert_eq!(dst.get(..len), Some(published.as_slice()));
+    let mac = object_in(object("macs"), "vouch");
+    assert_eq!(hex_in(mac, "full_body_cbor"), published);
+    assert!(
+        published.ends_with(&hex_in(mac, "out16")),
+        "the published answer carries macs.vouch as key 5"
+    );
+    assert_eq!(
+        number_in("vouch_0x14", "type"),
+        usize::from(MessageType::Vouch as u8)
+    );
+    assert_eq!(
+        number_in("vouch_0x94", "type"),
+        usize::from(MessageType::VouchResponse as u8)
+    );
+}
+
+/// The published low-order request is answered `bad_verifier` and nothing
+/// else. A controller that tagged under it would hand out a tag under a key
+/// every reader of this file can compute.
+#[test]
+fn p_245_the_published_low_order_verifier_gets_the_published_refusal() {
+    use km43::{VouchAnswer, VouchRequest};
+
+    let request = VouchRequest::decode(&blob_under("vouch_low_order_0x14", "body_cbor"))
+        .expect("the request reads");
+    let answer = request.answer(
+        &controller_key(),
+        DeviceId::new(fixed("device_id")),
+        Epoch::new(input_number("epoch")).expect("the published epoch"),
+        published_slot(),
+    );
+    assert!(matches!(answer, VouchAnswer::BadVerifier));
+    let mut dst = [0; 16];
+    let len = answer.encode(&mut dst).expect("fits");
+    assert_eq!(
+        dst.get(..len),
+        Some(blob_under("vouch_bad_verifier_0x94", "body_cbor").as_slice())
+    );
+}
+
+/// One published case of `vouch_verification`, run through the verifier.
+fn verify_published_case(name: &str) -> Result<km43::Vouched, km43::VouchRefusal> {
+    use km43::{AccountBinding, VouchClaim, VouchIssue, VouchNonce};
+
+    let case = object_in(object("vouch_verification"), name);
+    let fixed_in = |key: &str| -> Vec<u8> { hex_in(case, key) };
+    let issue = VouchIssue {
+        device_id: DeviceId::new(fixed_in("device_id").try_into().expect("16 bytes")),
+        epoch: Epoch::new(u32_in(case, "epoch")).expect("a published epoch"),
+        nonce: VouchNonce::new(fixed_in("nonce").try_into().expect("16 bytes")),
+        binding: AccountBinding::new(fixed_in("binding").try_into().expect("32 bytes")),
+    };
+    let claim = VouchClaim {
+        controller: km43::PublicKey::from_bytes(
+            fixed_in("controller_public").try_into().expect("32 bytes"),
+        ),
+        client_id: km43::ClientId::new(u32_in(case, "client_id")).expect("a slot"),
+        generation: Generation::new(u32_in(case, "generation")).expect("a generation"),
+        tag: fixed_in("tag").try_into().expect("16 bytes"),
+    };
+    // `null` when the verifier holds no record, which the scan reads as no
+    // string under the key.
+    let record = strings_of(case, "controller_fp")
+        .first()
+        .map(|hex| Fingerprint::from_label(unhex(hex).try_into().expect("16 bytes")));
+    issue.verify(&verifier_key(), record.as_ref(), &claim)
+}
+
+/// **Every published verdict is the one this verifier reaches.** The issue
+/// this answers named four failures: a replayed nonce, another account's
+/// binding, an earlier epoch and a controller key the caller chose. Three are
+/// refused by the bytes. The replay is not, and the vector says so by
+/// publishing the accepted claim twice: a verifier that trusts the tag alone
+/// accepts it, which is why P-247 puts the spent nonce first.
+#[test]
+fn p_247_every_published_vouch_case_gets_its_published_verdict() {
+    use km43::VouchRefusal;
+
+    let accepted = verify_published_case("accepted").expect("the honest vouch verifies");
+    assert_eq!(accepted.statement().client_id, published_slot().0);
+    assert!(
+        verify_published_case("replayed_nonce").is_ok(),
+        "the replay verifies byte for byte: only the verifier's spent-nonce record refuses it"
+    );
+    for (name, step, refusal) in [
+        (
+            "another_account",
+            "refuse at step 4",
+            VouchRefusal::TagMismatch,
+        ),
+        (
+            "earlier_epoch",
+            "refuse at step 4",
+            VouchRefusal::TagMismatch,
+        ),
+        (
+            "wrong_controller_key",
+            "refuse at step 3",
+            VouchRefusal::WrongController,
+        ),
+        (
+            "no_manufacturing_record",
+            "refuse at step 3",
+            VouchRefusal::NoRecord,
+        ),
+    ] {
+        let case = object_in(object("vouch_verification"), name);
+        assert_eq!(strings_of(case, "verdict"), [step], "{name}");
+        assert_eq!(
+            verify_published_case(name).map(|_| ()),
+            Err(refusal),
+            "{name}"
+        );
+    }
+    assert_eq!(
+        strings_of(
+            object_in(object("vouch_verification"), "replayed_nonce"),
+            "verdict"
+        ),
+        ["refuse at step 1"]
+    );
+}
+
+/// The impostor's tag in `wrong_controller_key` is a real tag under the key
+/// the caller presented. Without that, the case would pass for the wrong
+/// reason: a broken forgery refused at the tag says nothing about step 3.
+#[test]
+fn p_247_the_published_impostor_tag_verifies_under_the_impostors_own_key() {
+    let impostor = StaticKey::from_stored(
+        hex_in(object("vouch_verification"), "impostor_key")
+            .try_into()
+            .expect("32 bytes"),
+    );
+    let case = object_in(object("vouch_verification"), "wrong_controller_key");
+    assert_eq!(
+        hex_in(case, "controller_public"),
+        impostor.public().as_bytes()
+    );
+    let issue = km43::VouchIssue {
+        device_id: DeviceId::new(fixed("device_id")),
+        epoch: Epoch::new(u32_in(case, "epoch")).expect("a published epoch"),
+        nonce: km43::VouchNonce::new(fixed("vouch_nonce")),
+        binding: km43::AccountBinding::new(fixed("account_binding")),
+    };
+    let claim = km43::VouchClaim {
+        controller: impostor.public(),
+        client_id: published_slot().0,
+        generation: published_slot().1,
+        tag: hex_in(case, "tag").try_into().expect("16 bytes"),
+    };
+    assert!(
+        issue
+            .verify(
+                &verifier_key(),
+                Some(&Fingerprint::of(&impostor.public())),
+                &claim
+            )
+            .is_ok()
+    );
 }
