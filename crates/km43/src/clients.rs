@@ -1,8 +1,8 @@
-//! `Clients 0x14` / `0x94`: who is enrolled and who has been proposed, in one
-//! answer an owner and an admin both read (P-245).
+//! `Clients 0x18` / `0x98`: who is enrolled and who has been proposed, in one
+//! answer an owner and an admin both read (P-251).
 //!
 //! The answer is also where an owner reads an invite's transcript before
-//! approving it (P-251), so an [`InviteRow`] carries every field of it the
+//! approving it (P-257), so an [`InviteRow`] carries every field of it the
 //! controller holds and an owner's app does not take any of them from the
 //! relay. A decoded answer keeps its rows as the bytes they arrived in and
 //! checks them once, so a controller builds one from its tables and a client
@@ -20,16 +20,16 @@ use crate::kdf::{ClientId, Generation};
 use crate::limits::{INVITE_TTL_MS, MAX_CLIENTS, MAX_INVITES, MAX_LABEL};
 use crate::noise::{KEY_BYTES, PublicKey};
 
-/// The longest `expires_in` an invite can carry: P-247's deadline in seconds.
+/// The longest `expires_in` an invite can carry: P-253's deadline in seconds.
 const MAX_EXPIRES_IN: u64 = INVITE_TTL_MS / 1000;
 
 /// A field of either row or of the answer around them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ClientsField {
-    /// `Clients 0x94` key 1.
+    /// `Clients 0x98` key 1.
     Clients,
-    /// `Clients 0x94` key 2.
+    /// `Clients 0x98` key 2.
     Invites,
     /// `ClientRow` key 1.
     ClientId,
@@ -58,8 +58,8 @@ pub enum ClientsField {
 impl fmt::Display for ClientsField {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            Self::Clients => "Clients 0x94 clients (key 1)",
-            Self::Invites => "Clients 0x94 invites (key 2)",
+            Self::Clients => "Clients 0x98 clients (key 1)",
+            Self::Invites => "Clients 0x98 invites (key 2)",
             Self::ClientId => "ClientRow client_id (key 1)",
             Self::Generation => "ClientRow generation (key 2)",
             Self::Role => "role",
@@ -91,7 +91,7 @@ pub struct ClientRow<'a> {
     pub label: &'a str,
 }
 
-/// One pending invite: every field of P-251's transcript the controller holds.
+/// One pending invite: every field of P-257's transcript the controller holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InviteRow<'a> {
     /// Key 1, `N_c`: the invite's name.
@@ -108,7 +108,7 @@ pub struct InviteRow<'a> {
     pub client_kind: ClientKind,
     /// Key 7, 1 to `MAX_LABEL` bytes, as the `Invite` carried it.
     pub label: &'a str,
-    /// Key 8, seconds left on P-247's monotonic deadline, at most an hour.
+    /// Key 8, seconds left on P-253's monotonic deadline, at most an hour.
     pub expires_in: u32,
     /// Key 9, the suite the slot will pin.
     pub suite: Suite,
@@ -410,8 +410,8 @@ impl<'a, R: Row<'a>> Iterator for RowIter<'a, R> {
     }
 }
 
-/// `Clients 0x94`: every occupied slot, lowest first, and every pending
-/// invite, at most `MAX_CLIENTS` and `MAX_INVITES` (P-245, P-247).
+/// `Clients 0x98`: every occupied slot, lowest first, and every pending
+/// invite, at most `MAX_CLIENTS` and `MAX_INVITES` (P-251, P-253).
 #[derive(Clone, Copy)]
 pub struct ClientsAnswer<'a> {
     clients: Rows<'a, ClientRow<'a>>,
@@ -544,7 +544,7 @@ fn once<T>(slot: &mut Option<T>, field: ClientsField, value: T) -> Result<(), Cl
     Ok(())
 }
 
-/// Why a `Clients 0x94` was refused, built or read.
+/// Why a `Clients 0x98` was refused, built or read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ClientsError {
@@ -565,7 +565,7 @@ pub enum ClientsError {
     WrongLength(ClientsField, usize),
     /// A label past `MAX_LABEL`, or an invite's empty one: its length.
     LabelLength(usize),
-    /// An `expires_in` past P-247's hour: a deadline no invite can have.
+    /// An `expires_in` past P-253's hour: a deadline no invite can have.
     ExpiresTooLate(u32),
     /// More rows than the table holds: the list and its count.
     TooMany(ClientsField, usize),
@@ -750,7 +750,7 @@ mod tests {
     }
 
     /// Nine slots is a table no controller has, and five invites is past the
-    /// table P-247 holds. Both refused whether built or read.
+    /// table P-253 holds. Both refused whether built or read.
     #[test]
     fn more_rows_than_either_table_holds_are_refused() {
         let nine: [ClientRow<'static>; MAX_CLIENTS + 1] =
@@ -833,8 +833,8 @@ mod tests {
     }
 
     /// A slot's label came from a pairing and may be empty; an invite's came
-    /// from `Invite`, which refuses an empty one (P-246). Neither may pass
-    /// `MAX_LABEL`, and an invite may not claim a deadline past P-247's hour.
+    /// from `Invite`, which refuses an empty one (P-252). Neither may pass
+    /// `MAX_LABEL`, and an invite may not claim a deadline past P-253's hour.
     #[test]
     fn labels_and_deadlines_out_of_bounds_are_refused() {
         let long = "0123456789abcdef0123456789abcdefX";

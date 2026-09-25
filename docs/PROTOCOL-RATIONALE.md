@@ -931,7 +931,7 @@ One premise under this has moved. In v1 no removal could have worked at all,
 remote or physical short of a reset, because the label derived a freed slot's key
 again for whoever held it. With per-client keys, freeing a slot erases the key and
 moves its generation on (P-239), so a removed key stays removed. That is what
-lets `Remove 0x17` (P-250) exist, and the argument above is what shapes it: an
+lets `Remove 0x17` (P-256) exist, and the argument above is what shapes it: an
 admin removes admins, only an owner removes the cloud's viewer, and no message
 removes an owner. A compromised admin can still remove the other admins, and an
 owner who is told so by a `client removed` record re-invites them. It cannot

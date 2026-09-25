@@ -159,12 +159,12 @@ is the state it was in before somebody checked it the first time.
 | `MAX_CHALLENGES` | 8 | Error 18 `challenge unavailable`; nothing is evicted |
 | `MAX_AUTH_FAILURES` | 8 per connection in 60 seconds | Connection closed, `CloseConnection` reason 3 `authentication_failures`; a fresh `Hello` does not clear the count |
 | `MAX_REPLAY_WINDOW` | 64 controller nonces per session, ending at the highest accepted, held by the client | An older nonce, or one already accepted, is discarded unanswered (P-233) |
-| `MAX_ADMINS` | 6 slots holding `admin` | Pair outcome 4, Invite outcome 5, Approve outcome 8 (P-252) |
-| `MAX_VIEWERS` | 1 slot holding `viewer` | Invite outcome 5, Approve outcome 8 (P-252) |
-| `MAX_INVITES` | 4 pending invites, the last free row an owner's | Invite outcome 3 `invites_full`; nothing is evicted (P-247) |
-| `MAX_INVITES_PER_INVITER` | 2 pending invites per slot | Invite outcome 3 `invites_full` (P-247) |
-| `INVITE_TTL` | 1 hour on the monotonic tick | The invite is withdrawn; Approve outcome 4 `unknown_invite` (P-247) |
-| `INVITE_BUDGET` | 3 proposals per admin slot without an owner approving one | Invite outcome 6 `no_budget` (P-248) |
+| `MAX_ADMINS` | 6 slots holding `admin` | Pair outcome 4, Invite outcome 5, Approve outcome 8 (P-258) |
+| `MAX_VIEWERS` | 1 slot holding `viewer` | Invite outcome 5, Approve outcome 8 (P-258) |
+| `MAX_INVITES` | 4 pending invites, the last free row an owner's | Invite outcome 3 `invites_full`; nothing is evicted (P-253) |
+| `MAX_INVITES_PER_INVITER` | 2 pending invites per slot | Invite outcome 3 `invites_full` (P-253) |
+| `INVITE_TTL` | 1 hour on the monotonic tick | The invite is withdrawn; Approve outcome 4 `unknown_invite` (P-253) |
+| `INVITE_BUDGET` | 3 proposals per admin slot without an owner approving one | Invite outcome 6 `no_budget` (P-254) |
 
 The first two bound what the controller will spend on a peer that has proved
 nothing, and there is nothing a client does differently for knowing either. A
@@ -883,7 +883,7 @@ Four tags on this wire are HMACs, and all are 128 bits for the reason the cipher
 tag is: 128 bits is the security target. The pairing refusal (P-241) and the
 `Hello` admission tag (P-238) are checked before any key agreement, which is the
 whole reason they are HMACs and not Noise messages. An invite's proof and
-confirmation (P-251) are HMACs because the invitee and the controller have no
+confirmation (P-257) are HMACs because the invitee and the controller have no
 session between them, only a relay.
 
 **P-042** — `HKDF` means **HKDF-SHA256** (RFC 5869) with `salt`, `IKM` and `info`
@@ -906,11 +906,11 @@ wire.
 | `km43/v1/admit-key` | HKDF `info` | one enrolment's admission key (P-238) |
 | `km43/v1/pair-refused` | MAC preimage | a pairing refusal (P-241) |
 | `km43/v1/hello-admit` | MAC preimage | a `Hello`'s admission tag (P-238) |
-| `km43/v1/invite-proof` | MAC preimage | an invitee's proof of its key (P-251) |
-| `km43/v1/invite-confirm` | MAC preimage | the controller's confirmation of an invitee's slot (P-251) |
+| `km43/v1/invite-proof` | MAC preimage | an invitee's proof of its key (P-257) |
+| `km43/v1/invite-confirm` | MAC preimage | the controller's confirmation of an invitee's slot (P-257) |
 | `km43/v1/controller-fp` | hash prefix | the controller key's printed fingerprint (P-236) |
-| `km43/v1/invite-commit` | hash prefix | an invitee's commitment to its key and nonce (P-251) |
-| `km43/v1/invite-sas` | hash prefix | the digits two people compare for an invite (P-251) |
+| `km43/v1/invite-commit` | hash prefix | an invitee's commitment to its key and nonce (P-257) |
+| `km43/v1/invite-sas` | hash prefix | the digits two people compare for an invite (P-257) |
 | `km43/v1/prologue` | prologue prefix | both handshakes (P-227) |
 
 Labels are ASCII, no trailing NUL.
@@ -1084,7 +1084,7 @@ The epoch is also the ownership generation the cloud keys a site's history by: a
 reset starts a new one, and a new first pairing becomes its owner.
 
 **P-086** — `client_id` MUST be allocated as the **lowest free slot index in the
-client table, counting from 1**, whenever P-240 or P-249 allocates a free slot. It is the
+client table, counting from 1**, whenever P-240 or P-255 allocates a free slot. It is the
 name a client, the log and the dedup table use for an enrolment, together with
 the epoch and the slot's generation (P-239).
 
@@ -1306,8 +1306,8 @@ conformance item 7 can prove rather than something each firmware picks at a benc
 
 | Messages | Sealed by |
 |---|---|
-| Requests `0x03`, `0x05`, `0x06`, `0x07`, `0x08`, `0x09`, `0x0A`, `0x0C`, `0x0D`, `0x0E`, `0x0F`, `0x10`, `0x11`, `0x12`, `0x14`, `0x15`, `0x16`, `0x17` | the client |
-| Responses `0x83`, `0x85`, `0x86`, `0x87`, `0x88`, `0x89`, `0x8A`, `0x8C`, `0x8D`, `0x8E`, `0x8F`, `0x90`, `0x91`, `0x92`, `0x94`, `0x95`, `0x96`, `0x97`, and `0xFF` in its sealed form (P-142) | the controller |
+| Requests `0x03`, `0x05`, `0x06`, `0x07`, `0x08`, `0x09`, `0x0A`, `0x0C`, `0x0D`, `0x0E`, `0x0F`, `0x10`, `0x11`, `0x12`, `0x15`, `0x16`, `0x17`, `0x18` | the client |
+| Responses `0x83`, `0x85`, `0x86`, `0x87`, `0x88`, `0x89`, `0x8A`, `0x8C`, `0x8D`, `0x8E`, `0x8F`, `0x90`, `0x91`, `0x92`, `0x95`, `0x96`, `0x97`, `0x98`, and `0xFF` in its sealed form (P-142) | the controller |
 | Event `0x04` | the controller |
 | `Enrol 0x93` | the controller, under the keys of the pairing that just completed (P-064) |
 
@@ -1499,7 +1499,7 @@ defines under *Auto / off / manual* ([CONTROLLER-V1](https://github.com/origin89
 with the first-enrolment power-on exception below. No message opens the window.
 Knowing the printed secret is not by itself sufficient. The window is 120 seconds.
 Enrolment approved from an owner's session does not use the label or the window;
-it is P-249's.
+it is P-255's.
 
 On a controller board without a pushbutton, power-on MUST open the window once
 per boot, at boot, **only when it reads a valid empty client table**, whether
@@ -1622,7 +1622,7 @@ Step 1 is answered outcome 5 `reclaimed`, and steps 1 and 3 both re-key the
 slot: it takes the new client key, a new generation and this pairing's
 `client_kind` and `label`, exactly as a first enrolment, and carries nothing of
 the old enrolment over but its role: step 1 keeps it, and step 3 only ever
-re-keys an `admin` slot (P-244, P-252). Every session bound to the slot
+re-keys an `admin` slot (P-250, P-258). Every session bound to the slot
 MUST be unbound before the slot is rewritten. Message 1 carries no client key, so
 at message 1 only steps 2 to 4 can be evaluated, and P-241 and P-064 admit to
 message 2 exactly when step 2 or 3 would allocate. Step 1 is reached only by a
@@ -1631,7 +1631,7 @@ would have given. An install that kept its key but changed its label, against a
 full table with no slot under the new label, is refused `table_full` at message 1
 and never sends `Enrol 0x13`; its old slot is left as it was, and it pairs again
 under the label that slot holds.
-A slot holding `owner` or `viewer` is never a step 3 candidate (P-252).
+A slot holding `owner` or `viewer` is never a step 3 candidate (P-258).
 
 A reclaim now revokes: the old install's key is erased with the slot, where in v1
 the label re-derived the same key and the old install kept working. That makes it
@@ -1657,7 +1657,7 @@ on the slot before the slot is rewritten.
 
 **P-239** — A slot's **key record** holds its state, the epoch it was written in,
 its generation, its suite, the client's static key, its admission key (P-238),
-its role (P-244), the `client_kind` and the `label`. It MUST be kept as two
+its role (P-250), the `client_kind` and the `label`. It MUST be kept as two
 copies, each with a sequence number and an integrity check, and a write MUST go to
 the older copy. Each slot also keeps a **generation mark**:
 the highest generation it has issued. Then:
@@ -1686,22 +1686,22 @@ free slot. Only the generation mark failing costs the
 whole table, and it is written only when a key changes.
 
 The generation is what lets anything keyed by `client_id` — a session binding, a
-log record, a removal (P-250) — tell a slot's current enrolment from the one
+log record, a removal (P-256) — tell a slot's current enrolment from the one
 before it.
 
 **P-105** — Every enrolled client MUST carry a **capability mask**, and it MUST
-be the row of [REGISTRY.md](protocol/REGISTRY.md) for the slot's role (P-244)
+be the row of [REGISTRY.md](protocol/REGISTRY.md) for the slot's role (P-250)
 and nothing else. A `client_kind` with no row in its registry table is not a
 value of the closed set, and MUST be refused as a malformed `PairOffer` or, in
 an `Invite 0x15`, as a malformed operation body with error 1. A refused capability MUST be answered inside the
 sealed response for that message — `SetConfigAck` outcome 4 `unauthorised`,
 `Ack` outcome 5 `unauthorised`, `TimeAck` outcome 3 `unauthorised`, `Firmware`
-outcome 8, and P-245's outcomes and error 20 — and never with a bare `Error`,
+outcome 8, and P-251's outcomes and error 20 — and never with a bare `Error`,
 which is P-141 applied.
 
 The role is a sound input, and `client_kind` and LINK.md's `transport` (L-072)
 are not, and the difference is who chose them. A role is set by the label's
-first pairing or by an owner's approval of an exact key (P-244). `client_kind` is
+first pairing or by an owner's approval of an exact key (P-250). `client_kind` is
 whatever the client said it was, and `transport` is written by the comms
 processor, which lifts any rule keyed on it for free. Keyed on `client_kind`, a
 cloud relay enrolled as `1 app` held every write; keyed on the role, it is
@@ -1988,12 +1988,12 @@ The label enrols whoever is standing there; everybody else is invited by
 somebody already enrolled, approved by an owner, and removed from a session
 rather than by a trip to reset the unit.
 
-**P-244** — Every occupied slot MUST hold a **role** from
+**P-250** — Every occupied slot MUST hold a **role** from
 [REGISTRY.md](protocol/REGISTRY.md): `owner`, `admin` or `viewer`. The role is
 written with the slot's key record (P-239) and no message changes it. An
 enrolment through the label (P-064) is `owner` when no occupied slot holds
 `owner`, and `admin` otherwise; P-240's step 1 keeps the role the slot had. An
-enrolment through an invite takes the role the invite named (P-249).
+enrolment through an invite takes the role the invite named (P-255).
 
 The first person at the panel after a factory reset is the owner, which is the
 ownership root P-085 already accepts: the label plus an open window. Everybody
@@ -2004,14 +2004,14 @@ no message changes is a role a compromised admin cannot raise, and one no
 message lowers is an owner a compromised admin cannot demote on its way to
 removing them.
 
-**P-245** — A request a slot's role does not permit MUST be refused before it
+**P-251** — A request a slot's role does not permit MUST be refused before it
 changes anything. The capability bits and the row each role holds are in
 [REGISTRY.md](protocol/REGISTRY.md). `Invite 0x15` needs bit 6 `invite` to
 propose an admin and bit 7 `approve` to propose an owner or a viewer, and is
 otherwise answered outcome 2 `unauthorised`. `Remove 0x17` needs bit 6, and is
-otherwise answered outcome 4 `unauthorised`. `Approve 0x16`'s rules are P-249's.
+otherwise answered outcome 4 `unauthorised`. `Approve 0x16`'s rules are P-255's.
 A read that needs bit 5 `read_private` — `GetConfig` of the **network**
-(`0x0020`) or **cloud** (`0x0021`) section, `WifiScan 0x11`, `Clients 0x14` — is
+(`0x0020`) or **cloud** (`0x0021`) section, `WifiScan 0x11`, `Clients 0x18` — is
 refused with sealed error 20 when the slot lacks it. Those responses carry no
 outcome, so the refusal is made before the handler, the way error 6 refuses a
 section nobody allocated.
@@ -2023,12 +2023,12 @@ list: an SSID and the names of everybody who manages a cabin are not something
 a relay needs to page somebody, and a leak of the relay's store would otherwise
 be a map of who looks after which site and how to reach its network.
 
-### Clients — `0x14` / `0x94`
+### Clients — `0x18` / `0x98`
 
 ```text
-Clients  0x14           sealed, empty inner body
+Clients  0x18           sealed, empty inner body
 
-Clients  0x94           sealed
+Clients  0x98           sealed
   1: clients      array    of ClientRow, every occupied slot, lowest first
   2: invites      array    of InviteRow, every pending invite, oldest first
 
@@ -2040,14 +2040,14 @@ ClientRow
   5: label        text     <= MAX_LABEL
 
 InviteRow
-  1: nonce        bstr16   N_c: the invite's name (P-246)
+  1: nonce        bstr16   N_c: the invite's name (P-252)
   2: role         u8       the role it would enrol
   3: invitee      bstr32   IS
   4: inviter      u32      the client_id that proposed it
   5: inviter_generation  u32
   6: client_kind  u8
   7: label        text     <= MAX_LABEL
-  8: expires_in   u32      seconds left on P-247's monotonic deadline
+  8: expires_in   u32      seconds left on P-253's monotonic deadline
   9: suite        u8       the suite the slot will pin: the inviter's
 ```
 
@@ -2055,7 +2055,7 @@ Both lists fit one response: eight slots and `MAX_INVITES` invites, each at its
 widest, are under `MAX_PAYLOAD`, and `limits.rs` derives it from the encoder's
 widths. An owner's app reads the transcript an approval is checked against from
 `InviteRow`, over its own session, rather than from anything the relay passed
-along (P-251).
+along (P-257).
 
 ### Invite — `0x15` / `0x95`
 
@@ -2063,7 +2063,7 @@ along (P-251).
 operation body of Invite  0x15
   1: role         u8       see REGISTRY
   2: invitee      bstr32   IS, the invitee's static public key
-  3: commitment   bstr32   SHA-256("km43/v1/invite-commit" | IS | N_i) (P-251)
+  3: commitment   bstr32   SHA-256("km43/v1/invite-commit" | IS | N_i) (P-257)
   4: client_kind  u8       see REGISTRY; what the invitee will say it is
   5: label        text     1 to MAX_LABEL bytes; what a person sees in the list
 
@@ -2072,36 +2072,36 @@ InviteAck  0x95         sealed
   2: nonce        bstr16   with outcome 1 only: N_c
 ```
 
-**P-246** — The controller MUST take these steps in this order, once P-080's
+**P-252** — The controller MUST take these steps in this order, once P-080's
 first step has opened the request and before anything is stored:
 
-1. the sender's role may propose this role (P-245), or outcome 2 `unauthorised`;
+1. the sender's role may propose this role (P-251), or outcome 2 `unauthorised`;
 2. no occupied slot holds `invitee`, or outcome 4 `known_key`;
-3. an admin sender has budget left (P-248), or outcome 6 `no_budget`;
-4. a slot could be allocated to this role now (P-252), or outcome 5
+3. an admin sender has budget left (P-254), or outcome 6 `no_budget`;
+4. a slot could be allocated to this role now (P-258), or outcome 5
    `table_full`;
-5. a pending-invite row this sender may take is free (P-247), or outcome 3
+5. a pending-invite row this sender may take is free (P-253), or outcome 3
    `invites_full`.
 
 Then it MUST draw `N_c` from the random bit generator (P-237), store the
 invite with the sender's `client_id` and generation as its inviter, persist the
-admin's budget (P-248), raise a class A `invite proposed` (`0x0606`), and answer
+admin's budget (P-254), raise a class A `invite proposed` (`0x0606`), and answer
 outcome 1 `proposed` with `N_c`. Nothing is enrolled yet, and an invite is good
-for one decision (P-249).
+for one decision (P-255).
 
 `invitee` is the whole of what the invite is for, so it is what a relay would
 change. A proposal carries a commitment rather than the invitee's nonce because
 the digits two people compare are computed over both nonces, and a nonce the
 invitee has shown before the controller drew its own is a nonce a relay can
-search against (P-251). Steps 2 and 4 are checked again at approval, because a
+search against (P-257). Steps 2 and 4 are checked again at approval, because a
 pending invite holds no slot.
 
-**P-247** — The controller MUST keep pending invites in a table of
+**P-253** — The controller MUST keep pending invites in a table of
 `MAX_INVITES` rows, in RAM, and MUST refuse rather than evict (P-003). A slot
 MAY hold at most `MAX_INVITES_PER_INVITER` pending invites, and the last free
 row is held for an owner's proposal. An invite MUST be withdrawn
 `INVITE_TTL` after it was proposed, measured on P-004's tick; on a reboot; on a
-factory reset (P-085); and when its inviter's slot is freed or re-keyed (P-250).
+factory reset (P-085); and when its inviter's slot is freed or re-keyed (P-256).
 An `Approve` naming a withdrawn invite is answered outcome 4 `unknown_invite`.
 
 The deadline is on the monotonic tick because a clock is something any enrolled
@@ -2114,7 +2114,7 @@ The owner's row is the reason the table can refuse at all: without it, two
 admins proposing twice each fill it, and the one person who can approve anything
 cannot propose.
 
-**P-248** — An `admin` slot MUST hold a **proposal budget** of
+**P-254** — An `admin` slot MUST hold a **proposal budget** of
 `INVITE_BUDGET`, in a FRAM record of its own beside the slot's key record and
 never inside it (P-239), and each outcome 1 `proposed` MUST spend one. The spend
 MUST be persisted and read back before the invite is stored or answered; a
@@ -2126,7 +2126,7 @@ restores it: not a reboot, not a decline, not an expiry. `owner` slots have no
 budget.
 
 The digits are six decimal digits, so a relay that substitutes its own key
-wins one comparison in a million (P-251). One try per invite is what the
+wins one comparison in a million (P-257). One try per invite is what the
 commitment buys; the budget is what stops a compromised admin phone proposing a
 million invites in a week and waiting for the one where the digits the owner
 reads out happen to be the invitee's. Durable because a budget a reboot restores
@@ -2142,16 +2142,16 @@ operation body of Approve  0x16
   1: nonce        bstr16   N_c, as InviteAck 0x95 and InviteRow carry it
   2: decision     u8       see REGISTRY: 1 approve, 2 decline
   3: reveal       bstr16   with decision 1 only: N_i
-  4: proof        bstr16   with decision 1 only: P-251's proof
+  4: proof        bstr16   with decision 1 only: P-257's proof
 
 ApproveAck  0x96        sealed
   1: outcome      u8       see REGISTRY
   2: client_id    u32      with outcome 1 only
   3: generation   u32      with outcome 1 only
-  4: confirm      bstr16   with outcome 1 only: P-251's confirmation
+  4: confirm      bstr16   with outcome 1 only: P-257's confirmation
 ```
 
-**P-249** — The controller MUST take these steps in this order, once P-080's
+**P-255** — The controller MUST take these steps in this order, once P-080's
 first step has opened the request:
 
 1. a pending invite has this `nonce`, or outcome 4 `unknown_invite`;
@@ -2160,22 +2160,22 @@ first step has opened the request:
    inviter, by `client_id` and generation, may decline;
 3. a decline withdraws the invite and is answered outcome 2 `declined`;
 4. the inviter's slot still holds the inviter's generation and its role may
-   still propose this role (P-245), or outcome 5 `inviter_gone`;
-5. `reveal` opens the commitment and `proof` verifies (P-251), or outcome 6
+   still propose this role (P-251), or outcome 5 `inviter_gone`;
+5. `reveal` opens the commitment and `proof` verifies (P-257), or outcome 6
    `refused`;
 6. no occupied slot holds the invitee's key, or outcome 7 `known_key`;
-7. a slot can be allocated to this role (P-252), or outcome 8 `table_full`,
+7. a slot can be allocated to this role (P-258), or outcome 8 `table_full`,
    and the invite stays pending;
 8. the slot is written under P-239 with the invite's role, `client_kind`,
-   `label` and key and the admission key P-251's check computed, or outcome 9
+   `label` and key and the admission key P-257's check computed, or outcome 9
    `not_stored`, the invite stays pending, and the
    controller MUST raise a class A `concern raised` (`0x0501`) at condition
    `client table write failed`.
 
 Outcomes 5, 6 and 7 withdraw the invite. On success the controller MUST
-withdraw the invite, restore the inviter's budget (P-248), raise a class A
+withdraw the invite, restore the inviter's budget (P-254), raise a class A
 `client enrolled` (`0x0603`), and answer outcome 1 `enrolled` with the slot's
-`client_id`, its generation and P-251's confirmation. The slot is the lowest
+`client_id`, its generation and P-257's confirmation. The slot is the lowest
 free one (P-086); an invite never reclaims a slot by label.
 
 An admin may withdraw what it proposed and nothing else, and is refused without
@@ -2188,7 +2188,7 @@ the invite pending because nothing was wrong with it and the owner can free a
 row or try again; every other refusal after the invite was found is an invite
 that has told the controller something it will not believe a second time.
 
-**P-251** — An invite's cryptography is computed over this transcript, 126
+**P-257** — An invite's cryptography is computed over this transcript, 126
 bytes, each integer as P-040 fixes it:
 
 ```text
@@ -2222,7 +2222,7 @@ sends can prove which key the owner meant to invite. The digits are over the
 whole transcript, so a substituted invitee key, a changed role or a different
 controller all change them. The commitment is what makes six digits enough:
 the invitee's key and nonce are fixed before the controller draws `N_c`, so a
-relay gets one guess per invite rather than a search, and P-248 bounds the
+relay gets one guess per invite rather than a search, and P-254 bounds the
 invites.
 
 A lost `ApproveAck` is P-242's case: an invitee whose person saw the digits
@@ -2241,16 +2241,16 @@ RemoveAck  0x97         sealed
   1: outcome      u8       see REGISTRY
 ```
 
-**P-250** — The controller MUST take these steps in this order, once P-080's
+**P-256** — The controller MUST take these steps in this order, once P-080's
 first step has opened the request:
 
-1. the sender's role may remove (P-245), or outcome 4 `unauthorised`;
+1. the sender's role may remove (P-251), or outcome 4 `unauthorised`;
 2. the slot is occupied and holds this generation, or outcome 2 `gone`;
 3. the slot is not `owner`, and is not `viewer` unless the sender is an owner,
    or outcome 3 `protected`;
 4. every session bound to the slot, except the sender's own, is unbound; every
-   invite the slot proposed is withdrawn (P-247); the slot is freed under P-239,
-   which advances its generation; its budget is erased (P-248);
+   invite the slot proposed is withdrawn (P-253); the slot is freed under P-239,
+   which advances its generation; its budget is erased (P-254);
 5. a class A `client removed` (`0x0605`) is raised and the request is answered
    outcome 1 `removed`. A sender that removed its own slot is unbound once the
    answer is sent.
@@ -2269,13 +2269,13 @@ to survive is a compromised admin phone, and the first thing it would do is
 remove the people who could remove it. An owner who has lost every owner phone
 recovers with a factory reset, which is P-085's ownership root again.
 
-**P-252** — A slot MUST be allocated to an `admin` only while fewer than
+**P-258** — A slot MUST be allocated to an `admin` only while fewer than
 `MAX_ADMINS` slots hold `admin`, and to a `viewer` only while fewer than
 `MAX_VIEWERS` hold `viewer`. An `owner` may take any free slot. P-240 runs these
 bounds for a pairing through the label: step 2 finds no slot for an admin past
 the bound, and step 3 considers only slots holding `admin`. An allocation these
-bounds refuse is P-241's outcome 4 `table_full` to a pairing, P-246's outcome 5
-to an invite and P-249's outcome 8 to an approval.
+bounds refuse is P-241's outcome 4 `table_full` to a pairing, P-252's outcome 5
+to an invite and P-255's outcome 8 to an approval.
 
 `MAX_CLIENTS` is eight, and eight admins is a table nobody can invite an owner
 into. Six admins and one viewer leave a row that only an owner can take, so a
@@ -3760,7 +3760,7 @@ section body, not an empty `psk`.
 a client MUST refuse a `Config` body that carries one. The body carries the
 field's presence under a key of its own instead — `psk_set` for `psk` — and
 never the field's key holding a placeholder. The network section is answered to every
-owner and admin (P-245), so a readable passphrase is a customer's Wi-Fi
+owner and admin (P-251), so a readable passphrase is a customer's Wi-Fi
 credential on every phone that has ever managed the site, in its logs and its
 backups. A `psk` returned
 as `"********"` is worse than none: a client reads the section, edits the
@@ -4389,7 +4389,7 @@ and the meaning is *what a receiver will accept*.
 **P-141** — A request that reaches its handler MUST be answered by its own
 response type, carrying an outcome. `Error 0xFF` is for conditions that stop a
 request reaching a handler at all, plus P-060's challenge-unavailable refusal:
-`Discover` has no refusal outcome. P-245's error 20 is one of those: a read whose
+`Discover` has no refusal outcome. P-251's error 20 is one of those: a read whose
 response has no outcome, refused for the slot's role before its handler runs. Where a registry lists both an outcome and an
 error code for the same condition, **the outcome is what is sent**.
 

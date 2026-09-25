@@ -667,16 +667,16 @@
       "body_cbor": "a10102",
       "body_len": 3
     },
-    "clients_0x14": {
-      "type": 20,
+    "clients_0x18": {
+      "type": 24,
       "authentication": "this is the inner body; on the wire it is sealed (P-231) under the session's client-to-controller key, its nonce the req_id, as sealed.readlog_request is",
       "body_readable": null,
       "values_readable": "an empty map: the list takes no arguments",
       "body_cbor": "a0",
       "body_len": 1
     },
-    "clients_0x94": {
-      "type": 148,
+    "clients_0x98": {
+      "type": 152,
       "authentication": "this is the inner body; on the wire it is sealed (P-231) under the session's controller-to-client key, as sealed.response is",
       "body_readable": "{1:clients, 2:invites}",
       "values_readable": "the enrolled client in slot 7 as role 1 owner, and invite_0x15 pending with 3599 s left: nonce, role, invitee, inviter and suite are the transcript's",

@@ -1,5 +1,5 @@
 //! The HMAC tags on this wire: the pairing refusal (P-241), the `Hello`
-//! admission tag (P-238), and an invite's proof and confirmation (P-251). The
+//! admission tag (P-238), and an invite's proof and confirmation (P-257). The
 //! first two are checked before any key agreement, which is the whole reason
 //! they are HMACs and not Noise messages: a DH costs this controller a quarter
 //! of a second, and those are the two places a peer that has proved nothing
@@ -15,7 +15,7 @@
 //! that stops at the first differing byte is a forgery oracle one byte at a
 //! time, and [`Tag::verify`] goes through `subtle` instead.
 //!
-//! cites: P-041, P-043, P-238, P-241, P-251
+//! cites: P-041, P-043, P-238, P-241, P-257
 
 use core::fmt;
 
@@ -65,9 +65,9 @@ pub enum Domain {
     /// A `Hello`'s admission tag (P-238).
     HelloAdmit,
     /// The invitee's proof that it holds its key and knows the controller's
-    /// (P-251).
+    /// (P-257).
     InviteProof,
-    /// The controller's confirmation that it wrote the invitee's slot (P-251).
+    /// The controller's confirmation that it wrote the invitee's slot (P-257).
     InviteConfirm,
 }
 
@@ -195,7 +195,7 @@ impl AdmitKey {
             .tag()
     }
 
-    /// P-251's proof over an invite's transcript: only a holder of the
+    /// P-257's proof over an invite's transcript: only a holder of the
     /// invitee's private key or of the controller's computes it.
     #[must_use]
     pub fn invite_proof(&self, transcript: &[u8]) -> Tag {
@@ -204,7 +204,7 @@ impl AdmitKey {
             .tag()
     }
 
-    /// P-251's confirmation: the same transcript and the slot it was written
+    /// P-257's confirmation: the same transcript and the slot it was written
     /// to, so a confirmation for one slot does not vouch for another.
     #[must_use]
     pub fn invite_confirm(

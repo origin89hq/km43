@@ -373,24 +373,24 @@ pub const SCAN_ANSWER_CEILING: usize = (INNER_BODY_BYTES - SCAN_ANSWER_HEADER_BY
 /// The most widest-case rows the link result could carry.
 pub const SCAN_RESULT_CEILING: usize = (MAX_PAYLOAD - SCAN_RESULT_HEADER_BYTES) / AP_MAX_BYTES;
 
-/// Slots holding `admin` (P-252). With [`MAX_VIEWERS`] it leaves a row of [`MAX_CLIENTS`] that
+/// Slots holding `admin` (P-258). With [`MAX_VIEWERS`] it leaves a row of [`MAX_CLIENTS`] that
 /// only an owner can take, so a table the admins filled is still one an owner can be invited into.
 pub const MAX_ADMINS: usize = 6;
 
-/// Slots holding `viewer`: the cloud's identity (P-252).
+/// Slots holding `viewer`: the cloud's identity (P-258).
 pub const MAX_VIEWERS: usize = 1;
 
-/// Pending invites, in RAM (P-247). Full is `Invite` outcome 3 `invites_full`; nothing is evicted,
+/// Pending invites, in RAM (P-253). Full is `Invite` outcome 3 `invites_full`; nothing is evicted,
 /// and the last free row is an owner's.
 pub const MAX_INVITES: usize = 4;
 
-/// Pending invites one slot may hold (P-247), so two admins cannot fill the table between them.
+/// Pending invites one slot may hold (P-253), so two admins cannot fill the table between them.
 pub const MAX_INVITES_PER_INVITER: usize = 2;
 
-/// How long an invite stays pending after it was proposed, on P-004's tick (P-247).
+/// How long an invite stays pending after it was proposed, on P-004's tick (P-253).
 pub const INVITE_TTL_MS: u64 = 3_600_000;
 
-/// Proposals an admin slot may make without an owner approving one (P-248). It is what bounds a
+/// Proposals an admin slot may make without an owner approving one (P-254). It is what bounds a
 /// relay to a few one-in-a-million guesses at the digits rather than a search.
 pub const INVITE_BUDGET: u8 = 3;
 
@@ -406,7 +406,7 @@ pub const INVITE_ROW_MAX_BYTES: usize = 111;
 /// A `Clients 0x94` around its rows: map header 1, and each list's key and array header 2.
 pub const CLIENTS_HEADER_BYTES: usize = 5;
 
-/// A `Clients 0x94` with every slot and every invite at its widest. P-245's answer is one response
+/// A `Clients 0x94` with every slot and every invite at its widest. P-251's answer is one response
 /// and not a page, so this has to fit the inner body.
 pub const CLIENTS_MAX_BYTES: usize =
     CLIENTS_HEADER_BYTES + MAX_CLIENTS * CLIENT_ROW_MAX_BYTES + MAX_INVITES * INVITE_ROW_MAX_BYTES;
@@ -458,17 +458,17 @@ const_assert!(
 
 const_assert!(
     CLIENTS_MAX_BYTES <= INNER_BODY_BYTES,
-    "a full client table and a full invite table are one Clients 0x94 (P-245), and one that does not fit is a list the controller builds and then refuses with error 5"
+    "a full client table and a full invite table are one Clients 0x94 (P-251), and one that does not fit is a list the controller builds and then refuses with error 5"
 );
 
 const_assert!(
     MAX_ADMINS + MAX_VIEWERS < MAX_CLIENTS,
-    "P-252 keeps a row only an owner can take; admins and viewers filling the table is a site nobody can invite an owner into"
+    "P-258 keeps a row only an owner can take; admins and viewers filling the table is a site nobody can invite an owner into"
 );
 
 const_assert!(
     MAX_INVITES_PER_INVITER < MAX_INVITES,
-    "P-247 holds the last free invite row for an owner, so no one slot may fill the table"
+    "P-253 holds the last free invite row for an owner, so no one slot may fill the table"
 );
 
 const_assert!(

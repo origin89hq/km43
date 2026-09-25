@@ -804,7 +804,7 @@ mod tests {
     /// silence. The frame parsed perfectly — it simply says nothing — and a
     /// client that hears nothing waits out its own timeout with an empty screen.
     /// Every byte the registry leaves free, rather than a list of free ones:
-    /// the list went stale the day `Clients` took 0x14.
+    /// the list went stale the day a message took 0x14.
     #[test]
     fn an_unallocated_type_is_error_2_rather_than_dropped_or_called_malformed() {
         let free = (0u8..=0xFF).filter(|&opcode| {

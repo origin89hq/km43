@@ -3,7 +3,7 @@
 //! cloud that may be hostile.
 //!
 //! The relay can substitute a key in either direction, so two people compare six
-//! digits over a channel it does not carry (P-251). Six digits over values the
+//! digits over a channel it does not carry (P-257). Six digits over values the
 //! relay chooses would be a search, not a check: it would try keys until the
 //! digits matched. So the invitee commits to its key and a secret nonce before
 //! the controller draws its own, and reveals the nonce only once it holds the
@@ -33,7 +33,7 @@
 //! }
 //! ```
 //!
-//! cites: P-251
+//! cites: P-257
 
 use core::fmt;
 
@@ -61,7 +61,7 @@ const SAS_MODULUS: u32 = 1_000_000;
 
 const_assert!(
     INVITE_TRANSCRIPT_BYTES == 126,
-    "P-251's transcript is 126 bytes and the published vectors count them"
+    "P-257's transcript is 126 bytes and the published vectors count them"
 );
 
 /// P-043's two hash prefixes for an invite.
@@ -124,7 +124,7 @@ impl fmt::Display for Sas {
     }
 }
 
-/// Everything an invite's transcript names, in P-251's order.
+/// Everything an invite's transcript names, in P-257's order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Invitation {
     /// The controller the invite is for.
@@ -284,7 +284,7 @@ impl Invitee {
         self.invitation.reveal
     }
 
-    /// P-251's proof, sent back through the relay.
+    /// P-257's proof, sent back through the relay.
     #[must_use]
     pub fn proof(&self) -> Tag {
         self.invitation.proof(&self.admit)
@@ -298,7 +298,7 @@ impl Invitee {
 
     /// The person confirmed the digits matched what the owner read. Only then
     /// is the confirmation worth checking: without it, the confirmation proves
-    /// only that whoever sent it holds the key the relay named (P-251).
+    /// only that whoever sent it holds the key the relay named (P-257).
     #[must_use]
     pub const fn digits_matched(self) -> Matched {
         Matched(self)
@@ -376,7 +376,7 @@ pub struct Verified {
 }
 
 impl Verified {
-    /// P-251's confirmation for the slot the key was written to.
+    /// P-257's confirmation for the slot the key was written to.
     #[must_use]
     pub fn confirm(&self, client_id: ClientId, generation: Generation) -> Tag {
         self.admit
@@ -480,7 +480,7 @@ mod tests {
     /// The honest run: the controller verifies the proof, the invitee checks
     /// the confirmation, and both ends show the same digits.
     #[test]
-    fn p_251_an_honest_invite_verifies_at_both_ends() {
+    fn p_257_an_honest_invite_verifies_at_both_ends() {
         let cs = controller();
         let start = invitee();
         let commitment = start.commitment();
@@ -506,7 +506,7 @@ mod tests {
     /// properly, passes the controller's checks: only the digits catch it. They
     /// must differ, or the person comparing them catches nothing.
     #[test]
-    fn p_251_a_substituted_invitee_key_changes_the_digits() {
+    fn p_257_a_substituted_invitee_key_changes_the_digits() {
         let cs = controller();
         let d = details(cs.public(), 0x52);
         let honest = invitee().receive(&d).expect("contributory");
@@ -520,7 +520,7 @@ mod tests {
     /// invitee's proof is under the wrong agreement and fails at the real
     /// controller, whether or not anybody compares the digits.
     #[test]
-    fn p_251_an_invitee_told_another_controller_key_fails_the_proof() {
+    fn p_257_an_invitee_told_another_controller_key_fails_the_proof() {
         let cs = controller();
         let fake = StaticKey::generate(Entropy::new([0x41; 32]));
         let start = invitee();
@@ -541,7 +541,7 @@ mod tests {
     /// nonce after seeing the controller's, which is what would let it search
     /// for matching digits.
     #[test]
-    fn p_251_a_reveal_that_does_not_open_the_commitment_is_refused() {
+    fn p_257_a_reveal_that_does_not_open_the_commitment_is_refused() {
         let cs = controller();
         let start = invitee();
         let commitment = start.commitment();
@@ -562,7 +562,7 @@ mod tests {
     /// proof no longer verifies. A field left out would be one the relay could
     /// rewrite — the role above all.
     #[test]
-    fn p_251_every_transcript_byte_is_bound_by_the_proof() {
+    fn p_257_every_transcript_byte_is_bound_by_the_proof() {
         let cs = controller();
         let start = invitee();
         let is = start.public();
@@ -591,7 +591,7 @@ mod tests {
     /// A confirmation for one slot does not vouch for another, and a forged
     /// one is not kept.
     #[test]
-    fn p_251_a_confirmation_for_another_slot_is_not_kept() {
+    fn p_257_a_confirmation_for_another_slot_is_not_kept() {
         let cs = controller();
         let start = invitee();
         let commitment = start.commitment();
@@ -614,7 +614,7 @@ mod tests {
     /// A controller key that is a low-order point is refused before any proof
     /// is made: the agreement would be a constant the relay knows (P-228).
     #[test]
-    fn p_251_a_low_order_controller_key_is_refused() {
+    fn p_257_a_low_order_controller_key_is_refused() {
         let zero = PublicKey::from_bytes([0; 32]);
         assert!(matches!(
             invitee().receive(&details(zero, 0x57)),

@@ -809,7 +809,7 @@ const L_INVITE_SAS: &[u8] = b"km43/v1/invite-sas";
 
 /// The invite the vectors publish: an admin proposed by the enrolled client,
 /// for an invitee whose key and nonce are runs like every other input here.
-/// The role is `admin` (P-244), and the slot the approval writes is 2.
+/// The role is `admin` (P-250), and the slot the approval writes is 2.
 const INVITE_ROLE: u8 = 2;
 const INVITE_SLOT: u32 = 2;
 const INVITE_SLOT_GENERATION: u32 = 1;
@@ -861,10 +861,10 @@ enum Msg {
     Pair = 0x0B,
     WifiScan = 0x11,
     Enrol = 0x13,
-    Clients = 0x14,
     Invite = 0x15,
     Approve = 0x16,
     Remove = 0x17,
+    Clients = 0x18,
     Discover = 0x80,
     Hello = 0x81,
     LogPage = 0x85,
@@ -876,10 +876,10 @@ enum Msg {
     WifiScanAnswer = 0x91,
     WifiStatusAnswer = 0x92,
     EnrolAnswer = 0x93,
-    ClientsAnswer = 0x94,
     InviteAck = 0x95,
     ApproveAck = 0x96,
     RemoveAck = 0x97,
+    ClientsAnswer = 0x98,
     Error = 0xFF,
 }
 
@@ -2913,10 +2913,10 @@ impl Builder {
         .collect()
     }
 
-    /// `Clients 0x14` and its answer while `inviteack_0x95`'s invite is
+    /// `Clients 0x18` and its answer while `inviteack_0x95`'s invite is
     /// pending: the enrolled client as the site's owner, and one invite row
     /// carrying every transcript field `invite` publishes that the controller
-    /// holds, which is what an owner computes the digits from (P-251).
+    /// holds, which is what an owner computes the digits from (P-257).
     fn clients_entries(&self) -> Result<Vec<(&'static str, Value)>> {
         const REQUEST: &str = "this is the inner body; on the wire it is sealed (P-231) under the session's client-to-controller key, its nonce the req_id, as sealed.readlog_request is";
         let owner = cmap! {
@@ -2939,7 +2939,7 @@ impl Builder {
         };
         typed_bodies(vec![
             (
-                "clients_0x14",
+                "clients_0x18",
                 Msg::Clients,
                 REQUEST,
                 Cb::M(BTreeMap::new()),
@@ -2947,7 +2947,7 @@ impl Builder {
                 "an empty map: the list takes no arguments",
             ),
             (
-                "clients_0x94",
+                "clients_0x98",
                 Msg::ClientsAnswer,
                 SEALED_ANSWER,
                 cmap! { 1 => Cb::A(vec![owner]), 2 => Cb::A(vec![pending]) },
@@ -3828,7 +3828,7 @@ impl Builder {
         hkdf(&self.device_id, &self.invite_admit_ikm(), L_ADMIT_KEY, 32)
     }
 
-    /// P-251's 126 bytes, field by field in the order the spec prints them.
+    /// P-257's 126 bytes, field by field in the order the spec prints them.
     fn invite_transcript(&self) -> Vec<u8> {
         [
             self.device_id.as_slice(),
@@ -3896,7 +3896,7 @@ impl Builder {
         }
         let transcript = self.invite_transcript();
         if transcript.len() != 126 {
-            bail!("P-251's transcript is 126 bytes, not {}", transcript.len());
+            bail!("P-257's transcript is 126 bytes, not {}", transcript.len());
         }
         let commit_input = [L_INVITE_COMMIT, invitee.as_slice(), &Self::invite_reveal()].concat();
         let sas_input = [L_INVITE_SAS, transcript.as_slice()].concat();

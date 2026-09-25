@@ -3154,13 +3154,13 @@ fn the_published_config_messages_carry_the_registry_opcodes() {
     }
 }
 
-/// P-251 against the generator: the transcript, the commitment, the digits,
+/// P-257 against the generator: the transcript, the commitment, the digits,
 /// the proof and the confirmation, each through the public API from the
 /// published inputs. The four formulas were written twice, once here and once
 /// in xtask, and a transcript field in a different order in one of them is an
 /// invitee that can never be approved by a controller built from the other.
 #[test]
-fn p_251_an_invite_computes_the_published_transcript_digits_and_tags() {
+fn p_257_an_invite_computes_the_published_transcript_digits_and_tags() {
     let invite = object("invite");
     let start = InviteeStart::new(
         Entropy::new(hex_in(invite, "invitee_key").try_into().expect("32 bytes")),
@@ -3292,7 +3292,7 @@ fn published_invite_bodies_decode_and_reencode_byte_for_byte() {
 
 /// The approval and removal bodies, the second half of the witness above:
 /// the approval carries the published proof and its answer the published
-/// confirmation, so the tags P-251 computes are the ones the bodies put on the
+/// confirmation, so the tags P-257 computes are the ones the bodies put on the
 /// wire, and the removal names the slot the approval wrote.
 #[test]
 fn published_approval_and_removal_bodies_decode_and_reencode_byte_for_byte() {
@@ -3385,16 +3385,16 @@ fn published_approval_and_removal_bodies_decode_and_reencode_byte_for_byte() {
     }
 }
 
-/// `Clients 0x14` is the empty body, and its answer lists the enrolled client
+/// `Clients 0x18` is the empty body, and its answer lists the enrolled client
 /// as the owner and the published invite as pending. The invite row is where
-/// an owner reads the transcript before approving (P-251), so its nonce, role,
+/// an owner reads the transcript before approving (P-257), so its nonce, role,
 /// invitee, inviter and suite are compared with `invite` and `inputs`, not
 /// only with themselves.
 #[test]
 fn published_clients_bodies_decode_and_reencode_byte_for_byte() {
     use km43::{CLIENTS_MAX_BYTES, ClientRow, ClientsAnswer, EmptyBody, InviteRow};
 
-    let published = blob_under("clients_0x14", "body_cbor");
+    let published = blob_under("clients_0x18", "body_cbor");
     assert_eq!(
         EmptyBody::decode(MessageType::Clients, &published),
         Ok(EmptyBody)
@@ -3430,15 +3430,15 @@ fn published_clients_bodies_decode_and_reencode_byte_for_byte() {
         suite: Suite::X25519ChachapolySha256,
     }];
     let want = ClientsAnswer::new(&clients, &invites).expect("valid");
-    let published = blob_under("clients_0x94", "body_cbor");
+    let published = blob_under("clients_0x98", "body_cbor");
     assert_eq!(ClientsAnswer::decode(&published), Ok(want));
     let mut dst = [0; CLIENTS_MAX_BYTES];
     let len = want.encode(&mut dst).expect("fits");
     assert_eq!(dst.get(..len), Some(published.as_slice()));
 
     for (name, kind) in [
-        ("clients_0x14", MessageType::Clients),
-        ("clients_0x94", MessageType::ClientsResponse),
+        ("clients_0x18", MessageType::Clients),
+        ("clients_0x98", MessageType::ClientsResponse),
     ] {
         assert_eq!(number_in(name, "type"), usize::from(kind as u8), "{name}");
     }

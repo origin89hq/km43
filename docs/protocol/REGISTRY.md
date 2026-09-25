@@ -176,10 +176,10 @@ by luck. The values are `none` (P-054), `handshake` (P-057), `pair_reply`
 | `0x11` | `0x91` | WifiScan | `sealed` | `sealed` | 1.0 | live |
 | `0x12` | `0x92` | WifiStatus | `sealed` | `sealed` | 1.0 | live |
 | `0x13` | `0x93` | Enrol | `handshake` | `pair_sealed` | 1.0 | live |
-| `0x14` | `0x94` | Clients | `sealed` | `sealed` | 1.0 | live |
 | `0x15` | `0x95` | Invite | `signed` | `sealed` | 1.0 | live |
 | `0x16` | `0x96` | Approve | `signed` | `sealed` | 1.0 | live |
 | `0x17` | `0x97` | Remove | `signed` | `sealed` | 1.0 | live |
+| `0x18` | `0x98` | Clients | `sealed` | `sealed` | 1.0 | live |
 | `0x60`–`0x7E` | `0xE0`–`0xFE` | *link-local, see [LINK.md](LINK.md)* | — | — | 1.0 | live |
 | — | `0xFF` | Error | — | `sealed_or_bare` | 1.0 | live |
 
@@ -938,15 +938,15 @@ How an `Invite 0x95` answered.
 
 | Value | Name | Meaning |
 |---|---|---|
-| 1 | proposed | The invite is pending, and `nonce` names it until an owner approves or declines it or it expires (P-246) |
-| 2 | unauthorised | This client's role may not propose this role (P-245) |
-| 3 | invites_full | The pending-invite table has no row this inviter may take. Nothing is evicted (P-247) |
-| 4 | known_key | An occupied slot already holds this key (P-246) |
-| 5 | table_full | No row could be allocated to this role now, so an approval would fail (P-252) |
-| 6 | no_budget | This admin slot has proposed its limit of invites without an owner approving one (P-248) |
+| 1 | proposed | The invite is pending, and `nonce` names it until an owner approves or declines it or it expires (P-252) |
+| 2 | unauthorised | This client's role may not propose this role (P-251) |
+| 3 | invites_full | The pending-invite table has no row this inviter may take. Nothing is evicted (P-253) |
+| 4 | known_key | An occupied slot already holds this key (P-252) |
+| 5 | table_full | No row could be allocated to this role now, so an approval would fail (P-258) |
+| 6 | no_budget | This admin slot has proposed its limit of invites without an owner approving one (P-254) |
 
 `6` is an admin that has spent its proposals without an owner approving one
-(P-248). It is durable and a reboot does not restore it, because it is what
+(P-254). It is durable and a reboot does not restore it, because it is what
 stops a compromised admin phone trying a million controller nonces until one
 gives the digits the invitee is reading out.
 
@@ -956,20 +956,20 @@ How an `Approve 0x96` answered.
 
 | Value | Name | Meaning |
 |---|---|---|
-| 1 | enrolled | The invitee's key is in a slot, and `confirm` proves the controller wrote it (P-249) |
-| 2 | declined | The invite is withdrawn and nothing was enrolled (P-249) |
-| 3 | unauthorised | Only an owner approves, and only an owner or the invite's own inviter declines (P-249) |
-| 4 | unknown_invite | No live invite has this nonce: it was consumed, it expired, or the controller rebooted (P-247) |
-| 5 | inviter_gone | The slot that proposed it no longer holds that enrolment, or its role may no longer propose this role (P-249) |
-| 6 | refused | The reveal does not match the commitment, or the proof does not verify. The invite is consumed (P-249) |
-| 7 | known_key | An occupied slot already holds this key. The invite is consumed (P-249) |
-| 8 | table_full | No row can be allocated to this role. The invite stays pending (P-252) |
-| 9 | not_stored | The slot could not be written durably. The invite stays pending and a class A concern was raised (P-249) |
+| 1 | enrolled | The invitee's key is in a slot, and `confirm` proves the controller wrote it (P-255) |
+| 2 | declined | The invite is withdrawn and nothing was enrolled (P-255) |
+| 3 | unauthorised | Only an owner approves, and only an owner or the invite's own inviter declines (P-255) |
+| 4 | unknown_invite | No live invite has this nonce: it was consumed, it expired, or the controller rebooted (P-253) |
+| 5 | inviter_gone | The slot that proposed it no longer holds that enrolment, or its role may no longer propose this role (P-255) |
+| 6 | refused | The reveal does not match the commitment, or the proof does not verify. The invite is consumed (P-255) |
+| 7 | known_key | An occupied slot already holds this key. The invite is consumed (P-255) |
+| 8 | table_full | No row can be allocated to this role. The invite stays pending (P-258) |
+| 9 | not_stored | The slot could not be written durably. The invite stays pending and a class A concern was raised (P-255) |
 
 `3` leaves the invite pending, because a sender that may not decide has not
 decided anything. `8` and `9` leave it pending because nothing about the invite
 was wrong and the owner can free a row or retry. Every other refusal after the
-nonce was found consumes it: an invite is good for one decision (P-249).
+nonce was found consumes it: an invite is good for one decision (P-255).
 
 ## Remove outcomes — `u8`
 
@@ -977,15 +977,15 @@ How a `Remove 0x97` answered.
 
 | Value | Name | Meaning |
 |---|---|---|
-| 1 | removed | The enrolment is gone: its sessions are unbound and its generation has moved on (P-250) |
-| 2 | gone | That enrolment no longer holds the slot. Nothing changed (P-250) |
-| 3 | protected | An owner slot, or a viewer slot for a sender that is not an owner. Nothing changed (P-250) |
-| 4 | unauthorised | This client's role may not remove anybody (P-245) |
-| 5 | not_stored | The slot could not be written durably and a class A concern was raised (P-250) |
+| 1 | removed | The enrolment is gone: its sessions are unbound and its generation has moved on (P-256) |
+| 2 | gone | That enrolment no longer holds the slot. Nothing changed (P-256) |
+| 3 | protected | An owner slot, or a viewer slot for a sender that is not an owner. Nothing changed (P-256) |
+| 4 | unauthorised | This client's role may not remove anybody (P-251) |
+| 5 | not_stored | The slot could not be written durably and a class A concern was raised (P-256) |
 
 `2` is not a failure. A removal names an enrolment by `client_id` and
 generation, and one that finds the slot free or re-keyed has nothing left to
-remove; the enrolment it named is already over (P-250).
+remove; the enrolment it named is already over (P-256).
 
 ---
 
@@ -1015,7 +1015,7 @@ unknown suite is error 19 before anything else is read.
 ## Roles — `u8`
 
 What a slot may do, fixed when the slot is written and stored in its key record
-(P-239, P-244). The capability mask below is the role's.
+(P-239, P-250). The capability mask below is the role's.
 
 | Value | Name | Meaning |
 |---|---|---|
@@ -1053,7 +1053,7 @@ picking `0x0503` and worse in its consequences.
 | 2 | send `Command 0x08` | yes | yes | **no** |
 | 3 | set the clock with `Time 0x0A` | yes | yes | **no** |
 | 4 | push firmware with `Firmware 0x09` | yes | yes | **no** |
-| 5 | read the **network** (`0x0020`) and **cloud** (`0x0021`) sections with `GetConfig`, the scan list with `WifiScan`, and the client table with `Clients 0x14` | yes | yes | **no** |
+| 5 | read the **network** (`0x0020`) and **cloud** (`0x0021`) sections with `GetConfig`, the scan list with `WifiScan`, and the client table with `Clients 0x18` | yes | yes | **no** |
 | 6 | propose an admin with `Invite 0x15`, and remove an admin with `Remove 0x17` | yes | yes | **no** |
 | 7 | approve or decline any invite with `Approve 0x16`, propose an owner or a viewer, and remove a viewer | yes | **no** | **no** |
 | 8–15 | unallocated | — | — | — |

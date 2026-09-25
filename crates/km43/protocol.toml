@@ -222,15 +222,6 @@ status = "live"
 since = "1.0"
 
 [[messages]]
-request = 0x14
-response = 0x94
-name = "Clients"
-auth_request = "sealed"
-auth_response = "sealed"
-status = "live"
-since = "1.0"
-
-[[messages]]
 request = 0x15
 response = 0x95
 name = "Invite"
@@ -253,6 +244,15 @@ request = 0x17
 response = 0x97
 name = "Remove"
 auth_request = "signed"
+auth_response = "sealed"
+status = "live"
+since = "1.0"
+
+[[messages]]
+request = 0x18
+response = 0x98
+name = "Clients"
+auth_request = "sealed"
 auth_response = "sealed"
 status = "live"
 since = "1.0"
@@ -1761,7 +1761,7 @@ status = "live"
 [[client_capability]]
 bit = 5
 name = "read_private"
-may = "read the **network** (`0x0020`) and **cloud** (`0x0021`) sections with `GetConfig`, the scan list with `WifiScan`, and the client table with `Clients 0x14`"
+may = "read the **network** (`0x0020`) and **cloud** (`0x0021`) sections with `GetConfig`, the scan list with `WifiScan`, and the client table with `Clients 0x18`"
 granted_to = ["owner", "admin"]
 status = "live"
 
@@ -1937,121 +1937,121 @@ meaning = "`at` is below the monotonic floor. A person at the panel can override
 value = 1
 name = "proposed"
 status = "live"
-meaning = "The invite is pending, and `nonce` names it until an owner approves or declines it or it expires (P-246)"
+meaning = "The invite is pending, and `nonce` names it until an owner approves or declines it or it expires (P-252)"
 
 [[outcomes.invite]]
 value = 2
 name = "unauthorised"
 status = "live"
-meaning = "This client's role may not propose this role (P-245)"
+meaning = "This client's role may not propose this role (P-251)"
 
 [[outcomes.invite]]
 value = 3
 name = "invites_full"
 status = "live"
-meaning = "The pending-invite table has no row this inviter may take. Nothing is evicted (P-247)"
+meaning = "The pending-invite table has no row this inviter may take. Nothing is evicted (P-253)"
 
 [[outcomes.invite]]
 value = 4
 name = "known_key"
 status = "live"
-meaning = "An occupied slot already holds this key (P-246)"
+meaning = "An occupied slot already holds this key (P-252)"
 
 [[outcomes.invite]]
 value = 5
 name = "table_full"
 status = "live"
-meaning = "No row could be allocated to this role now, so an approval would fail (P-252)"
+meaning = "No row could be allocated to this role now, so an approval would fail (P-258)"
 
 [[outcomes.invite]]
 value = 6
 name = "no_budget"
 status = "live"
-meaning = "This admin slot has proposed its limit of invites without an owner approving one (P-248)"
+meaning = "This admin slot has proposed its limit of invites without an owner approving one (P-254)"
 
 [[outcomes.approve]]
 value = 1
 name = "enrolled"
 status = "live"
-meaning = "The invitee's key is in a slot, and `confirm` proves the controller wrote it (P-249)"
+meaning = "The invitee's key is in a slot, and `confirm` proves the controller wrote it (P-255)"
 
 [[outcomes.approve]]
 value = 2
 name = "declined"
 status = "live"
-meaning = "The invite is withdrawn and nothing was enrolled (P-249)"
+meaning = "The invite is withdrawn and nothing was enrolled (P-255)"
 
 [[outcomes.approve]]
 value = 3
 name = "unauthorised"
 status = "live"
-meaning = "Only an owner approves, and only an owner or the invite's own inviter declines (P-249)"
+meaning = "Only an owner approves, and only an owner or the invite's own inviter declines (P-255)"
 
 [[outcomes.approve]]
 value = 4
 name = "unknown_invite"
 status = "live"
-meaning = "No live invite has this nonce: it was consumed, it expired, or the controller rebooted (P-247)"
+meaning = "No live invite has this nonce: it was consumed, it expired, or the controller rebooted (P-253)"
 
 [[outcomes.approve]]
 value = 5
 name = "inviter_gone"
 status = "live"
-meaning = "The slot that proposed it no longer holds that enrolment, or its role may no longer propose this role (P-249)"
+meaning = "The slot that proposed it no longer holds that enrolment, or its role may no longer propose this role (P-255)"
 
 [[outcomes.approve]]
 value = 6
 name = "refused"
 status = "live"
-meaning = "The reveal does not match the commitment, or the proof does not verify. The invite is consumed (P-249)"
+meaning = "The reveal does not match the commitment, or the proof does not verify. The invite is consumed (P-255)"
 
 [[outcomes.approve]]
 value = 7
 name = "known_key"
 status = "live"
-meaning = "An occupied slot already holds this key. The invite is consumed (P-249)"
+meaning = "An occupied slot already holds this key. The invite is consumed (P-255)"
 
 [[outcomes.approve]]
 value = 8
 name = "table_full"
 status = "live"
-meaning = "No row can be allocated to this role. The invite stays pending (P-252)"
+meaning = "No row can be allocated to this role. The invite stays pending (P-258)"
 
 [[outcomes.approve]]
 value = 9
 name = "not_stored"
 status = "live"
-meaning = "The slot could not be written durably. The invite stays pending and a class A concern was raised (P-249)"
+meaning = "The slot could not be written durably. The invite stays pending and a class A concern was raised (P-255)"
 
 [[outcomes.remove]]
 value = 1
 name = "removed"
 status = "live"
-meaning = "The enrolment is gone: its sessions are unbound and its generation has moved on (P-250)"
+meaning = "The enrolment is gone: its sessions are unbound and its generation has moved on (P-256)"
 
 [[outcomes.remove]]
 value = 2
 name = "gone"
 status = "live"
-meaning = "That enrolment no longer holds the slot. Nothing changed (P-250)"
+meaning = "That enrolment no longer holds the slot. Nothing changed (P-256)"
 
 [[outcomes.remove]]
 value = 3
 name = "protected"
 status = "live"
-meaning = "An owner slot, or a viewer slot for a sender that is not an owner. Nothing changed (P-250)"
+meaning = "An owner slot, or a viewer slot for a sender that is not an owner. Nothing changed (P-256)"
 
 [[outcomes.remove]]
 value = 4
 name = "unauthorised"
 status = "live"
-meaning = "This client's role may not remove anybody (P-245)"
+meaning = "This client's role may not remove anybody (P-251)"
 
 [[outcomes.remove]]
 value = 5
 name = "not_stored"
 status = "live"
-meaning = "The slot could not be written durably and a class A concern was raised (P-250)"
+meaning = "The slot could not be written durably and a class A concern was raised (P-256)"
 
 [[outcomes.firmware]]
 value = 1

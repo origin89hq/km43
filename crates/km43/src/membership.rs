@@ -1,5 +1,5 @@
 //! `Invite 0x15`, `Approve 0x16` and `Remove 0x17`, and their acks: the three
-//! signed writes that change who is enrolled (P-246, P-249, P-250).
+//! signed writes that change who is enrolled (P-252, P-255, P-256).
 //!
 //! Each operation is its write's sealed inner body, read only once that body
 //! has opened, as every signed write is (P-048). An answer's optional keys are tied to
@@ -48,7 +48,7 @@ pub enum InviteKey {
     Role,
     /// Key 2, `IS`.
     Invitee,
-    /// Key 3, P-251's commitment.
+    /// Key 3, P-257's commitment.
     Commitment,
     /// Key 4, what the invitee will say it is.
     ClientKind,
@@ -135,7 +135,7 @@ pub enum ApproveKey {
     Decision,
     /// Key 3, `N_i`, with an approval only.
     Reveal,
-    /// Key 4, P-251's proof, with an approval only.
+    /// Key 4, P-257's proof, with an approval only.
     Proof,
 }
 
@@ -179,7 +179,7 @@ pub enum ApproveAckKey {
     ClientId,
     /// Key 3, with outcome 1 only.
     Generation,
-    /// Key 4, P-251's confirmation, with outcome 1 only.
+    /// Key 4, P-257's confirmation, with outcome 1 only.
     Confirm,
 }
 
@@ -281,7 +281,7 @@ impl fmt::Display for MembershipKey {
     }
 }
 
-/// An admin or owner proposing a key for a slot (P-246). The label is
+/// An admin or owner proposing a key for a slot (P-252). The label is
 /// borrowed from the body it was read out of.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InviteOperation<'a> {
@@ -464,18 +464,18 @@ impl InviteAck {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Decision {
     /// Enrol the invitee, if the reveal opens the commitment and the proof
-    /// verifies (P-249 step 5).
+    /// verifies (P-255 step 5).
     Approve {
         /// Key 3, `N_i`.
         reveal: Reveal,
-        /// Key 4, P-251's proof.
+        /// Key 4, P-257's proof.
         proof: [u8; TAG_BYTES],
     },
     /// Withdraw the invite.
     Decline,
 }
 
-/// An owner deciding an invite, or an inviter withdrawing its own (P-249).
+/// An owner deciding an invite, or an inviter withdrawing its own (P-255).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ApproveOperation {
@@ -582,7 +582,7 @@ pub struct Enrolled {
     pub client_id: ClientId,
     /// Key 3.
     pub generation: Generation,
-    /// Key 4, P-251's confirmation, which the invitee checks before it keeps
+    /// Key 4, P-257's confirmation, which the invitee checks before it keeps
     /// anything.
     pub confirm: [u8; TAG_BYTES],
 }
@@ -715,7 +715,7 @@ impl ApproveAck {
     }
 }
 
-/// An owner or admin ending one enrolment (P-250). It names the generation, so
+/// An owner or admin ending one enrolment (P-256). It names the generation, so
 /// a retry that arrives after the slot changed hands removes nobody.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -1196,7 +1196,7 @@ mod tests {
     }
 
     /// A decline has no reveal and no proof to carry, and an approval without
-    /// either is one the controller cannot check (P-249 step 5).
+    /// either is one the controller cannot check (P-255 step 5).
     #[test]
     fn a_decline_carries_no_reveal_and_an_approval_carries_both() {
         let [approve, decline] = approvals();
