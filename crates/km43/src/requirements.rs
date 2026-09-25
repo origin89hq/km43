@@ -642,12 +642,6 @@ pub const REQUIREMENTS: &[Requirement] = &[
         statement: "When `X25519(cs, VS)` is all zero (P-228), the controller MUST answer outcome 2 `bad_verifier` with keys 2 to 5 absent.",
     },
     Requirement {
-        id: "P-246",
-        document: "docs/PROTOCOL.md",
-        section: "Vouching for an enrolment",
-        statement: "A controller MUST set capability bit 9 in `Hello 0x81` exactly when it answers `Vouch`, and a client MUST NOT send `Vouch` to a controller that does not set it.",
-    },
-    Requirement {
         id: "P-247",
         document: "docs/PROTOCOL.md",
         section: "Vouching for an enrolment",

@@ -6,6 +6,5 @@ A controller can vouch for an enrolment so a site can link its generation (origi
 
 - `MessageType.Vouch` (`0x14`) carries a verifier's key, nonce and account binding, and `MessageType.VouchResponse` (`0x94`) the controller's tag over its epoch and the asking slot.
 - `Vouch.Vouched` (`1`) and `Vouch.BadVerifier` (`2`) are its outcomes.
-- Capability bit 9 says the controller answers `Vouch`.
 
-Nothing existing changed, so a client built against the previous version still interoperates.
+Every controller speaking this version answers `Vouch`; there is no capability bit to check first.
