@@ -268,13 +268,7 @@ impl Diagram {
             .map(|m| m.response.0)
             .collect();
 
-        let errs: Vec<u16> = self
-            .registry
-            .errors
-            .iter()
-            .filter(|e| e.status != Status::Retired)
-            .map(|e| e.code)
-            .collect();
+        let errs: Vec<u16> = self.registry.errors.iter().map(|e| e.code).collect();
         let link_errs: Vec<u16> = self.registry.link_errors.iter().map(|e| e.code).collect();
 
         for space in [

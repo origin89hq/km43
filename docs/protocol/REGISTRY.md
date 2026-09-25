@@ -743,8 +743,8 @@ produce it are P-078 and P-240 in [PROTOCOL.md](../PROTOCOL.md), not this file.*
 Which pairing re-keys an occupied slot, that the `label` comparison is over the
 exact UTF-8 bytes `PairOffer` carried, that a free slot is always preferred so a
 reclaim never takes a live phone's slot while there is room, that a reclaim now
-revokes the old install's key, and why setting the counter back to 0 does not
-re-open replay — all of it is there. What this file allocates is the number.
+revokes the old install's key, and why re-keying a slot does not re-open
+replay — all of it is there. What this file allocates is the number.
 
 **`6` and `2`, `4` travel in `Pair 0x8B`; the others in `Enrol 0x93`.** `6` is
 the only outcome that carries message 2. A refusal after message 1 carries the
