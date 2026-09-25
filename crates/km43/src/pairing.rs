@@ -23,7 +23,7 @@ use crate::generated::{ClientKind, ErrorCode, MessageType, Pair, Suite};
 use crate::handshake::{Prologue, Version};
 use crate::kdf::{ClientId, Fingerprint, Generation, Label};
 use crate::limits::{MAX_LABEL, MAX_STRING};
-use crate::mac::{MacError, RefusalKey, TAG_BYTES as REFUSAL_BYTES};
+use crate::mac::{MAC_TAG_BYTES as REFUSAL_BYTES, MacError, RefusalKey};
 use crate::noise::{
     CHALLENGE_BYTES, Entropy, KEY_BYTES, NoiseError, PairInitiator, PairReplied, PairResponder,
     Psk, PublicKey, SEALED_KEY_BYTES, StaticKey, TAG_BYTES,

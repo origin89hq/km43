@@ -16,7 +16,7 @@ use crate::cbor::{CborError, CborReader, CborWriter};
 use crate::envelope::Refusal;
 use crate::generated::{ErrorCode, Vouch};
 use crate::kdf::{ClientId, DeviceId, Epoch, Fingerprint, Generation};
-use crate::mac::TAG_BYTES;
+use crate::mac::MAC_TAG_BYTES;
 use crate::noise::{KEY_BYTES, PublicKey, StaticKey};
 
 /// The verifier's nonce: sixteen bytes, used for one vouch.
@@ -303,7 +303,7 @@ pub enum VouchAnswer {
         /// Key 4.
         generation: Generation,
         /// Key 5.
-        tag: [u8; TAG_BYTES],
+        tag: [u8; MAC_TAG_BYTES],
     },
     /// Outcome 2: a low-order verifier key, and nothing else (P-245).
     BadVerifier,
@@ -414,7 +414,7 @@ pub struct VouchClaim {
     /// Key 4.
     pub generation: Generation,
     /// Key 5.
-    pub tag: [u8; TAG_BYTES],
+    pub tag: [u8; MAC_TAG_BYTES],
 }
 
 /// Why a verifier refused a vouch, in the order P-247 checks.
@@ -721,7 +721,7 @@ mod tests {
     fn every_flipped_bit_of_a_vouch_tag_is_refused() {
         let answer = request(0xD0).answer(&controller(), DEVICE, epoch(1), slot());
         let good = claim(answer, controller().public());
-        for byte in 0..TAG_BYTES {
+        for byte in 0..MAC_TAG_BYTES {
             for bit in 0..8 {
                 let mut flipped = good;
                 flipped.tag[byte] ^= 1 << bit;
@@ -841,7 +841,7 @@ mod tests {
         cbor.key(4).expect("fits");
         cbor.u64(1).expect("fits");
         cbor.key(5).expect("fits");
-        cbor.bytes(&[0; TAG_BYTES]).expect("fits");
+        cbor.bytes(&[0; MAC_TAG_BYTES]).expect("fits");
         let len = cbor.finish().expect("fits");
         assert_eq!(
             VouchAnswer::decode(&buf[..len]).map(|_| ()),

@@ -26,7 +26,7 @@ use crate::generated::{ErrorCode, MessageType, Suite};
 use crate::handshake::{HandshakeError, HelloReport, MAX_HELLO_REPORT, Prologue, Version};
 use crate::kdf::Enrolment;
 use crate::limits::MAX_STRING;
-use crate::mac::{AdmitKey, MacError, TAG_BYTES as ADMIT_BYTES};
+use crate::mac::{AdmitKey, MAC_TAG_BYTES as ADMIT_BYTES, MacError};
 use crate::noise::{
     Entropy, HelloInitiator, HelloProved, HelloResponder, KEY_BYTES, NoiseError, PublicKey,
     SEALED_KEY_BYTES, StaticKey, TAG_BYTES,
