@@ -39,7 +39,7 @@ impl Stage {
     fn of(auth: Auth) -> Self {
         match auth {
             Auth::None => Self::BeforeAnyKey,
-            Auth::PairReply => Self::Enrolment,
+            Auth::PairReply | Auth::PairSealed => Self::Enrolment,
             Auth::Handshake => Self::Handshake,
             Auth::Sealed | Auth::Signed | Auth::SealedOrBare => Self::InSession,
             Auth::Link => Self::Link,

@@ -217,7 +217,7 @@ request = 0x13
 response = 0x93
 name = "Enrol"
 auth_request = "handshake"
-auth_response = "sealed"
+auth_response = "pair_sealed"
 status = "live"
 since = "1.0"
 

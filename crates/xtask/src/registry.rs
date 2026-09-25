@@ -11,7 +11,7 @@ use std::str::FromStr;
 
 /// How a message is authenticated.
 ///
-/// There is no eighth variant: a `protocol.toml` naming a rule that does not
+/// There is no ninth variant: a `protocol.toml` naming a rule that does not
 /// exist fails to parse, at the line that names it. What each one means is
 /// [`Auth::summary`], which the TypeScript bindings print beside every opcode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -20,6 +20,7 @@ pub enum Auth {
     None,
     Handshake,
     PairReply,
+    PairSealed,
     Sealed,
     Signed,
     Link,
@@ -38,6 +39,10 @@ impl Auth {
             Self::PairReply => {
                 "Noise message 2 when the pairing proceeds, otherwise a refusal tagged under \
                  the label's refusal key (P-241)."
+            }
+            Self::PairSealed => {
+                "Sealed with ChaCha20-Poly1305 under the keys the pairing handshake split \
+                 into, which open no session and are destroyed after it (P-064)."
             }
             Self::Sealed => {
                 "Sealed under the session's keys with ChaCha20-Poly1305 (P-231). Read-only, \
@@ -64,6 +69,7 @@ impl fmt::Display for Auth {
             Self::None => "none",
             Self::Handshake => "handshake",
             Self::PairReply => "pair_reply",
+            Self::PairSealed => "pair_sealed",
             Self::Sealed => "sealed",
             Self::Signed => "signed",
             Self::Link => "link",

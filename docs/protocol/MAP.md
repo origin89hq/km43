@@ -49,7 +49,7 @@ flowchart TD
   subgraph Handshakeagreeingkeys["Handshake — agreeing keys"]
     Hello["Hello<br/>0x01 handshake → 0x81 handshake"]
     Pair["Pair<br/>0x0B handshake → 0x8B pair_reply"]
-    Enrol["Enrol<br/>0x13 handshake → 0x93 sealed"]
+    Enrol["Enrol<br/>0x13 handshake → 0x93 pair_sealed"]
   end
   subgraph Insession["In session"]
     Snapshot["Snapshot<br/>0x02 sealed → 0x82 sealed"]

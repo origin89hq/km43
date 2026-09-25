@@ -146,11 +146,13 @@ comms processor, not a client sending nonsense, and the two want different
 investigations.
 
 **The two auth columns are one column in disguise, and splitting them is the
-point.** A request and its response are not authenticated the same way — a
-`Snapshot` request is `wrq` and its response is `rsp`, under different preimages
-— and a single column saying "session" covered both while agreeing with P-052
-only by luck. These are the labels P-052 defines, and nothing else is a legal
-value.
+point.** A request and its response are not always authenticated the same way:
+a `Time` request is `signed` and its response is `sealed`, and `Enrol` goes out
+as the last handshake message and comes back `pair_sealed`, under keys that are
+not a session's. A single column covered both while agreeing with the spec only
+by luck. The values are `none` (P-054), `handshake` (P-057), `pair_reply`
+(P-241), `pair_sealed` (P-064), `sealed` (P-231), `signed` (P-053), `link` and
+`sealed_or_bare` (P-142), and `protocol.toml` refuses to parse any other.
 
 | Request | Response | Name | Auth (request) | Auth (response) | Since | Status |
 |---|---|---|---|---|---|---|
@@ -173,7 +175,7 @@ value.
 | `0x10` | `0x90` | History | `sealed` | `sealed` | 1.0 | reserved |
 | `0x11` | `0x91` | WifiScan | `sealed` | `sealed` | 1.0 | live |
 | `0x12` | `0x92` | WifiStatus | `sealed` | `sealed` | 1.0 | live |
-| `0x13` | `0x93` | Enrol | `handshake` | `sealed` | 1.0 | live |
+| `0x13` | `0x93` | Enrol | `handshake` | `pair_sealed` | 1.0 | live |
 | `0x60`–`0x7E` | `0xE0`–`0xFE` | *link-local, see [LINK.md](LINK.md)* | — | — | 1.0 | live |
 | — | `0xFF` | Error | — | `sealed_or_bare` | 1.0 | live |
 
