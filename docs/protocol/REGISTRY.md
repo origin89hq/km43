@@ -214,7 +214,7 @@ handler's own refusal is an outcome in its response instead (P-141).
 | 8 | Session table full | no | live |
 | 9 | Session expired | no | live |
 | 10 | Authentication failed | no | live |
-| 11 | Counter not fresh | yes | live |
+| 11 | Counter not fresh | yes | retired |
 | 12 | Unknown client | no | live |
 | 13 | Pairing window closed | no | withdrawn |
 | 14 | Stale challenge — reconnect and retry | no | live |
@@ -734,7 +734,7 @@ How a `Pair 0x8B` answered.
 | 2 | window_closed | No pairing window was open. Answered under the refusal tag after message 1, or in `Enrol 0x93` when the window closed before message 3; never counted as an authentication failure (P-241) | live |
 | 3 | bad_proof | A wrong label cannot be answered under a key the client holds, so it is bare error 10 now (P-066) | withdrawn |
 | 4 | table_full | No free slot and no slot with this label. Nothing is evicted (P-067, P-240) | live |
-| 5 | reclaimed | No free slot, and the lowest slot with a byte-identical label was re-keyed: the old install's key is erased, the generation moves on and the counter is back to 0 (P-240) | live |
+| 5 | reclaimed | No free slot, and the lowest slot with a byte-identical label was re-keyed: the old install's key is erased and the generation moves on (P-240) | live |
 | 6 | proceed | Message 1 opened, the window is open and there is a slot to allocate; `Pair 0x8B` carries message 2 (P-064) | live |
 | 7 | not_stored | The slot could not be written durably, so nothing was enrolled and a class A concern was raised (P-064) | live |
 
@@ -1283,12 +1283,13 @@ A normalized thing that has gone wrong. Open, so a condition nobody has allocate
 | `0x000F` | series too long | reserved |
 | `0x0010` | inventory full | reserved |
 | `0x0011` | bay flapping | reserved |
-| `0x0012` | counter write failed | reserved |
+| `0x0012` | counter write failed | retired |
 | `0x0013` | epoch write failed | reserved |
 | `0x0014` | clock stepped | reserved |
 | `0x0015` | floor overridden | reserved |
 | `0x0016` | entropy unavailable | reserved |
 | `0x0017` | client table write failed | reserved |
+| `0x0018` | dedup write failed | reserved |
 | `0xF000`–`0xFFFF` | vendor range, skip-unknown under P-019 | — |
 
 ## History buckets

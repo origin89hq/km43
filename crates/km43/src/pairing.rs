@@ -13,7 +13,7 @@
 //! The window, the table and the button are the controller's; what is here is
 //! the messages and the order they are read in.
 //!
-//! cites: P-054, P-057, P-058, P-064, P-065, P-105, P-229, P-236, P-240, P-241, P-242
+//! cites: P-054, P-057, P-058, P-064, P-105, P-229, P-236, P-240, P-241, P-242
 
 use core::fmt;
 
@@ -1260,8 +1260,7 @@ mod tests {
     }
 
     /// P-058: every `Enrol 0x93` carries the next challenge, whatever the
-    /// outcome, and only outcomes 1 and 5 name a slot (P-065: nothing carries a
-    /// starting counter, because no key could hold one).
+    /// outcome, and only outcomes 1 and 5 name a slot.
     #[test]
     fn p_058_every_enrolment_answer_carries_the_next_challenge() {
         let (id, generation) = slot();
@@ -1289,8 +1288,10 @@ mod tests {
         }
     }
 
+    /// A refusal that names a slot tells the client it holds one it does not,
+    /// and the next `Hello` fails for a reason nobody can see.
     #[test]
-    fn p_065_an_enrolment_answer_has_no_key_a_counter_could_ride_in() {
+    fn a_refusal_that_names_a_slot_is_refused() {
         let mut out = [0u8; 64];
         let mut cbor = CborWriter::new(&mut out);
         cbor.map(3).expect("head");

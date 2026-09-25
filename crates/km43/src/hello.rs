@@ -695,7 +695,6 @@ mod tests {
             log_newest_seq: LogSeq(2),
             state_seq: StateSeq(3),
             time_known: false,
-            counter: 0,
             caps: Caps::THIS_CONTROLLER,
             topology: Topology::THIS_CONTROLLER,
             client_id: ClientId::new(7).expect("slot 7"),

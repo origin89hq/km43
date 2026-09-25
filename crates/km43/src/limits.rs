@@ -41,7 +41,7 @@ pub use crate::generated::MAX_PAYLOAD;
 /// What a receiver sizes its frame buffer at before a byte arrives; a longer frame is dropped and it resynchronises.
 pub const MAX_FRAME: usize = 1032;
 
-/// The signed `operation` blob; a longer one gets error 5, because the body that signs it also has to fit.
+/// A write's operation body, which is its whole inner body; a longer one gets error 5, because the sealed body and the envelope around it also have to fit.
 pub const MAX_OPERATION: usize = 960;
 
 /// A log page stops at this many bytes and comes back with `complete = false` rather than growing.
@@ -145,16 +145,12 @@ pub(crate) const EVENT_FRAMING_BYTES: usize = ENVELOPE_BYTES + SEALED_CONTROLLER
 /// The inner body budget every topology derivation rests on.
 pub const INNER_BODY_BYTES: usize = MAX_PAYLOAD - RESPONSE_FRAMING_BYTES;
 
-/// The signed inner body around its operation: its own map header, three key numbers at one byte
-/// each, `client_id` at `u32` width, `counter` at `u64` width and the `bstr` head a full-width
-/// operation needs. Its map header is counted here because the envelope's is the sealed body's.
-pub(crate) const SIGNED_BODY_BYTES: usize = 21;
-
-/// The largest `operation` whose worst-case signed request still fits `MAX_PAYLOAD`.
+/// The largest operation whose worst-case write still fits `MAX_PAYLOAD`. A write's inner body is
+/// its operation (P-053), so nothing sits between the two.
 ///
 /// `MAX_OPERATION` sits below it on purpose, the way every cap in this file sits below its own
-/// ceiling: a later key in the signed body lands inside these bytes.
-pub const MAX_OPERATION_CEILING: usize = MAX_PAYLOAD - SIGNED_BODY_BYTES - REQUEST_FRAMING_BYTES;
+/// ceiling: a later envelope element or sealed-body key lands inside these bytes.
+pub const MAX_OPERATION_CEILING: usize = MAX_PAYLOAD - REQUEST_FRAMING_BYTES;
 
 /// The `Event 0x04` body around key 4: the four key numbers, `seq` and `at` at `u64` width, and
 /// `kind` at `u16`.
@@ -541,7 +537,7 @@ const _: () = assert!(
 
 const _: () = assert!(
     MAX_OPERATION <= MAX_OPERATION_CEILING,
-    "MAX_OPERATION above its ceiling is a write the client builds and the controller then refuses with error 5. The check here before it was `MAX_OPERATION < MAX_PAYLOAD`, which is true of any operation leaving one byte for the four keys and the MAC that sign it"
+    "MAX_OPERATION above its ceiling is a write the client builds and the controller then refuses with error 5. The check here before it was `MAX_OPERATION < MAX_PAYLOAD`, which is true of any operation leaving one byte for the envelope and the tag around it"
 );
 
 #[cfg(test)]
@@ -656,45 +652,42 @@ mod tests {
         assert_eq!(margin, 60, "896 under a headroom of 956");
     }
 
-    /// An operation travels inside a signed body inside a sealed body inside an envelope. If the
-    /// operation could fill a payload there would be nothing left for the counter that orders it
-    /// or the tag that proves it was not forged.
+    /// An operation travels as the inner body of a sealed body inside an envelope. If the
+    /// operation could fill a payload there would be nothing left for the tag that proves it was
+    /// not forged.
     ///
-    /// The margin is against all three. Written as `MAX_PAYLOAD - MAX_OPERATION == 64` first,
-    /// which is a subtraction rather than a derivation: it stays true if a body doubles.
+    /// Written as `MAX_PAYLOAD - MAX_OPERATION == 64` first, which is a subtraction rather than a
+    /// derivation: it stays true if a body doubles.
     #[test]
-    fn an_operation_leaves_room_for_the_bodies_and_the_envelope_around_it() {
+    fn an_operation_leaves_room_for_the_sealed_body_and_the_envelope_around_it() {
         assert_eq!(
-            MAX_OPERATION_CEILING, 972,
-            "1024 less 21 of signed body, 20 of sealed body and 11 of envelope (P-083)"
+            MAX_OPERATION_CEILING, 993,
+            "1024 less 20 of sealed body and 11 of envelope (P-083)"
         );
         let spent = MAX_OPERATION
-            .checked_add(SIGNED_BODY_BYTES)
-            .and_then(|n| n.checked_add(REQUEST_FRAMING_BYTES))
-            .expect("a signed request must not overflow a usize");
-        assert_eq!(
-            spent, 1012,
-            "960 of operation under 21 of signed body and 31 of framing"
-        );
+            .checked_add(REQUEST_FRAMING_BYTES)
+            .expect("a write must not overflow a usize");
+        assert_eq!(spent, 991, "960 of operation under 31 of framing");
     }
 
-    /// Twelve spare bytes is what absorbs the signed body gaining a key: without the margin, adding
-    /// one turns a legal operation into a frame the controller refuses with error 5.
+    /// The spare bytes are what absorb the envelope or the sealed body gaining an element: without
+    /// the margin, adding one turns a legal operation into a frame the controller refuses with
+    /// error 5.
     ///
-    /// The check here before this was `greedy + SIGNED_BODY_BYTES + ENVELOPE_BYTES > MAX_PAYLOAD`,
-    /// where `greedy` had just subtracted `SIGNED_BODY_BYTES` — so it reduced to
-    /// `ENVELOPE_BYTES > 0`, and was true for every value of the cap it claimed to guard.
+    /// An earlier form of this check reduced to `ENVELOPE_BYTES > 0` and was true for every value
+    /// of the cap it claimed to guard, so the widened frame is built out of the parts rather than
+    /// out of the ceiling.
     #[test]
-    fn the_operation_cap_keeps_a_margin_for_a_body_that_gains_a_key() {
+    fn the_operation_cap_keeps_a_margin_for_a_frame_that_gains_a_key() {
         let margin = MAX_OPERATION_CEILING
             .checked_sub(MAX_OPERATION)
             .expect("the cap must sit below its ceiling, not above it");
-        assert_eq!(margin, 12, "960 under a ceiling of 972");
+        assert_eq!(margin, 33, "960 under a ceiling of 993");
 
-        let widened = SIGNED_BODY_BYTES.saturating_add(10);
+        let widened = REQUEST_FRAMING_BYTES.saturating_add(30);
         assert!(
-            MAX_OPERATION + widened + REQUEST_FRAMING_BYTES <= MAX_PAYLOAD,
-            "a body ten bytes wider must still fit at the cap, which is what the margin is for"
+            MAX_OPERATION + widened <= MAX_PAYLOAD,
+            "framing thirty bytes wider must still fit at the cap, which is what the margin is for"
         );
     }
 
@@ -746,7 +739,6 @@ mod tests {
             RESPONSE_FRAMING_BYTES,
             REQUEST_FRAMING_BYTES,
             EVENT_FRAMING_BYTES,
-            SIGNED_BODY_BYTES,
             INNER_BODY_BYTES,
             MAX_SERIES_LEN,
             MAX_LABEL,

@@ -705,7 +705,7 @@ impl SelfCheck {
             "0801",                             // 8: epoch = 1
         );
         const HELLO: &str = concat!(
-            "b81f", // map, 31 keys — past 23, so the header grows its own byte
+            "b81e", // map, 30 keys — past 23, so the header grows its own byte
             "0101", // 1: protocol_major = 1
             "0200", // 2: protocol_minor = 0
             "0303", // 3: session_id = 3
@@ -722,7 +722,6 @@ impl SelfCheck {
             "08190100",             // 8: log_newest_seq = 256, argument becomes two bytes
             "0918ff",               // 9: state_seq = 255, last one-byte argument
             "0af5",                 // 10: time_known = true
-            "0b1841",               // 11: counter = 65
             "0c08",                 // 12: max_sessions = 8
             "0d1820",               // 13: max_channels = 32, over 23 so the head grows
             "0e08",                 // 14: max_clients = 8
@@ -1071,7 +1070,6 @@ pub struct Builder {
     generation: u32,
     session_id: u16,
     req_id: u32,
-    counter: u64,
     label: &'static str,
     epoch: u32,
     report: SelfReport,
@@ -1166,7 +1164,6 @@ impl Builder {
         let client_id: u32 = 7;
         let generation: u32 = 1;
         let session_id: u16 = 3;
-        let counter: u64 = 0x42;
         let label = "kitchen phone";
         let epoch: u32 = 1;
         let report = SelfReport::new();
@@ -1233,7 +1230,7 @@ impl Builder {
             client_ephemeral: &hello_client_ephemeral,
             controller_ephemeral: &hello_controller_ephemeral,
             offer: &Self::hello_offer_body()?,
-            report: &Self::report_body(&report, session_id, counter, client_id, generation)?,
+            report: &Self::report_body(&report, session_id, client_id, generation)?,
         })?;
 
         Ok(Self {
@@ -1245,7 +1242,6 @@ impl Builder {
             generation,
             session_id,
             req_id: 0x11,
-            counter,
             label,
             epoch,
             report,
@@ -1466,19 +1462,17 @@ impl Builder {
         Self::report_body(
             &self.report,
             self.session_id,
-            self.counter,
             self.client_id,
             self.generation,
         )
     }
 
-    /// Key 11 is one below the counter the signed request uses, because it is
-    /// the highest value already *accepted*: publish the two as equal and the
-    /// request beside it is a replay.
+    /// Key 11 is retired (P-012) and absent: the numbers run to 31 over thirty
+    /// keys, and a generator that filled the gap would publish a field nobody
+    /// may send.
     fn report_body(
         r: &SelfReport,
         session_id: u16,
-        counter: u64,
         client_id: u32,
         generation: u32,
     ) -> Result<Vec<u8>> {
@@ -1493,7 +1487,6 @@ impl Builder {
             8 => Cb::U(r.log_newest_seq),
             9 => Cb::U(r.state_seq),
             10 => Cb::Bool(r.time_known),
-            11 => Cb::U(counter.saturating_sub(1)),
             12 => Cb::U(u64::from(r.limits.sessions)),
             13 => Cb::U(u64::from(r.limits.channels)),
             14 => Cb::U(u64::from(r.limits.clients)),
@@ -2723,7 +2716,7 @@ impl Builder {
     fn config_message_entries() -> Result<Vec<(&'static str, Value)>> {
         const WRAPPED: &str = "this is the inner body; on the wire it is sealed (P-231) under the session's controller-to-client key, as sealed.response is";
         const REQUEST: &str = "this is the inner body; on the wire it is sealed (P-231) under the session's client-to-controller key, its nonce the req_id, as sealed.readlog_request is";
-        const OPERATION: &str = "this is the operation body; on the wire it is key 3 of the signed body, which is sealed like every request, as sealed.signed_request is";
+        const OPERATION: &str = "this is the operation body; on the wire it is the inner body of the write, sealed like every request, as sealed.signed_request is";
         let network = || {
             cmap! {
                 1 => Cb::T("cabin".into()),
@@ -2805,7 +2798,7 @@ impl Builder {
     /// one is held (P-106). The keep and clear writes and the empty read have
     /// no readable form because they omit keys the definition lists.
     fn config_section_entries() -> Result<Vec<(&'static str, Value)>> {
-        const WRITE: &str = "this is a section body; on the wire it is key 3 of the SetConfig 0x07 operation, inside a signed body that is sealed like every request";
+        const WRITE: &str = "this is a section body; on the wire it is key 3 of the SetConfig 0x07 operation, which is sealed like every request";
         const READ: &str = "this is a section body; on the wire it is key 3 of Config 0x86, whose body is sealed under the session's controller-to-client key";
         const BOTH: &str = "this is a section body; on the wire it is key 3 of Config 0x86 or of the SetConfig 0x07 operation, the same in both";
         let site = Cb::T("Chalet du Lac-\u{e0}-l'Eau".into());
@@ -2903,7 +2896,7 @@ impl Builder {
     /// at all. The second is the one that catches a decoder defaulting an
     /// absent `at` to 0, which is 1970 on a client's screen (P-093).
     fn time_entries() -> Result<Vec<(&'static str, Value)>> {
-        const OPERATION: &str = "this is the operation body; on the wire it is key 3 of the signed body, which is sealed like every request, as sealed.signed_request is (P-110)";
+        const OPERATION: &str = "this is the operation body; on the wire it is the inner body of the write, sealed like every request, as sealed.signed_request is (P-110)";
         const ACK: &str = "this is the inner body; on the wire it is sealed (P-231) under the session's controller-to-client key, as sealed.response is";
         [
             (
@@ -3175,19 +3168,13 @@ impl Builder {
                 (
                     "body_readable",
                     json!(
-                        "{1:protocol_major=1, 2:protocol_minor=0, 3:session_id=3, 4:fw_controller, 5:fw_comms, 6:capabilities=0xf7, 7:log_oldest_seq=1, 8:log_newest_seq=256, 9:state_seq=255, 10:time_known=true, 11:counter=65, 12:max_sessions=8, 13:max_channels=32, 14:max_clients=8, 15:max_event_queue=16, 16:max_inflight=4, 17:max_cmd_dedup=32, 18:rev=0, 19:topo_digest, 20:max_buses=8, 21:max_devices=24, 22:max_components=160, 23:max_signals=384, 24:max_series_elements=512, 25:max_params=96, 26:max_concerns=48, 27:max_selectors=12, 28:max_history_signals=24, 29:max_topology_depth=4, 30:client_id=7, 31:generation=1}"
+                        "{1:protocol_major=1, 2:protocol_minor=0, 3:session_id=3, 4:fw_controller, 5:fw_comms, 6:capabilities=0xf7, 7:log_oldest_seq=1, 8:log_newest_seq=256, 9:state_seq=255, 10:time_known=true, 12:max_sessions=8, 13:max_channels=32, 14:max_clients=8, 15:max_event_queue=16, 16:max_inflight=4, 17:max_cmd_dedup=32, 18:rev=0, 19:topo_digest, 20:max_buses=8, 21:max_devices=24, 22:max_components=160, 23:max_signals=384, 24:max_series_elements=512, 25:max_params=96, 26:max_concerns=48, 27:max_selectors=12, 28:max_history_signals=24, 29:max_topology_depth=4, 30:client_id=7, 31:generation=1}"
                     ),
                 ),
                 (
                     "capabilities_readable",
                     json!(
                         "bit 0 log readable, 1 config writable, 2 commands accepted, 4 clock settable, 5 counted state of charge, 6 AC metering, 7 a behaviour is in shadow mode; bit 3 firmware update is clear"
-                    ),
-                ),
-                (
-                    "counter_readable",
-                    json!(
-                        "the highest counter already accepted from client_id 7, which is why the signed_request vector's 0x42 is the next value that is not a replay"
                     ),
                 ),
                 (
@@ -3245,11 +3232,6 @@ impl Builder {
         let operation = cbor(&cmap! {
             1 => Cb::U(0x2A), 2 => Cb::U(0x0101), 3 => cmap!{1 => Cb::U(900)},
         })?;
-        let signed = cbor(&cmap! {
-            1 => Cb::U(u64::from(self.client_id)),
-            2 => Cb::U(self.counter),
-            3 => Cb::B(operation.clone()),
-        })?;
         let entries = [
             (
                 "enrol_0x93",
@@ -3286,8 +3268,8 @@ impl Builder {
                     direction: Direction::Request,
                     req_id: COMMAND_REQ_ID,
                     nonce: u64::from(COMMAND_REQ_ID),
-                    inner: signed,
-                    extra: vec![("operation_cbor", json!(hex(&operation)))],
+                    inner: operation,
+                    extra: vec![],
                 },
             ),
             (
@@ -3524,7 +3506,6 @@ impl Builder {
             ("generation", json!(self.generation)),
             ("session_id", json!(self.session_id)),
             ("req_id", json!(self.req_id)),
-            ("counter", json!(self.counter)),
             ("label", json!(self.label)),
             ("epoch", json!(self.epoch)),
             ("suite", json!(SUITE)),
@@ -3859,7 +3840,7 @@ pub fn build() -> Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Builder, Cb, PROTOCOL_MAJOR, SelfReport, Sha256, cbor, hex};
+    use super::{Builder, PROTOCOL_MAJOR, SelfReport, Sha256, hex};
     use sha2::Digest as _;
 
     #[test]
@@ -3994,12 +3975,13 @@ mod tests {
             .expect("valid vector fixture")
             .hello_body()
             .expect("valid vector fixture");
-        // Thirty-one pairs is past twenty-three, so the map header is two
-        // bytes: `b8 1f` and not a single `bN`.
+        // Thirty pairs is past twenty-three, so the map header is two bytes:
+        // `b8 1e` and not a single `bN`. Key 11 is retired, so the thirty run
+        // to 31.
         assert_eq!(
             body.get(..2),
-            Some(&[0xB8, 0x1F][..]),
-            "the report must carry all thirty-one keys"
+            Some(&[0xB8, 0x1E][..]),
+            "the report must carry all thirty keys"
         );
         // Key 31 and its value are the last three bytes — the key itself is two
         // of them, because a map key past 23 stops fitting one. A truncated tail
@@ -4033,20 +4015,6 @@ mod tests {
         assert!(SelfReport::new().limits.channels <= 32);
     }
 
-    /// Publishing key 11 equal to the counter the signed request carries makes
-    /// that request a replay, and a client reading the two together would send
-    /// a value it has already been told was accepted.
-    #[test]
-    fn a_reported_counter_at_the_next_request_makes_that_request_a_replay() {
-        let b = Builder::new().expect("valid vector fixture");
-        let reported = b.counter.saturating_sub(1);
-        assert!(reported < b.counter);
-        assert_eq!(
-            hex(&cbor(&Cb::U(reported)).expect("valid vector fixture")),
-            "1841"
-        );
-    }
-
     /// The `Discover`, the offer and the report announce one version. Two
     /// numbers in two places is a vector set negotiating a downgrade with
     /// itself, and the prologue is what would have caught it on the wire.
@@ -4060,7 +4028,7 @@ mod tests {
         );
         assert_eq!(
             b.hello_body().expect("valid vector fixture").get(..4),
-            Some(&[0xB8, 0x1F, 0x01, major][..])
+            Some(&[0xB8, 0x1E, 0x01, major][..])
         );
         assert_eq!(
             Builder::hello_offer_body()

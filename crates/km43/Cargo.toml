@@ -47,7 +47,7 @@ zeroize.workspace = true
 defmt = { workspace = true, optional = true }
 
 [features]
-# Derives `defmt::Format` on the identifier, counter, enum, verdict and error
+# Derives `defmt::Format` on the identifier, enum, verdict and error
 # types. Never on a key or a tag: those have no `Debug` for the same reason.
 defmt = ["dep:defmt"]
 # Published test inputs as static JSON, with no parser or allocator dependency.

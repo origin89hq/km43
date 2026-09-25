@@ -466,11 +466,7 @@ mod tests {
 
     #[test]
     fn p_142_a_bare_error_carrying_a_macd_code_is_discarded_rather_than_read() {
-        for code in [
-            ErrorCode::UnknownSection,
-            ErrorCode::BusyRetry,
-            ErrorCode::CounterNotFresh,
-        ] {
+        for code in [ErrorCode::UnknownSection, ErrorCode::BusyRetry] {
             assert!(
                 code.needs_a_seal(),
                 "{code:?} is marked MAC'd in the registry"
