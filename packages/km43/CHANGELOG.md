@@ -1,5 +1,11 @@
 # @origin89/km43
 
+## 0.8.1
+
+### Patch Changes
+
+- 9af5951: Doc comments only. A member the registry names without a meaning, such as `Firmware.Accepted`, now shows that name as code. `Suite.X25519ChachapolySha256` and `LinkErrorCode.BeforeLinkUp` quote the identifiers they mention, and `Quality.Estimated` spells out *state of charge*. No value, name or type changed.
+
 ## 0.8.0
 
 ### Minor Changes
