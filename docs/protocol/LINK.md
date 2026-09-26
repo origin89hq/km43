@@ -1546,7 +1546,7 @@ on sight rather than merely unhelpful.
 |---|---|---|
 | 256 | Unknown link-local opcode, or one sent from the wrong side | no |
 | 257 | Link-local type on a client transport | **yes** |
-| 258 | Client frame before LinkUp completed | **yes** |
+| 258 | Client frame before `LinkUp` completed | **yes** |
 | 259 | Unknown connection handle | **yes** |
 | 260 | Connection table full | no — the transport is closed with a reason instead |
 | 261 | Link protocol major mismatch | no |

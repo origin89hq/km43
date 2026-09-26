@@ -467,7 +467,7 @@ How far a reading can be trusted, in one word.
 |---|---|---|
 | 1 | measured | Read directly from an instrument |
 | 2 | counted | Integrated or accumulated, and trustworthy as a total |
-| 3 | estimated | Derived from something else, e.g. SoC from terminal voltage |
+| 3 | estimated | Derived from something else, e.g. state of charge from terminal voltage |
 | 4 | stale | Was measured, is no longer current: older than its channel's maximum age, or the same reading for so long that the instrument is presumed hung |
 | 5 | absent | No reading. **The value key is omitted entirely** |
 
@@ -1025,7 +1025,7 @@ unknown suite is error 19 before anything else is read.
 
 | Value | Name | Meaning |
 |---|---|---|
-| 1 | x25519_chachapoly_sha256 | Noise_XXpsk0_25519_ChaChaPoly_SHA256 to pair, Noise_IK_25519_ChaChaPoly_SHA256 for a session |
+| 1 | x25519_chachapoly_sha256 | `Noise_XXpsk0_25519_ChaChaPoly_SHA256` to pair, `Noise_IK_25519_ChaChaPoly_SHA256` for a session |
 
 ## Roles — `u8`
 
@@ -1091,7 +1091,7 @@ request failed* retries against the wrong thing.
 |---|---|---|
 | 256 | Unknown link-local opcode, or one sent from the wrong side | no |
 | 257 | Link-local type on a client transport | **yes** |
-| 258 | Client frame before LinkUp completed | **yes** |
+| 258 | Client frame before `LinkUp` completed | **yes** |
 | 259 | Unknown connection handle | **yes** |
 | 260 | Connection table full | no |
 | 261 | Link protocol major mismatch | no |

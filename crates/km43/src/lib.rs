@@ -17,6 +17,7 @@
 
 #![no_std]
 #![deny(unsafe_code)]
+#![warn(missing_docs)]
 
 macro_rules! const_assert {
     ($($tt:tt)*) => {
