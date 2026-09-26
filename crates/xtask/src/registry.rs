@@ -46,7 +46,7 @@ impl Auth {
             }
             Self::Sealed => {
                 "Sealed under the session's keys with ChaCha20-Poly1305 (P-231). Not a write, \
-                 so not on the signed list (P-052)."
+                 so not on the signed list (P-053)."
             }
             Self::Signed => {
                 "Sealed like every request, with the operation as its inner body. Every write \

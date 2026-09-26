@@ -77,43 +77,43 @@ export enum MessageType {
   /**
    * The `Subscribe` request. Auth `sealed`. Sealed under the session's keys
    * with ChaCha20-Poly1305 (P-231). Not a write, so not on the signed list
-   * (P-052). Answered by {@link MessageType.SubscribeResponse}. Since 1.0.
+   * (P-053). Answered by {@link MessageType.SubscribeResponse}. Since 1.0.
    */
   Subscribe = 0x3,
   /**
    * The answer to {@link MessageType.Subscribe}. Auth `sealed`. Sealed under
    * the session's keys with ChaCha20-Poly1305 (P-231). Not a write, so not on
-   * the signed list (P-052). Since 1.0.
+   * the signed list (P-053). Since 1.0.
    */
   SubscribeResponse = 0x83,
   /**
    * The `Event` message. Auth `sealed`. Sealed under the session's keys with
-   * ChaCha20-Poly1305 (P-231). Not a write, so not on the signed list (P-052).
+   * ChaCha20-Poly1305 (P-231). Not a write, so not on the signed list (P-053).
    * Since 1.0.
    */
   EventResponse = 0x4,
   /**
    * The `ReadLog` request. Auth `sealed`. Sealed under the session's keys with
-   * ChaCha20-Poly1305 (P-231). Not a write, so not on the signed list (P-052).
+   * ChaCha20-Poly1305 (P-231). Not a write, so not on the signed list (P-053).
    * Answered by {@link MessageType.ReadLogResponse}. Since 1.0.
    */
   ReadLog = 0x5,
   /**
    * The answer to {@link MessageType.ReadLog}. Auth `sealed`. Sealed under the
    * session's keys with ChaCha20-Poly1305 (P-231). Not a write, so not on the
-   * signed list (P-052). Since 1.0.
+   * signed list (P-053). Since 1.0.
    */
   ReadLogResponse = 0x85,
   /**
    * The `GetConfig` request. Auth `sealed`. Sealed under the session's keys
    * with ChaCha20-Poly1305 (P-231). Not a write, so not on the signed list
-   * (P-052). Answered by {@link MessageType.GetConfigResponse}. Since 1.0.
+   * (P-053). Answered by {@link MessageType.GetConfigResponse}. Since 1.0.
    */
   GetConfig = 0x6,
   /**
    * The answer to {@link MessageType.GetConfig}. Auth `sealed`. Sealed under
    * the session's keys with ChaCha20-Poly1305 (P-231). Not a write, so not on
-   * the signed list (P-052). Since 1.0.
+   * the signed list (P-053). Since 1.0.
    */
   GetConfigResponse = 0x86,
   /**
@@ -125,7 +125,7 @@ export enum MessageType {
   /**
    * The answer to {@link MessageType.SetConfig}. Auth `sealed`. Sealed under
    * the session's keys with ChaCha20-Poly1305 (P-231). Not a write, so not on
-   * the signed list (P-052). Since 1.0.
+   * the signed list (P-053). Since 1.0.
    */
   SetConfigResponse = 0x87,
   /**
@@ -139,7 +139,7 @@ export enum MessageType {
   /**
    * The answer to {@link MessageType.Command}. Auth `sealed`. Sealed under the
    * session's keys with ChaCha20-Poly1305 (P-231). Not a write, so not on the
-   * signed list (P-052). Since 1.0.
+   * signed list (P-053). Since 1.0.
    *
    * Reserved: allocated, and not specified yet.
    */
@@ -155,7 +155,7 @@ export enum MessageType {
   /**
    * The answer to {@link MessageType.Firmware}. Auth `sealed`. Sealed under the
    * session's keys with ChaCha20-Poly1305 (P-231). Not a write, so not on the
-   * signed list (P-052). Since 1.0.
+   * signed list (P-053). Since 1.0.
    *
    * Reserved: allocated, and not specified yet.
    */
@@ -169,7 +169,7 @@ export enum MessageType {
   /**
    * The answer to {@link MessageType.Time}. Auth `sealed`. Sealed under the
    * session's keys with ChaCha20-Poly1305 (P-231). Not a write, so not on the
-   * signed list (P-052). Since 1.0.
+   * signed list (P-053). Since 1.0.
    */
   TimeResponse = 0x8a,
   /**
@@ -186,55 +186,55 @@ export enum MessageType {
   PairResponse = 0x8b,
   /**
    * The `Goodbye` request. Auth `sealed`. Sealed under the session's keys with
-   * ChaCha20-Poly1305 (P-231). Not a write, so not on the signed list (P-052).
+   * ChaCha20-Poly1305 (P-231). Not a write, so not on the signed list (P-053).
    * Answered by {@link MessageType.GoodbyeResponse}. Since 1.0.
    */
   Goodbye = 0xc,
   /**
    * The answer to {@link MessageType.Goodbye}. Auth `sealed`. Sealed under the
    * session's keys with ChaCha20-Poly1305 (P-231). Not a write, so not on the
-   * signed list (P-052). Since 1.0.
+   * signed list (P-053). Since 1.0.
    */
   GoodbyeResponse = 0x8c,
   /**
    * The `Inventory` request. Auth `sealed`. Sealed under the session's keys
    * with ChaCha20-Poly1305 (P-231). Not a write, so not on the signed list
-   * (P-052). Answered by {@link MessageType.InventoryResponse}. Since 1.0.
+   * (P-053). Answered by {@link MessageType.InventoryResponse}. Since 1.0.
    */
   Inventory = 0xd,
   /**
    * The answer to {@link MessageType.Inventory}. Auth `sealed`. Sealed under
    * the session's keys with ChaCha20-Poly1305 (P-231). Not a write, so not on
-   * the signed list (P-052). Since 1.0.
+   * the signed list (P-053). Since 1.0.
    */
   InventoryResponse = 0x8d,
   /**
    * The `Readings` request. Auth `sealed`. Sealed under the session's keys with
-   * ChaCha20-Poly1305 (P-231). Not a write, so not on the signed list (P-052).
+   * ChaCha20-Poly1305 (P-231). Not a write, so not on the signed list (P-053).
    * Answered by {@link MessageType.ReadingsResponse}. Since 1.0.
    */
   Readings = 0xe,
   /**
    * The answer to {@link MessageType.Readings}. Auth `sealed`. Sealed under the
    * session's keys with ChaCha20-Poly1305 (P-231). Not a write, so not on the
-   * signed list (P-052). Since 1.0.
+   * signed list (P-053). Since 1.0.
    */
   ReadingsResponse = 0x8e,
   /**
    * The `Concerns` request. Auth `sealed`. Sealed under the session's keys with
-   * ChaCha20-Poly1305 (P-231). Not a write, so not on the signed list (P-052).
+   * ChaCha20-Poly1305 (P-231). Not a write, so not on the signed list (P-053).
    * Answered by {@link MessageType.ConcernsResponse}. Since 1.0.
    */
   Concerns = 0xf,
   /**
    * The answer to {@link MessageType.Concerns}. Auth `sealed`. Sealed under the
    * session's keys with ChaCha20-Poly1305 (P-231). Not a write, so not on the
-   * signed list (P-052). Since 1.0.
+   * signed list (P-053). Since 1.0.
    */
   ConcernsResponse = 0x8f,
   /**
    * The `History` request. Auth `sealed`. Sealed under the session's keys with
-   * ChaCha20-Poly1305 (P-231). Not a write, so not on the signed list (P-052).
+   * ChaCha20-Poly1305 (P-231). Not a write, so not on the signed list (P-053).
    * Answered by {@link MessageType.HistoryResponse}. Since 1.0.
    *
    * Reserved: allocated, and not specified yet.
@@ -243,33 +243,33 @@ export enum MessageType {
   /**
    * The answer to {@link MessageType.History}. Auth `sealed`. Sealed under the
    * session's keys with ChaCha20-Poly1305 (P-231). Not a write, so not on the
-   * signed list (P-052). Since 1.0.
+   * signed list (P-053). Since 1.0.
    *
    * Reserved: allocated, and not specified yet.
    */
   HistoryResponse = 0x90,
   /**
    * The `WifiScan` request. Auth `sealed`. Sealed under the session's keys with
-   * ChaCha20-Poly1305 (P-231). Not a write, so not on the signed list (P-052).
+   * ChaCha20-Poly1305 (P-231). Not a write, so not on the signed list (P-053).
    * Answered by {@link MessageType.WifiScanResponse}. Since 1.0.
    */
   WifiScan = 0x11,
   /**
    * The answer to {@link MessageType.WifiScan}. Auth `sealed`. Sealed under the
    * session's keys with ChaCha20-Poly1305 (P-231). Not a write, so not on the
-   * signed list (P-052). Since 1.0.
+   * signed list (P-053). Since 1.0.
    */
   WifiScanResponse = 0x91,
   /**
    * The `WifiStatus` request. Auth `sealed`. Sealed under the session's keys
    * with ChaCha20-Poly1305 (P-231). Not a write, so not on the signed list
-   * (P-052). Answered by {@link MessageType.WifiStatusResponse}. Since 1.0.
+   * (P-053). Answered by {@link MessageType.WifiStatusResponse}. Since 1.0.
    */
   WifiStatus = 0x12,
   /**
    * The answer to {@link MessageType.WifiStatus}. Auth `sealed`. Sealed under
    * the session's keys with ChaCha20-Poly1305 (P-231). Not a write, so not on
-   * the signed list (P-052). Since 1.0.
+   * the signed list (P-053). Since 1.0.
    */
   WifiStatusResponse = 0x92,
   /**
@@ -286,14 +286,14 @@ export enum MessageType {
   EnrolResponse = 0x93,
   /**
    * The `Vouch` request. Auth `sealed`. Sealed under the session's keys with
-   * ChaCha20-Poly1305 (P-231). Not a write, so not on the signed list (P-052).
+   * ChaCha20-Poly1305 (P-231). Not a write, so not on the signed list (P-053).
    * Answered by {@link MessageType.VouchResponse}. Since 1.0.
    */
   Vouch = 0x14,
   /**
    * The answer to {@link MessageType.Vouch}. Auth `sealed`. Sealed under the
    * session's keys with ChaCha20-Poly1305 (P-231). Not a write, so not on the
-   * signed list (P-052). Since 1.0.
+   * signed list (P-053). Since 1.0.
    */
   VouchResponse = 0x94,
   /**
@@ -305,7 +305,7 @@ export enum MessageType {
   /**
    * The answer to {@link MessageType.Invite}. Auth `sealed`. Sealed under the
    * session's keys with ChaCha20-Poly1305 (P-231). Not a write, so not on the
-   * signed list (P-052). Since 1.0.
+   * signed list (P-053). Since 1.0.
    */
   InviteResponse = 0x95,
   /**
@@ -317,7 +317,7 @@ export enum MessageType {
   /**
    * The answer to {@link MessageType.Approve}. Auth `sealed`. Sealed under the
    * session's keys with ChaCha20-Poly1305 (P-231). Not a write, so not on the
-   * signed list (P-052). Since 1.0.
+   * signed list (P-053). Since 1.0.
    */
   ApproveResponse = 0x96,
   /**
@@ -329,19 +329,19 @@ export enum MessageType {
   /**
    * The answer to {@link MessageType.Remove}. Auth `sealed`. Sealed under the
    * session's keys with ChaCha20-Poly1305 (P-231). Not a write, so not on the
-   * signed list (P-052). Since 1.0.
+   * signed list (P-053). Since 1.0.
    */
   RemoveResponse = 0x97,
   /**
    * The `Clients` request. Auth `sealed`. Sealed under the session's keys with
-   * ChaCha20-Poly1305 (P-231). Not a write, so not on the signed list (P-052).
+   * ChaCha20-Poly1305 (P-231). Not a write, so not on the signed list (P-053).
    * Answered by {@link MessageType.ClientsResponse}. Since 1.0.
    */
   Clients = 0x18,
   /**
    * The answer to {@link MessageType.Clients}. Auth `sealed`. Sealed under the
    * session's keys with ChaCha20-Poly1305 (P-231). Not a write, so not on the
-   * signed list (P-052). Since 1.0.
+   * signed list (P-053). Since 1.0.
    */
   ClientsResponse = 0x98,
   /**
