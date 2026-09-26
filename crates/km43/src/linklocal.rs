@@ -207,40 +207,67 @@ const fn is_ack(kind: LinkMessageType) -> bool {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[non_exhaustive]
 pub enum LinkField {
+    /// `LinkUp`'s `protocol_major`.
     ProtocolMajor,
+    /// `LinkUp`'s `protocol_minor`.
     ProtocolMinor,
+    /// `LinkUp`'s `role`: which firmware is speaking.
     Role,
+    /// `LinkUp`'s `fw`, the sender's own firmware version (L-034).
     Fw,
+    /// `LinkUp`'s `boot_id`, redrawn on every boot.
     BootId,
+    /// `LinkUp`'s `hw`, the board name and revision (L-034).
     Hw,
+    /// `LinkUp`'s `net_version`: the version of the last `NetConfig` the comms
+    /// processor stored (L-132).
     NetVersion,
     /// The controller's `device_id`, which the comms processor advertises.
     DeviceId,
     /// A connection handle. Never 0 on a `ClientConnected`; 0 means *all* on a
     /// `CloseConnection`.
     Conn,
+    /// `Heartbeat`'s `uptime_s`, since the sender's boot.
     Uptime,
+    /// `Heartbeat`'s `conns`, the connection rows the sender believes are live.
     Conns,
+    /// `ClientConnected`'s `transport`.
     Transport,
+    /// `ClientConnected`'s `peer`: a BLE address, an IP, a cloud account.
     Peer,
+    /// A `reason`, in whichever body carries one.
     Reason,
+    /// An acknowledgement's `outcome`.
     Outcome,
     /// How many a `CloseReport` actually closed. Never defaulted.
     Closed,
+    /// An `op`: what a `NetConfig` or a `CommsRelease` asks for.
     Op,
+    /// `NetConfig`'s `ssid`.
     Ssid,
+    /// `NetConfig`'s `psk`.
     Psk,
+    /// `NetConfig`'s `country`, ISO 3166-1 alpha-2.
     Country,
+    /// `NetConfig`'s `hostname`.
     Hostname,
+    /// `TimeOffer`'s `unix_ms`.
     UnixMs,
+    /// `TimeOffer`'s `source`.
     Source,
+    /// `TimeOffer`'s `accuracy_ms`, the comms processor's own estimate.
     AccuracyMs,
+    /// `TimeOffer`'s `server`, diagnostic only.
     Server,
     /// A release's `version` text. Not [`Self::NetVersion`]: that one is a
     /// counter the two ends compare, this one is what a firmware calls itself.
     ReleaseVersion,
+    /// `CommsRelease`'s `image_len`.
     ImageLen,
+    /// `CommsRelease`'s `digest`, SHA-256 over the whole image.
     Digest,
+    /// `CommsReleaseAck`'s `bytes_have`, the resume point after an
+    /// interruption.
     BytesHave,
     /// Revision of the controller's pairing-window report.
     PairingRevision,
