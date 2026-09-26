@@ -1129,7 +1129,9 @@ pub enum QualityError {
     AgeWithoutStaleness(Validity),
     /// The two halves contradict each other.
     Disagree {
+        /// What the reading said about its number.
         validity: Validity,
+        /// Where it said the number came from.
         provenance: Provenance,
     },
     /// A validity this version does not allocate.
@@ -1141,7 +1143,12 @@ pub enum QualityError {
     /// Key 3 holds a different number of integers than key 2 has elements
     /// carrying values. Off by one and every element after the gap reads the
     /// next one's number.
-    ValueCount { want: usize, got: usize },
+    ValueCount {
+        /// How many elements carry values.
+        want: usize,
+        /// How many integers key 3 held.
+        got: usize,
+    },
 }
 
 impl QualityError {

@@ -59,7 +59,7 @@ impl Bindings {
 
     fn targets(&self) -> Result<Vec<(&'static str, String)>> {
         Ok(vec![
-            ("crates/km43/src/generated.rs", self.rust()),
+            ("crates/km43/src/generated.rs", self.rust()?),
             ("packages/km43/src/generated.ts", self.typescript()?),
         ])
     }
@@ -107,7 +107,7 @@ impl Bindings {
         }
     }
 
-    fn rust(&self) -> String {
+    fn rust(&self) -> Result<String> {
         let mut o = String::new();
         for line in HEADER.lines() {
             let _ = writeln!(o, "// {line}");
@@ -116,136 +116,329 @@ impl Bindings {
 
         self.rust_transport(&mut o);
 
-        closed_enum(
-            &mut o,
-            "MessageType",
-            "u8",
-            self.registry
-                .messages
-                .iter()
-                .filter(|m| !m.status.is_gone())
-                .flat_map(|m| {
-                    [
-                        m.request.map(|r| (variant(&m.name), r.0)),
-                        m.response
-                            .map(|r| (format!("{}Response", variant(&m.name)), r.0)),
-                    ]
-                })
-                .flatten(),
-        );
-
-        closed_enum(
-            &mut o,
-            "LinkMessageType",
-            "u8",
-            self.registry.link_messages.iter().flat_map(|m| {
-                [
-                    (variant(&m.name), m.request.0),
-                    (format!("{}Ack", variant(&m.name)), m.response.0),
-                ]
-            }),
-        );
+        closed_enum(&mut o, "u8", &self.message_space()?);
+        closed_enum(&mut o, "u8", &self.link_message_space());
         o.push_str(&self.link_directions());
-
-        closed_enum(
-            &mut o,
-            "ErrorCode",
-            "u16",
-            self.registry
-                .errors
-                .iter()
-                .filter(|e| e.status == Status::Live)
-                .map(|e| (variant(&e.meaning), e.code)),
-        );
-
-        for (space, entries) in self.registry.outcomes.iter().chain(&self.registry.enums) {
-            closed_enum(
-                &mut o,
-                &variant(space),
-                "u8",
-                entries
-                    .iter()
-                    .filter(|e| !e.status.is_gone())
-                    .map(|e| (variant(&e.name), u16::from(e.value))),
-            );
+        closed_enum(&mut o, "u16", &self.error_space()?);
+        for space in self.enum_spaces()? {
+            closed_enum(&mut o, "u8", &space);
         }
-
-        for (space, entries) in &self.registry.codes {
-            closed_enum(
-                &mut o,
-                &variant(space),
-                "u16",
-                entries
-                    .iter()
-                    .filter(|e| e.status.is_some_and(|s| !s.is_gone()))
-                    .filter_map(|e| e.number.map(|n| (variant(&e.name), n))),
-            );
+        for space in self.code_spaces()? {
+            closed_enum(&mut o, "u16", &space);
         }
-
-        for (space, entries) in self
-            .registry
-            .link_outcomes
-            .iter()
-            .chain(&self.registry.link_enums)
-        {
-            closed_enum(
-                &mut o,
-                &variant(space),
-                "u8",
-                entries
-                    .iter()
-                    .filter(|e| !e.status.is_gone())
-                    .map(|e| (variant(&e.name), u16::from(e.value))),
-            );
+        for space in self.link_spaces() {
+            closed_enum(&mut o, "u8", &space);
         }
 
         o.push_str(&self.rust_error_sealed());
         o.push_str(&self.rust_event_class());
-        o.push_str(&self.rust_link_and_capability());
+        o.push_str(&self.rust_link_and_capability()?);
 
-        o.push_str(&self.rust_open_sets());
-        o
+        o.push_str(&self.rust_open_sets()?);
+        Ok(o)
     }
 
-    /// The two open spaces and the unit table. Split out for the reason the
-    /// lint gives: `rust` was over a hundred lines and every one of these is a
-    /// self-contained emission.
-    fn rust_open_sets(&self) -> String {
-        let mut o = String::new();
-        open_newtype(
-            &mut o,
-            "MetricKind",
-            self.registry
+    /// Every message's request and response constants.
+    fn message_space(&self) -> Result<Space> {
+        Ok(Space {
+            name: "MessageType".to_owned(),
+            doc: self.prose.summary("## Message types")?,
+            members: self
+                .registry
+                .messages
+                .iter()
+                .filter(|m| !m.status.is_gone())
+                .flat_map(message_members)
+                .flatten()
+                .collect(),
+        })
+    }
+
+    /// `Error 0xFF`'s codes, each saying whether a receiver may accept it bare.
+    fn error_space(&self) -> Result<Space> {
+        Ok(Space {
+            name: "ErrorCode".to_owned(),
+            doc: self.prose.summary("## Error codes")?,
+            members: self
+                .registry
+                .errors
+                .iter()
+                .filter(|e| e.status == Status::Live)
+                .map(|e| Member {
+                    name: variant(&e.meaning),
+                    number: e.code,
+                    doc: error_doc(&e.meaning, e.sealed),
+                })
+                .collect(),
+        })
+    }
+
+    /// The closed `u8` spaces a client sees: every outcome, then every enum.
+    fn enum_spaces(&self) -> Result<Vec<Space>> {
+        self.registry
+            .outcomes
+            .iter()
+            .chain(&self.registry.enums)
+            .map(|(space, entries)| {
+                Ok(Space {
+                    name: variant(space),
+                    doc: self.prose.summary(&heading_for(space))?,
+                    members: outcome_members(entries),
+                })
+            })
+            .collect()
+    }
+
+    /// The closed `u16` spaces: config sections, command kinds and the rest.
+    fn code_spaces(&self) -> Result<Vec<Space>> {
+        self.registry
+            .codes
+            .iter()
+            .map(|(space, entries)| {
+                Ok(Space {
+                    name: variant(space),
+                    doc: self.prose.summary(&heading_for(space))?,
+                    members: entries
+                        .iter()
+                        .filter(|e| e.status.is_some_and(|s| !s.is_gone()))
+                        .filter_map(|e| {
+                            e.number.map(|n| Member {
+                                name: variant(&e.name),
+                                number: n,
+                                doc: with_caveat(&named(&e.name), e.status),
+                            })
+                        })
+                        .collect(),
+                })
+            })
+            .collect()
+    }
+
+    /// The UART's opcodes. No REGISTRY.md section describes them, because a
+    /// client never sees one; the words come from the same rows LINK.md's table
+    /// is checked against.
+    fn link_message_space(&self) -> Space {
+        let members = self
+            .registry
+            .link_messages
+            .iter()
+            .flat_map(|m| {
+                let name = variant(&m.name);
+                // The direction column says who starts the exchange, so the
+                // acknowledgement travels the other way (`linklocal::permitted`).
+                let (request, ack) = match m.direction {
+                    crate::registry::LinkDirection::Either => (
+                        "Either side may send it.",
+                        "Sent back by whichever side received the request.",
+                    ),
+                    crate::registry::LinkDirection::CommsToController => (
+                        "Only the comms processor sends it; the controller's is refused (L-001).",
+                        "Only the controller sends it, in answer; the comms processor's is \
+                         refused (L-001).",
+                    ),
+                    crate::registry::LinkDirection::ControllerToComms => (
+                        "Only the controller sends it; the comms processor's is refused (L-001).",
+                        "Only the comms processor sends it, in answer; the controller's is \
+                         refused (L-001).",
+                    ),
+                };
+                [
+                    Member {
+                        name: name.clone(),
+                        number: m.request.0,
+                        doc: format!(
+                            "The `{}` request. {request} Answered by \
+                             {{@link LinkMessageType.{name}Ack}}.",
+                            m.name
+                        ),
+                    },
+                    Member {
+                        name: format!("{name}Ack"),
+                        number: m.response.0,
+                        doc: format!("The answer to {{@link LinkMessageType.{name}}}. {ack}"),
+                    },
+                ]
+            })
+            .collect();
+        Space {
+            name: "LinkMessageType".to_owned(),
+            doc: format!(
+                "A message on the UART between the controller and its comms processor, \
+                 specified in [LINK.md]({}docs/protocol/LINK.md). A link-local opcode \
+                 arriving on a client transport is a protocol error.",
+                RegistryDoc::REPOSITORY
+            ),
+            members,
+        }
+    }
+
+    /// The outcome and enum spaces only the UART carries, documented from their
+    /// rows for the reason [`Self::link_message_space`] is.
+    fn link_spaces(&self) -> Vec<Space> {
+        let outcomes = self.registry.link_outcomes.iter().map(|(space, entries)| {
+            (
+                format!("What the link-local `{}` request answered.", variant(space)),
+                space,
+                entries,
+            )
+        });
+        let enums = self.registry.link_enums.iter().map(|(space, entries)| {
+            (
+                format!("A link-local {} value.", space.replace('_', " ")),
+                space,
+                entries,
+            )
+        });
+        outcomes
+            .chain(enums)
+            .map(|(what, space, entries)| Space {
+                name: variant(space),
+                doc: format!(
+                    "{what} Allocated in `protocol.toml`, specified in \
+                     [LINK.md]({}docs/protocol/LINK.md), and never on a client transport.",
+                    RegistryDoc::REPOSITORY
+                ),
+                members: outcome_members(entries),
+            })
+            .collect()
+    }
+
+    /// The link-local codes, each saying whether a client can ever see it.
+    fn link_error_space(&self) -> Result<Space> {
+        Ok(Space {
+            name: "LinkErrorCode".to_owned(),
+            doc: self.prose.summary("## Link-local error codes")?,
+            members: self
+                .registry
+                .link_errors
+                .iter()
+                .filter(|e| e.status == Status::Live)
+                .map(|e| Member {
+                    name: variant(&e.name),
+                    number: e.code,
+                    doc: format!(
+                        "{} {}",
+                        sentence(&e.meaning),
+                        if e.reaches_client {
+                            "It reaches the client whose frame raised it (L-180)."
+                        } else {
+                            "It never appears in a client-facing frame (L-180)."
+                        }
+                    ),
+                })
+                .collect(),
+        })
+    }
+
+    /// The per-client mask's bits. The number is the bit, not the mask.
+    fn capability_space(&self) -> Result<Space> {
+        Ok(Space {
+            name: "ClientCapability".to_owned(),
+            doc: self.prose.summary("## Client capability mask")?,
+            members: self
+                .registry
+                .client_capability
+                .iter()
+                .filter(|c| c.status == Some(Status::Live))
+                .filter_map(|c| {
+                    Some(Member {
+                        name: screaming(c.name.as_ref()?),
+                        number: u16::from(c.bit?),
+                        doc: format!("The client may {}.", c.may.trim_end_matches('.')),
+                    })
+                })
+                .collect(),
+        })
+    }
+
+    fn metric_space(&self) -> Result<Space> {
+        Ok(Space {
+            name: "MetricKind".to_owned(),
+            doc: open(&self.prose.summary("## Metric kinds")?),
+            members: self
+                .registry
                 .metrics
                 .iter()
                 .filter(|m| !m.status.is_gone())
-                .map(|m| (m.name.clone(), m.kind)),
-            self.is_open("metric_kind"),
-        );
-        open_newtype(
-            &mut o,
-            "EventKind",
-            self.registry
+                .map(|m| Member {
+                    name: screaming(&m.name),
+                    number: m.kind,
+                    doc: with_caveat(&metric_doc(&m.name, &m.unit, m.scale), Some(m.status)),
+                })
+                .collect(),
+        })
+    }
+
+    fn event_space(&self) -> Result<Space> {
+        Ok(Space {
+            name: "EventKind".to_owned(),
+            doc: open(&self.prose.summary("## Event kinds")?),
+            members: self
+                .registry
                 .events
                 .iter()
                 .filter(|e| !e.status.is_gone())
-                .map(|e| (e.name.clone(), e.kind)),
-            self.is_open("event_kind"),
-        );
+                .map(|e| Member {
+                    name: screaming(&e.name),
+                    number: e.kind,
+                    doc: with_caveat(
+                        &format!(
+                            "{} {}",
+                            sentence(&capital(&e.name)),
+                            match e.class {
+                                EventClass::A =>
+                                    "Class A: never dropped, not from the log and \
+                                                  not from a queue.",
+                                EventClass::B =>
+                                    "Class B: dropped first under pressure, and \
+                                                  every drop is counted.",
+                            }
+                        ),
+                        Some(e.status),
+                    ),
+                })
+                .collect(),
+        })
+    }
 
-        // Every other open space, by being in the table that means open. The two above
-        // are named literals because `metrics` and `events` are top-level tables with
-        // shapes of their own — a metric carries a unit and a scale, an event carries a
-        // class — and neither fits the plain number-and-name row these have.
-        for (space, rows) in &self.registry.open_registries {
-            open_newtype(
-                &mut o,
-                &variant(space),
-                rows.iter()
-                    .filter(|r| r.status.is_some_and(|s| !s.is_gone()))
-                    .filter_map(|r| r.number.map(|n| (r.name.clone(), n))),
-                true,
-            );
+    /// Every other open space, by being in the table that means open. Metrics
+    /// and events have builders of their own because `metrics` and `events` are
+    /// top-level tables with shapes of their own — a metric carries a unit and a
+    /// scale, an event carries a class — and neither fits the plain
+    /// number-and-name row these have.
+    fn open_registry_spaces(&self) -> Result<Vec<Space>> {
+        self.registry
+            .open_registries
+            .iter()
+            .map(|(space, rows)| {
+                Ok(Space {
+                    name: variant(space),
+                    doc: open(&self.prose.summary(&heading_for(space))?),
+                    members: rows
+                        .iter()
+                        .filter(|r| r.status.is_some_and(|s| !s.is_gone()))
+                        .filter_map(|r| {
+                            r.number.map(|n| Member {
+                                name: screaming(&r.name),
+                                number: n,
+                                doc: with_caveat(&named(&r.name), r.status),
+                            })
+                        })
+                        .collect(),
+                })
+            })
+            .collect()
+    }
+
+    /// The open spaces and the unit table. Split out for the reason the
+    /// lint gives: `rust` was over a hundred lines and every one of these is a
+    /// self-contained emission.
+    fn rust_open_sets(&self) -> Result<String> {
+        let mut o = String::new();
+        open_newtype(&mut o, &self.metric_space()?, self.is_open("metric_kind"));
+        open_newtype(&mut o, &self.event_space()?, self.is_open("event_kind"));
+        for space in self.open_registry_spaces()? {
+            open_newtype(&mut o, &space, true);
         }
 
         o.push_str(&self.rust_enum_space_members());
@@ -260,9 +453,24 @@ impl Bindings {
         for m in metrics {
             let _ = writeln!(o, "    ({:#06x}, \"{}\", {}),", m.kind, m.unit, m.scale);
         }
-        o.push_str("];\n\nimpl MetricKind {\n    #[must_use]\n    pub fn unit_and_scale(self) -> Option<(&'static str, i8)> {\n        METRIC_UNITS\n            .binary_search_by_key(&self.0, |&(k, _, _)| k)\n            .ok()\n            .and_then(|i| METRIC_UNITS.get(i))\n            .map(|&(_, u, s)| (u, s))\n    }\n}\n");
+        o.push_str(
+            "];\n\n\
+             impl MetricKind {\n    \
+                 /// The unit and scale this kind is read in, or `None` for a kind this\n    \
+                 /// build has never heard of. Not a guess: a reading scaled by the wrong\n    \
+                 /// power of ten looks like a real one.\n    \
+                 #[must_use]\n    \
+                 pub fn unit_and_scale(self) -> Option<(&'static str, i8)> {\n        \
+                     METRIC_UNITS\n            \
+                         .binary_search_by_key(&self.0, |&(k, _, _)| k)\n            \
+                         .ok()\n            \
+                         .and_then(|i| METRIC_UNITS.get(i))\n            \
+                         .map(|&(_, u, s)| (u, s))\n    \
+                 }\n\
+             }\n",
+        );
         o.push_str(&self.rust_dataset());
-        o
+        Ok(o)
     }
 
     /// The public equipment dataset's word for a reading, as a table a lookup
@@ -281,12 +489,18 @@ impl Bindings {
              #[derive(Debug, Clone, Copy, PartialEq, Eq)]\n\
              #[cfg_attr(feature = \"defmt\", derive(defmt::Format))]\n\
              pub struct DatasetMetric {\n    \
+                 /// The metric kind the reading is.\n    \
                  pub kind: MetricKind,\n    \
+                 /// The signal domain, matched exactly.\n    \
                  pub domain: SignalDomain,\n    \
+                 /// The component role, or `None` to match any role.\n    \
                  pub role: Option<ComponentRole>,\n    \
+                 /// The measurement point, or `None` to match any point.\n    \
                  pub point: Option<MeasurementPoint>,\n    \
+                 /// The dataset's word, such as `pv-voltage`.\n    \
                  pub name: &'static str,\n\
              }\n\n\
+             /// Every dataset word a metric carries, most specific row first.\n\
              pub const DATASET_METRICS: &[DatasetMetric] = &[\n",
         );
         for c in &self.registry.crosswalk.carried {
@@ -512,18 +726,9 @@ impl Bindings {
 
     /// The two spaces a client needs to act on but must not confuse with the
     /// client-facing ones: link-local errors, and the per-client mask.
-    fn rust_link_and_capability(&self) -> String {
+    fn rust_link_and_capability(&self) -> Result<String> {
         let mut o = String::new();
-        closed_enum(
-            &mut o,
-            "LinkErrorCode",
-            "u16",
-            self.registry
-                .link_errors
-                .iter()
-                .filter(|e| e.status == Status::Live)
-                .map(|e| (variant(&e.name), e.code)),
-        );
+        closed_enum(&mut o, "u16", &self.link_error_space()?);
 
         o.push_str(
             "/// A code off the wire, kept in the space it came from.\n\
@@ -534,8 +739,11 @@ impl Bindings {
              #[derive(Debug, Clone, Copy, PartialEq, Eq)]\n\
              #[cfg_attr(feature = \"defmt\", derive(defmt::Format))]\n\
              pub enum Incoming {\n    \
+                 /// A code from the client-facing space.\n    \
                  Client(ErrorCode),\n    \
+                 /// A code from the link-local space.\n    \
                  LinkLocal(LinkErrorCode),\n    \
+                 /// A code this build allocates in neither space, carried as sent.\n    \
                  Unknown(u16),\n\
              }\n\n\
              impl From<u16> for Incoming {\n    \
@@ -548,37 +756,42 @@ impl Bindings {
              }\n\n",
         );
 
-        let bits: Vec<_> = self
-            .registry
-            .client_capability
-            .iter()
-            .filter(|c| c.status == Some(Status::Live))
-            .filter_map(|c| Some((screaming(c.name.as_ref()?), c.bit?)))
-            .collect();
-        if !bits.is_empty() {
+        let bits = self.capability_space()?;
+        if !bits.members.is_empty() {
+            rust_doc(
+                &mut o,
+                "",
+                &format!(
+                    "{}\n\nNot a wire discriminant: an unallocated bit is a capability \
+                     nobody has defined yet, not a value to reject.",
+                    bits.doc
+                ),
+            );
             o.push_str(
-                "/// The per-client capability mask, fixed by the role.\n\
-                 ///\n\
-                 /// Not a wire discriminant: an unallocated bit is a capability\n\
-                 /// nobody has defined yet, not a value to reject.\n\
-                 #[derive(Debug, Clone, Copy, PartialEq, Eq)]\n\
+                "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\n\
                  #[cfg_attr(feature = \"defmt\", derive(defmt::Format))]\n\
                  pub struct ClientCapability(pub u16);\n\n\
                  impl ClientCapability {\n",
             );
-            for (name, bit) in &bits {
-                let _ = writeln!(o, "    pub const {name}: Self = Self(1 << {bit});");
+            for bit in &bits.members {
+                rust_doc(&mut o, "    ", &bit.doc);
+                let _ = writeln!(
+                    o,
+                    "    pub const {}: Self = Self(1 << {});",
+                    bit.name, bit.number
+                );
             }
             o.push_str(
-                "\n    #[must_use]\n    \
+                "\n    /// Whether this mask holds every bit of `want`.\n    \
+                 #[must_use]\n    \
                  pub fn allows(self, want: Self) -> bool {\n        \
                      self.0 & want.0 == want.0\n    \
                  }\n",
             );
-            o.push_str(&self.granted(bits.len()));
+            o.push_str(&self.granted(bits.members.len()));
             o.push_str("}\n\n");
         }
-        o
+        Ok(o)
     }
 
     /// Which side may send each link-local request, from the `direction`
@@ -590,16 +803,20 @@ impl Bindings {
     /// it is looking at.
     fn link_directions(&self) -> String {
         let mut o = String::from(
-            "/// Which side may send a link-local request.\n\
+            "/// Which side starts a link-local exchange.\n\
              #[derive(Debug, Clone, Copy, PartialEq, Eq)]\n\
              #[cfg_attr(feature = \"defmt\", derive(defmt::Format))]\n\
              pub enum LinkDirection {\n    \
+                 /// Either side may start it.\n    \
                  Either,\n    \
+                 /// The comms processor sends the request; the controller acknowledges.\n    \
                  CommsToController,\n    \
+                 /// The controller sends the request; the comms processor acknowledges.\n    \
                  ControllerToComms,\n\
              }\n\n\
              impl LinkMessageType {\n    \
-                 /// Which side may send this, request and acknowledgement alike.\n    \
+                 /// Which side starts this exchange. A request and its acknowledgement\n    \
+                 /// give the same answer; the acknowledgement travels the other way.\n    \
                  ///\n    \
                  /// Left unformatted for the reason `ClientCapability::granted` is:\n    \
                  /// a pattern list long enough to wrap comes back from `cargo fmt`\n    \
@@ -739,199 +956,38 @@ impl Bindings {
             );
         }
 
-        ts_enum(
-            &mut o,
-            "MessageType",
-            &self.prose.summary("## Message types")?,
-            self.registry
-                .messages
-                .iter()
-                .filter(|m| !m.status.is_gone())
-                .flat_map(message_members)
-                .flatten(),
-        );
-        o.push_str(&self.ts_error_code()?);
-        for (space, entries) in self.registry.outcomes.iter().chain(&self.registry.enums) {
-            ts_enum(
-                &mut o,
-                &variant(space),
-                &self.prose.summary(&heading_for(space))?,
-                entries
-                    .iter()
-                    .filter(|e| !e.status.is_gone())
-                    .map(|e| Member {
-                        name: variant(&e.name),
-                        number: u16::from(e.value),
-                        doc: with_caveat(
-                            &e.meaning
-                                .as_deref()
-                                .map_or_else(|| e.name.clone(), sentence),
-                            Some(e.status),
-                        ),
-                    }),
-            );
+        ts_enum(&mut o, &self.message_space()?);
+        ts_enum(&mut o, &self.error_space()?);
+        for space in self.enum_spaces()? {
+            ts_enum(&mut o, &space);
         }
-        for (space, entries) in &self.registry.codes {
-            ts_enum(
-                &mut o,
-                &variant(space),
-                &self.prose.summary(&heading_for(space))?,
-                entries
-                    .iter()
-                    .filter(|e| e.status.is_some_and(|s| !s.is_gone()))
-                    .filter_map(|e| {
-                        e.number.map(|n| Member {
-                            name: variant(&e.name),
-                            number: n,
-                            doc: with_caveat(&e.name, e.status),
-                        })
-                    }),
-            );
+        for space in self.code_spaces()? {
+            ts_enum(&mut o, &space);
         }
 
-        o.push_str(&self.ts_link_and_capability()?);
+        ts_enum(&mut o, &self.link_error_space()?);
+        let bits = self.capability_space()?;
+        if !bits.members.is_empty() {
+            ts_doc(&mut o, "", &bits.doc);
+            o.push_str("export const ClientCapability = {\n");
+            for bit in &bits.members {
+                ts_doc(&mut o, "  ", &bit.doc);
+                let _ = writeln!(o, "  {}: 1 << {},", bit.name, bit.number);
+            }
+            o.push_str("} as const;\n\n");
+        }
         o.push_str(&self.ts_open_sets()?);
         Ok(o)
     }
 
-    /// `Error 0xFF`'s codes, each saying whether a receiver may accept it bare.
-    fn ts_error_code(&self) -> Result<String> {
-        let mut o = String::new();
-        ts_enum(
-            &mut o,
-            "ErrorCode",
-            &self.prose.summary("## Error codes")?,
-            self.registry
-                .errors
-                .iter()
-                .filter(|e| e.status == Status::Live)
-                .map(|e| Member {
-                    name: variant(&e.meaning),
-                    number: e.code,
-                    doc: error_doc(&e.meaning, e.sealed),
-                }),
-        );
-        Ok(o)
-    }
-
-    /// The link-local codes and the per-client mask, split out of `typescript`
-    /// for the reason `rust_link_and_capability` is.
-    fn ts_link_and_capability(&self) -> Result<String> {
-        let mut o = String::new();
-        ts_enum(
-            &mut o,
-            "LinkErrorCode",
-            &self.prose.summary("## Link-local error codes")?,
-            self.registry
-                .link_errors
-                .iter()
-                .filter(|e| e.status == Status::Live)
-                .map(|e| Member {
-                    name: variant(&e.name),
-                    number: e.code,
-                    doc: format!(
-                        "{} {}",
-                        sentence(&e.meaning),
-                        if e.reaches_client {
-                            "It reaches the client whose frame raised it (L-180)."
-                        } else {
-                            "It never appears in a client-facing frame (L-180)."
-                        }
-                    ),
-                }),
-        );
-        let bits: Vec<_> = self
-            .registry
-            .client_capability
-            .iter()
-            .filter(|c| c.status == Some(Status::Live))
-            .filter_map(|c| Some((screaming(c.name.as_ref()?), c.bit?, &c.may)))
-            .collect();
-        if !bits.is_empty() {
-            ts_doc(
-                &mut o,
-                "",
-                &self.prose.summary("## Client capability mask")?,
-            );
-            o.push_str("export const ClientCapability = {\n");
-            for (name, bit, may) in &bits {
-                ts_doc(
-                    &mut o,
-                    "  ",
-                    &format!("The client may {}.", may.trim_end_matches('.')),
-                );
-                let _ = writeln!(o, "  {name}: 1 << {bit},");
-            }
-            o.push_str("} as const;\n\n");
-        }
-
-        Ok(o)
-    }
-
     /// The open spaces and the unit table, for the same reason `rust_open_sets`
-    /// exists: `typescript` crossed a hundred lines the moment open spaces stopped
-    /// being two hardcoded calls, and the lint describing the fix is the lint that
-    /// fired.
+    /// exists.
     fn ts_open_sets(&self) -> Result<String> {
         let mut o = String::new();
-        let open = |summary: String| format!("{summary}\n\n{OPEN}");
-        ts_const_map(
-            &mut o,
-            "MetricKind",
-            &open(self.prose.summary("## Metric kinds")?),
-            self.registry
-                .metrics
-                .iter()
-                .filter(|m| !m.status.is_gone())
-                .map(|m| Member {
-                    name: screaming(&m.name),
-                    number: m.kind,
-                    doc: with_caveat(&metric_doc(&m.name, &m.unit, m.scale), Some(m.status)),
-                }),
-        );
-        ts_const_map(
-            &mut o,
-            "EventKind",
-            &open(self.prose.summary("## Event kinds")?),
-            self.registry
-                .events
-                .iter()
-                .filter(|e| !e.status.is_gone())
-                .map(|e| Member {
-                    name: screaming(&e.name),
-                    number: e.kind,
-                    doc: with_caveat(
-                        &format!(
-                            "{} {}",
-                            sentence(&capital(&e.name)),
-                            match e.class {
-                                EventClass::A =>
-                                    "Class A: never dropped, not from the log and \
-                                                  not from a queue.",
-                                EventClass::B =>
-                                    "Class B: dropped first under pressure, and \
-                                                  every drop is counted.",
-                            }
-                        ),
-                        Some(e.status),
-                    ),
-                }),
-        );
-        for (space, rows) in &self.registry.open_registries {
-            ts_const_map(
-                &mut o,
-                &variant(space),
-                &open(self.prose.summary(&heading_for(space))?),
-                rows.iter()
-                    .filter(|r| r.status.is_some_and(|s| !s.is_gone()))
-                    .filter_map(|r| {
-                        r.number.map(|n| Member {
-                            name: screaming(&r.name),
-                            number: n,
-                            doc: with_caveat(&r.name, r.status),
-                        })
-                    }),
-            );
+        ts_const_map(&mut o, &self.metric_space()?);
+        ts_const_map(&mut o, &self.event_space()?);
+        for space in self.open_registry_spaces()? {
+            ts_const_map(&mut o, &space);
         }
 
         ts_doc(
@@ -1096,11 +1152,52 @@ impl RegistryDoc {
     }
 }
 
+/// An open space's summary with the paragraph that says it is open.
+fn open(summary: &str) -> String {
+    format!("{summary}\n\n{OPEN}")
+}
+
+/// One generated space: its type name, what it is, and its members.
+///
+/// Built once and rendered by both languages. When each emitter took its words
+/// from the registry on its own, the TypeScript had them and the Rust had bare
+/// numbers, and nothing noticed.
+struct Space {
+    name: String,
+    doc: String,
+    members: Vec<Member>,
+}
+
 /// One generated constant: its name, its number, and what it means.
 struct Member {
     name: String,
     number: u16,
     doc: String,
+}
+
+/// The doc of a row with no meaning column: its registry name, as code. Bare,
+/// `refused_busy` reads to rustdoc's pedantic lint as an identifier somebody
+/// forgot to quote, and to a person as the same.
+fn named(name: &str) -> String {
+    format!("`{name}`")
+}
+
+/// An outcome or enum row's meaning, or its name where it has none.
+fn outcome_members(entries: &[crate::registry::Outcome]) -> Vec<Member> {
+    entries
+        .iter()
+        .filter(|e| !e.status.is_gone())
+        .map(|e| Member {
+            name: variant(&e.name),
+            number: u16::from(e.value),
+            doc: with_caveat(
+                &e.meaning
+                    .as_deref()
+                    .map_or_else(|| named(&e.name), sentence),
+                Some(e.status),
+            ),
+        })
+        .collect()
 }
 
 /// A message's request and response constants, each saying how it is
@@ -1213,23 +1310,7 @@ fn ts_doc(o: &mut String, indent: &str, text: &str) {
         .replace('@', "\\@")
         .replace("{\\@link ", "{@link ");
     let width = 80usize.saturating_sub(indent.len() + 3);
-    let paragraphs: Vec<Vec<String>> = text
-        .split("\n\n")
-        .map(|p| {
-            let mut lines: Vec<String> = Vec::new();
-            for word in words_of(p) {
-                match lines.last_mut() {
-                    Some(line) if columns(line) + 1 + columns(&word) <= width => {
-                        line.push(' ');
-                        line.push_str(&word);
-                    }
-                    _ => lines.push(word),
-                }
-            }
-            lines
-        })
-        .filter(|lines| !lines.is_empty())
-        .collect();
+    let paragraphs = wrap(&text, width);
     if let [only] = paragraphs.as_slice()
         && let [line] = only.as_slice()
         && columns(line) + 4 <= width
@@ -1249,17 +1330,107 @@ fn ts_doc(o: &mut String, indent: &str, text: &str) {
     let _ = writeln!(o, "{indent} */");
 }
 
+/// A `///` comment, wrapped to 80 columns, one paragraph per blank line.
+///
+/// Each line carries its own `///`, so a newline in registry text cannot hand
+/// the rest of the row to the compiler the way `*/` could in TypeScript. What
+/// it can do is be read as rustdoc markup; [`rust_markdown`] disarms that.
+/// Empty text writes nothing, so `missing_docs` sees the gap.
+fn rust_doc(o: &mut String, indent: &str, text: &str) {
+    let width = 80usize.saturating_sub(indent.len() + 4);
+    for (n, lines) in wrap(&rust_markdown(text), width).iter().enumerate() {
+        if n > 0 {
+            let _ = writeln!(o, "{indent}///");
+        }
+        for line in lines {
+            let _ = writeln!(o, "{indent}/// {line}");
+        }
+    }
+}
+
+/// Registry text as rustdoc Markdown.
+///
+/// Rustdoc reads a stray `[word]` as an intra-doc link and `<word>` as an HTML
+/// tag, and under `-D warnings` a broken one of either fails `just doc`, so
+/// both are escaped outside code spans; a Markdown link is kept. The
+/// generator's own `{@link A.B}` becomes the rustdoc link ``[`A::B`]``.
+fn rust_markdown(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut code = false;
+    let mut rest = text;
+    while let Some(c) = rest.chars().next() {
+        let after = rest.get(c.len_utf8()..).unwrap_or_default();
+        match c {
+            '`' => code = !code,
+            '{' if !code && rest.starts_with("{@link ") => {
+                if let Some((target, tail)) =
+                    after.strip_prefix("@link ").and_then(|t| t.split_once('}'))
+                {
+                    let _ = write!(out, "[`{}`]", target.replace('.', "::"));
+                    rest = tail;
+                    continue;
+                }
+            }
+            '[' if !code => {
+                if let Some(end) = markdown_link_end(rest) {
+                    let (link, tail) = rest.split_at(end);
+                    out.push_str(link);
+                    rest = tail;
+                    continue;
+                }
+                out.push('\\');
+            }
+            ']' | '<' | '>' if !code => out.push('\\'),
+            _ => {}
+        }
+        out.push(c);
+        rest = after;
+    }
+    out
+}
+
+/// The byte length of the Markdown link `text` opens with, if it opens with one.
+fn markdown_link_end(text: &str) -> Option<usize> {
+    let close = text.find("](")?;
+    let label = text.get(1..close)?;
+    if label.contains(['[', ']', '\n']) {
+        return None;
+    }
+    let url = text.get(close + 2..)?;
+    let end = url.find(')')?;
+    if url.get(..end)?.contains(char::is_whitespace) {
+        return None;
+    }
+    Some(close + 2 + end + 1)
+}
+
+/// Text in paragraphs of lines no wider than `width`, split on blank lines.
+fn wrap(text: &str, width: usize) -> Vec<Vec<String>> {
+    text.split("\n\n")
+        .map(|p| {
+            let mut lines: Vec<String> = Vec::new();
+            for word in words_of(p) {
+                match lines.last_mut() {
+                    Some(line) if columns(line) + 1 + columns(&word) <= width => {
+                        line.push(' ');
+                        line.push_str(&word);
+                    }
+                    _ => lines.push(word),
+                }
+            }
+            lines
+        })
+        .filter(|lines| !lines.is_empty())
+        .collect()
+}
+
 /// A closed space: an unknown value is a parse error, never a fallback.
-fn closed_enum(
-    o: &mut String,
-    name: &str,
-    repr: &str,
-    entries: impl Iterator<Item = (String, u16)>,
-) {
-    let rows: Vec<_> = entries.collect();
-    if rows.is_empty() {
+fn closed_enum(o: &mut String, repr: &str, space: &Space) {
+    if space.members.is_empty() {
         return;
     }
+    let name = &space.name;
+    rust_doc(o, "", &space.doc);
     let _ = writeln!(o, "#[derive(Debug, Clone, Copy, PartialEq, Eq)]");
     let _ = writeln!(
         o,
@@ -1267,8 +1438,9 @@ fn closed_enum(
     );
     let _ = writeln!(o, "#[repr({repr})]");
     let _ = writeln!(o, "pub enum {name} {{");
-    for (v, n) in &rows {
-        let _ = writeln!(o, "    {v} = {n:#x},");
+    for m in &space.members {
+        rust_doc(o, "    ", &m.doc);
+        let _ = writeln!(o, "    {} = {:#x},", m.name, m.number);
     }
     let _ = writeln!(o, "}}\n");
     let _ = writeln!(o, "impl TryFrom<{repr}> for {name} {{");
@@ -1278,26 +1450,19 @@ fn closed_enum(
         "    fn try_from(v: {repr}) -> Result<Self, Self::Error> {{"
     );
     let _ = writeln!(o, "        match v {{");
-    for (v, n) in &rows {
-        let _ = writeln!(o, "            {n:#x} => Ok(Self::{v}),");
+    for m in &space.members {
+        let _ = writeln!(o, "            {:#x} => Ok(Self::{}),", m.number, m.name);
     }
     let _ = writeln!(o, "            _ => Err(()),\n        }}\n    }}\n}}\n");
 }
 
 /// An open space: the value is carried whether or not it is named.
-fn open_newtype(
-    o: &mut String,
-    name: &str,
-    entries: impl Iterator<Item = (String, u16)>,
-    open: bool,
-) {
+fn open_newtype(o: &mut String, space: &Space, open: bool) {
     if !open {
         return;
     }
-    let _ = writeln!(
-        o,
-        "/// Open set: a value this list does not name is carried, not refused."
-    );
+    let name = &space.name;
+    rust_doc(o, "", &space.doc);
     let _ = writeln!(o, "#[derive(Debug, Clone, Copy, PartialEq, Eq)]");
     let _ = writeln!(
         o,
@@ -1305,30 +1470,34 @@ fn open_newtype(
     );
     let _ = writeln!(o, "pub struct {name}(pub u16);\n");
     let _ = writeln!(o, "impl {name} {{");
-    for (v, n) in entries {
-        let _ = writeln!(o, "    pub const {}: Self = Self({n:#06x});", screaming(&v));
+    for m in &space.members {
+        rust_doc(o, "    ", &m.doc);
+        let _ = writeln!(
+            o,
+            "    pub const {}: Self = Self({:#06x});",
+            m.name, m.number
+        );
     }
     let _ = writeln!(o, "}}\n");
 }
 
-fn ts_enum(o: &mut String, name: &str, doc: &str, members: impl Iterator<Item = Member>) {
-    let members: Vec<_> = members.collect();
-    if members.is_empty() {
+fn ts_enum(o: &mut String, space: &Space) {
+    if space.members.is_empty() {
         return;
     }
-    ts_doc(o, "", doc);
-    let _ = writeln!(o, "export enum {name} {{");
-    for m in members {
+    ts_doc(o, "", &space.doc);
+    let _ = writeln!(o, "export enum {} {{", space.name);
+    for m in &space.members {
         ts_doc(o, "  ", &m.doc);
         let _ = writeln!(o, "  {} = {:#x},", m.name, m.number);
     }
     let _ = writeln!(o, "}}\n");
 }
 
-fn ts_const_map(o: &mut String, name: &str, doc: &str, members: impl Iterator<Item = Member>) {
-    ts_doc(o, "", doc);
-    let _ = writeln!(o, "export const {name} = {{");
-    for m in members {
+fn ts_const_map(o: &mut String, space: &Space) {
+    ts_doc(o, "", &space.doc);
+    let _ = writeln!(o, "export const {} = {{", space.name);
+    for m in &space.members {
         ts_doc(o, "  ", &m.doc);
         let _ = writeln!(o, "  {}: {:#06x},", m.name, m.number);
     }
@@ -1430,6 +1599,21 @@ mod tests {
         assert_eq!(nibbles(0, 1), "0");
     }
 
+    fn space(name: &str, doc: &str, members: &[(&str, u16, &str)]) -> Space {
+        Space {
+            name: name.to_owned(),
+            doc: doc.to_owned(),
+            members: members
+                .iter()
+                .map(|&(name, number, doc)| Member {
+                    name: name.to_owned(),
+                    number,
+                    doc: doc.to_owned(),
+                })
+                .collect(),
+        }
+    }
+
     /// Open and closed are different shapes in the generated code, and the difference is
     /// what a decoder does with a number nobody has allocated: a newtype carries it, an
     /// enum refuses the message around it.
@@ -1442,8 +1626,11 @@ mod tests {
         let mut open = String::new();
         open_newtype(
             &mut open,
-            "ComponentRole",
-            [("pv array".to_owned(), 0x0001u16)].into_iter(),
+            &space(
+                "ComponentRole",
+                "Roles.",
+                &[("PV_ARRAY", 0x0001, "`pv array`")],
+            ),
             true,
         );
         assert!(
@@ -1458,9 +1645,8 @@ mod tests {
         let mut closed = String::new();
         closed_enum(
             &mut closed,
-            "Severity",
             "u8",
-            [("warning".to_owned(), 2u16)].into_iter(),
+            &space("Severity", "Bands.", &[("Warning", 2, "`warning`")]),
         );
         assert!(
             closed.contains("enum Severity"),
@@ -1476,8 +1662,11 @@ mod tests {
         let mut nothing = String::new();
         open_newtype(
             &mut nothing,
-            "MetricKind",
-            [("battery voltage".to_owned(), 0x0101u16)].into_iter(),
+            &space(
+                "MetricKind",
+                "Kinds.",
+                &[("BATTERY_VOLTAGE", 0x0101, "Volts.")],
+            ),
             false,
         );
         assert!(
@@ -1485,6 +1674,215 @@ mod tests {
             "the two top-level tables are still gated, and that gate is now checked at load"
         );
     }
+
+    /// `ErrorCode::BadMac` used to reach rustdoc as a bare number. The enum and
+    /// every variant now carry their words, directly above the item they
+    /// describe, and a reserved row keeps its caveat as a second paragraph.
+    #[test]
+    fn a_closed_enum_documents_itself_and_every_variant() {
+        let mut o = String::new();
+        closed_enum(
+            &mut o,
+            "u16",
+            &space(
+                "ErrorCode",
+                "Carried in `Error 0xFF`.",
+                &[
+                    ("BadMac", 0x2, "Bad MAC."),
+                    (
+                        "Later",
+                        0x9,
+                        "`later`\n\nReserved: allocated, and not specified yet.",
+                    ),
+                ],
+            ),
+        );
+        assert!(
+            o.starts_with("/// Carried in `Error 0xFF`.\n#[derive("),
+            "the space's doc sits on the enum: {o}"
+        );
+        assert!(o.contains("    /// Bad MAC.\n    BadMac = 0x2,\n"), "{o}");
+        assert!(
+            o.contains(
+                "    /// `later`\n    ///\n    /// Reserved: allocated, and not specified yet.\n    Later = 0x9,\n"
+            ),
+            "{o}"
+        );
+        assert!(
+            !o.contains("impl TryFrom<u16> for ErrorCode {\n    ///"),
+            "a trait impl needs no doc and gets none: {o}"
+        );
+    }
+
+    /// An open space's constants are documented as the enum's variants are, and
+    /// the struct says the space is open.
+    #[test]
+    fn an_open_newtype_documents_itself_and_every_constant() {
+        let mut o = String::new();
+        open_newtype(
+            &mut o,
+            &space(
+                "MetricKind",
+                &open("What a reading is."),
+                &[(
+                    "DC_VOLTAGE",
+                    0x0101,
+                    "DC voltage. Unit `V`, `value = raw × 10^-3`.",
+                )],
+            ),
+            true,
+        );
+        assert!(
+            o.starts_with("/// What a reading is.\n///\n/// Open: a device may emit"),
+            "{o}"
+        );
+        assert!(
+            o.contains(
+                "    /// DC voltage. Unit `V`, `value = raw × 10^-3`.\n    pub const DC_VOLTAGE: Self = Self(0x0101);\n"
+            ),
+            "{o}"
+        );
+    }
+
+    /// An empty space emits nothing rather than an enum with no variants, and a
+    /// member with no words gets no `///` at all, so `missing_docs` reports it
+    /// instead of a blank comment passing for one.
+    #[test]
+    fn nothing_to_say_writes_no_comment() {
+        let mut empty = String::new();
+        closed_enum(&mut empty, "u8", &space("Nothing", "Doc.", &[]));
+        assert!(empty.is_empty(), "{empty}");
+
+        let mut bare = String::new();
+        rust_doc(&mut bare, "    ", "");
+        rust_doc(&mut bare, "    ", " \n\n ");
+        assert!(bare.is_empty(), "{bare:?}");
+    }
+
+    /// Both bindings render one [`Space`], so they say the same words about one
+    /// number. Stripped of comment markers, rewrapped, and with each language's
+    /// link spelling mapped back, the two comments are the same text.
+    #[test]
+    fn the_rust_and_typescript_comments_carry_the_same_words() {
+        let doc = "The `Hello` request. Auth `handshake`. Carries a Noise handshake \
+                   message, authenticated by the handshake itself (P-054, P-057). \
+                   Answered by {@link MessageType.HelloResponse}. Since 1.0.\n\n\
+                   Reserved: allocated, and not specified yet.";
+        let words = |text: &str, strip: &[&str]| -> Vec<String> {
+            text.lines()
+                .map(|l| {
+                    strip
+                        .iter()
+                        .fold(l.trim(), |l, s| l.trim_start_matches(s).trim())
+                })
+                .flat_map(str::split_whitespace)
+                .map(|w| {
+                    w.replace(
+                        "[`MessageType::HelloResponse`]",
+                        "{@link MessageType.HelloResponse}",
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+                .replace("{@link MessageType.HelloResponse}", "LINK")
+                .split_whitespace()
+                .map(str::to_owned)
+                .collect()
+        };
+        let mut rust = String::new();
+        rust_doc(&mut rust, "    ", doc);
+        let mut ts = String::new();
+        ts_doc(&mut ts, "  ", doc);
+        let rust = words(&rust, &["///"]);
+        let ts = words(&ts, &["/**", "*/", "*"]);
+        assert_eq!(rust, ts);
+        assert!(rust.contains(&"LINK.".to_owned()), "{rust:?}");
+        assert_eq!(rust.first().map(String::as_str), Some("The"));
+    }
+
+    /// The direction column says who starts a link exchange, so the answer
+    /// comes back the other way. The first draft of these docs reused the
+    /// request's sender for its `Ack` and told a reader the comms processor
+    /// sends `ClientConnectedAck`, the frame `linklocal::permitted` refuses from
+    /// it.
+    #[test]
+    fn a_link_acknowledgement_is_documented_as_sent_by_the_other_side() {
+        let root = crate::check::repo_root().expect("a repo to read the registry from");
+        let space = Bindings::load(&root)
+            .expect("the registry and REGISTRY.md load")
+            .link_message_space();
+        let doc = |name: &str| {
+            space
+                .members
+                .iter()
+                .find(|m| m.name == name)
+                .map_or_else(|| panic!("{name} is a link message"), |m| m.doc.clone())
+        };
+        assert!(
+            doc("ClientConnected").contains("Only the comms processor sends it;"),
+            "{}",
+            doc("ClientConnected")
+        );
+        assert!(
+            doc("ClientConnectedAck").contains("Only the controller sends it, in answer;"),
+            "{}",
+            doc("ClientConnectedAck")
+        );
+        assert!(
+            doc("LinkUpAck").contains("whichever side received the request"),
+            "{}",
+            doc("LinkUpAck")
+        );
+    }
+
+    /// Rustdoc reads a stray `[x]` as an intra-doc link and `<x>` as an HTML
+    /// tag, and `just doc` denies both when they do not resolve. Registry text
+    /// holding either must come out escaped, while a real Markdown link, a code
+    /// span and the generator's own `{@link}` come out working.
+    #[test]
+    fn registry_text_cannot_open_a_link_or_a_tag_in_rustdoc() {
+        assert_eq!(
+            rust_markdown("a [note] and <b>"),
+            "a \\[note\\] and \\<b\\>"
+        );
+        assert_eq!(
+            rust_markdown("see [LINK.md](https://example.com/LINK.md)."),
+            "see [LINK.md](https://example.com/LINK.md)."
+        );
+        assert_eq!(rust_markdown("`[u8; 4] <T>` stays"), "`[u8; 4] <T>` stays");
+        assert_eq!(
+            rust_markdown("Answered by {@link MessageType.HelloResponse}."),
+            "Answered by [`MessageType::HelloResponse`]."
+        );
+        assert_eq!(rust_markdown("[unclosed](no end"), "\\[unclosed\\](no end");
+        assert_eq!(rust_markdown("{@link unterminated"), "{@link unterminated");
+        assert_eq!(rust_markdown(""), "");
+    }
+
+    /// Each comment line carries its own `///`, so a newline in registry text
+    /// cannot leave a line of it outside the comment where the compiler would
+    /// read it as code. Lines stay inside 80 columns, `—` counted as one.
+    #[test]
+    fn every_line_of_a_rust_doc_is_a_comment_inside_eighty_columns() {
+        let mut o = String::new();
+        let text = format!(
+            "{}\npub fn injected() {{}}\n\nReserved: allocated, and not specified yet.",
+            "word — ".repeat(30)
+        );
+        rust_doc(&mut o, "    ", &text);
+        for line in o.lines() {
+            assert!(line.starts_with("    ///"), "{line:?} escaped the comment");
+            assert!(
+                line.chars().count() <= 80,
+                "{line:?} is wider than 80 columns"
+            );
+        }
+        assert!(
+            o.contains("\n    ///\n    /// Reserved"),
+            "paragraphs stay apart: {o}"
+        );
+    }
+
     const DOC: &str = "# Registry\n\
         \n\
         ## Quality — `u8`\n\

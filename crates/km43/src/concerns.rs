@@ -173,18 +173,34 @@ impl Subject {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ConcernKey {
+    /// The row's id: never 0, and stable for as long as the row lives.
     Cid = 1,
+    /// The device the concern is about.
     Dev = 2,
+    /// The component, where 0 is the device as a whole (P-200).
     Cmp = 3,
+    /// The signal it is about, when it is about one.
     Sig = 4,
+    /// The element's 1-based position in a series signal, which is not its
+    /// label (P-206).
     Elem = 5,
+    /// The condition, from an open space: an unallocated one is carried.
     Cond = 6,
+    /// The severity band.
     Sev = 7,
+    /// Where the row is in its lifecycle.
     State = 8,
+    /// Seconds on P-004's tick since first observed. Always present, because a
+    /// controller whose clock was never set can still say how long.
     Age = 9,
+    /// Wall-clock time first observed, omitted while the clock has never been
+    /// set (P-093).
     Since = 10,
+    /// The source's own code, verbatim. Present exactly when `vns` is.
     Raw = 11,
+    /// Whose code `raw` is. Present exactly when `raw` is.
     Vns = 12,
+    /// The log position of the record that opened the row.
     Seq = 13,
 }
 

@@ -185,12 +185,19 @@ const PARAM_FIELDS: &[Field] = &[
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Value<'a> {
+    /// For a key its table types `U8`.
     U8(u8),
+    /// For a key its table types `U16`.
     U16(u16),
+    /// For a key its table types `U32`, such as a bus's `rate`.
     U32(u32),
+    /// For a key its table types `I32`, such as a parameter's `lo` and `hi`.
     I32(i32),
+    /// UTF-8 text, borrowed from the caller.
     Text(&'a str),
+    /// A byte string, borrowed from the caller.
     Bytes(&'a [u8]),
+    /// A `cmds` array.
     U16List(CmdList),
     /// This key is not present in this row.
     Absent,
@@ -242,10 +249,15 @@ impl CmdList {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum RowKind {
+    /// `what` 1, a `BusRow`.
     Bus,
+    /// `what` 2, a `DeviceRow`.
     Device,
+    /// `what` 3, a `ComponentRow`.
     Component,
+    /// `what` 4, a `SignalRow`.
     Signal,
+    /// `what` 5, a `ParamRow`.
     Param,
 }
 
@@ -1204,6 +1216,7 @@ impl fmt::Display for InventoryKey {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum InventoryOutcome {
+    /// The page was answered.
     Ok,
     /// The `rev` named was neither 0 nor current. The rows are empty and key 1
     /// carries the current one, so a client learns what to ask for next.
@@ -1552,14 +1565,27 @@ impl TopoDigest {
 pub enum InventoryError {
     /// The value slice does not match the row kind's table.
     RowShape {
+        /// The row kind whose table the slice was checked against.
         kind: RowKind,
+        /// How many values the table has.
         want: usize,
+        /// How many the slice held.
         got: usize,
     },
     /// A key the table marks required was `Absent`.
-    MissingRequired { kind: RowKind, key: u8 },
+    MissingRequired {
+        /// The row kind.
+        kind: RowKind,
+        /// The key that was absent.
+        key: u8,
+    },
     /// A value of the wrong shape for the key it sits under.
-    WrongType { kind: RowKind, key: u8 },
+    WrongType {
+        /// The row kind.
+        kind: RowKind,
+        /// The key whose value had the wrong shape.
+        key: u8,
+    },
     /// An empty `cmds`, where absence is what *none* is spelled as (P-201).
     EmptyCmds,
     /// More commands than [`MAX_COMPONENT_CMDS`], which is a component that
@@ -1568,18 +1594,37 @@ pub enum InventoryError {
     /// The same key twice in one row (P-015). RFC 8949 §5.6 leaves which one
     /// wins to the decoder, so two clients would render one authenticated row
     /// differently.
-    DuplicateRowKey { kind: RowKind, key: u8 },
+    DuplicateRowKey {
+        /// The row kind.
+        kind: RowKind,
+        /// The key that came twice.
+        key: u8,
+    },
     /// A `cmp` or a `sig` of 0, which is reserved (P-174): it names nothing,
     /// and handed back as a cursor it says the kind is complete.
-    ReservedZero { kind: RowKind, key: u8 },
+    ReservedZero {
+        /// The row kind.
+        kind: RowKind,
+        /// The key that carried 0.
+        key: u8,
+    },
     /// A `Concern` naming a position past the end of the series it names.
-    PositionPastSeries { at: u8, elements: u8 },
+    PositionPastSeries {
+        /// The 1-based position named.
+        at: u8,
+        /// How many elements the series has.
+        elements: u8,
+    },
     /// A number under a key whose space does not allocate it. Not skip-unknown:
     /// none of the six has a vendor range (P-019).
     NotAMember {
+        /// The row kind.
         kind: RowKind,
+        /// The key the number sat under.
         key: u8,
+        /// The closed space that key draws from.
         space: Closed,
+        /// The number the space does not allocate.
         value: u8,
     },
     /// A series of fewer than two, which is a scalar with an array around it.
@@ -1591,15 +1636,39 @@ pub enum InventoryError {
     /// A series whose labels run off the end of `u16`. There is no such label,
     /// and one printed after wrapping is a cell somebody can find in the wrong
     /// pack (P-206).
-    LabelPastRange { base: u16, at: u8 },
+    LabelPastRange {
+        /// The series' first label.
+        base: u16,
+        /// The position whose label would pass `u16::MAX`.
+        at: u8,
+    },
     /// A key another key's value makes REQUIRED, left out.
-    MissingConditional { kind: RowKind, key: u8, when: When },
+    MissingConditional {
+        /// The row kind.
+        kind: RowKind,
+        /// The key that was left out.
+        key: u8,
+        /// The condition that made it required.
+        when: When,
+    },
     /// A key that is only legal under a condition this row does not meet.
-    UnexpectedConditional { kind: RowKind, key: u8, when: When },
+    UnexpectedConditional {
+        /// The row kind.
+        kind: RowKind,
+        /// The key that was present.
+        key: u8,
+        /// The condition it is legal under, which the row does not meet.
+        when: When,
+    },
     /// A row of one kind pushed onto a page of another. `what` is echoed in the
     /// response, so a page carrying two kinds is a response that lies about
     /// itself.
-    WrongKind { page: RowKind, row: RowKind },
+    WrongKind {
+        /// The kind the page is.
+        page: RowKind,
+        /// The kind the row was.
+        row: RowKind,
+    },
     /// A row past [`MAX_ROW_BYTES`], which is a driver to refuse at
     /// registration rather than a page to end.
     RowTooLong(usize),
@@ -1620,7 +1689,12 @@ pub enum InventoryError {
     /// Rows fed to a digest with `what` going backwards. Canonical order is not
     /// a preference: two controllers walking their tables differently would
     /// publish different digests for one topology.
-    RowsOutOfOrder { after: RowKind, got: RowKind },
+    RowsOutOfOrder {
+        /// The kind already fed.
+        after: RowKind,
+        /// The earlier kind that followed it.
+        got: RowKind,
+    },
     /// The same key twice (P-015).
     Duplicate(ReadInventoryKey),
     /// A response key appeared twice (P-015).
