@@ -1141,10 +1141,12 @@
 # only an invite or an approval allocates a viewer, and P-252 and P-255 are
 # still uncovered.
 # 150 -> 151: L-115 is new (origin89hq/km43#127). A controller with no
-# device_id sends no LinkUp, and neither that nor spent L-195 revisions starts
-# the ladder. Both halves are the controller's: nothing in this tree runs the
-# ladder or holds a device secret, so a test named after it here would stand
-# over nothing. origin89hq/firmware#146 implements it.
+# device_id neither sends nor answers LinkUp, and neither that nor spent L-195
+# revisions runs the ladder. The codec's part is already L-035's: `LinkUp`
+# refuses to encode a controller statement without key 8, and that test stays
+# named after L-035 rather than counted twice. Withholding the answer and not
+# cutting the rail are the controller's; nothing in this tree runs the ladder,
+# so they stay counted. origin89hq/firmware#152 implements both.
 uncovered = 151
 
 # P-045 is the shape this file is for. Nothing can drive an implementation into

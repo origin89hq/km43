@@ -357,7 +357,7 @@ says who it is, and the answer says who the other one is.
 again at any time. Repeating it is harmless: what tears everything down is a
 *changed* `boot_id` (L-041, L-042), not
 the arrival of the message. Read the other way round, a diagnostic resend costs
-every client a reconnect.
+every client a reconnect. A controller with no `device_id` sends none (L-115).
 
 **L-031** — The controller MUST store field 4 of the last successful `LinkUp`
 and MUST report it as `fw_comms` in the client `Hello` response. That is the
@@ -384,7 +384,8 @@ processor MUST NOT forward a client frame and the controller MUST NOT accept
 one; a client frame arriving before that MUST be answered with code 258. A comms
 processor that starts routing before it knows the controller's protocol version
 is a comms processor that will forward a v2 body to a v1 controller and blame
-the client.
+the client. A controller with no `device_id` neither sends nor answers a
+`LinkUp` (L-115).
 
 A statement received is not a link. A peer that can talk but cannot hear sends
 its `LinkUp` for ever and answers nothing, and a side that counted the statement
@@ -430,10 +431,10 @@ linked without it would advertise a service no client can pick out, and nothing
 would say why.
 
 The same requirement is what keeps a controller with no `device_id` off the
-link. It holds one only once its device secret is written, so a unit fresh off
-the bench has none, and neither does one whose secret failed to read at boot.
-Such a controller cannot send a valid `LinkUp` and sends none, and L-115 says
-what that means for the ladder.
+link. It has one only once it is provisioned at manufacture, so a unit fresh
+off the bench has none, and neither does one that could not read its
+provisioning at boot. Such a controller cannot state itself, and L-115 says
+what it does instead.
 
 ### boot_id is what makes a reboot visible
 
@@ -682,9 +683,10 @@ the whole of the condition, and any answer restarts it, a heartbeat's or
 another request's. It runs only on a linked side: a side that has not been
 answered since it booted is unlinked, which is already the state a dead link
 leads to (L-110, L-120), and the controller counts its sixty seconds to a cut
-from the rail's last coming up until the first answer arrives (L-111). The peer's own heartbeats do not count toward it: a
-heartbeat received proves the peer can talk, not that it can hear, and a peer
-whose receiver has hung keeps talking. Only an answer proves both directions.
+from the rail's last coming up until the first answer arrives (L-111), except
+while L-113 or L-115 suspends it. The peer's own heartbeats do not count toward
+it: a heartbeat received proves the peer can talk, not that it can hear, and a
+peer whose receiver has hung keeps talking. Only an answer proves both directions.
 
 Every rung of the ladder below is measured from that one number, so the 2 seconds
 is not a comfort setting. Answering immediately rather than folding the answer
@@ -776,22 +778,27 @@ suspend the ladder, and MUST resume it only when the install finishes or its
 turns an update into a brick.
 
 **L-115** — While the controller keeps the link down on purpose, because it
-holds no `device_id` or because L-195's revisions are spent, L-111 and L-112
-MUST NOT apply: it MUST NOT cut the rail on their account and MUST NOT raise
-comms unrecoverable (`0x0803`). A controller that holds no `device_id` MUST NOT
-send `LinkUp`, and stays unlinked. The download window is unaffected:
-`EnterDownload` does not depend on `LinkUp`, and the reset L-192 asks for is
-that rule's own, not a rung of the ladder.
+had no `device_id` at boot or because L-195's revisions are spent, L-111 and
+L-112 MUST NOT apply: it MUST NOT cut the rail on their account and MUST NOT
+raise comms unrecoverable (`0x0803`). Either condition holds until the
+controller reboots. A controller with no `device_id` MUST NOT send `LinkUp` and
+MUST NOT answer the comms processor's, whatever L-030 and L-033 ask, and stays
+unlinked for the boot. The download window is unaffected: `EnterDownload` does
+not depend on `LinkUp`, and the reset L-192 asks for is that rule's own, not a
+rung of the ladder.
 
-The ladder exists to recover a comms processor that has stopped answering. Here
-the comms processor has done nothing wrong; the controller is the side declining
-to link. Applied as written, L-111 would cut the rail every minute from boot and
-L-112 would raise `0x0803` after the third cut, a power cycle loop and an alarm
-on a unit whose only fault is a missing secret, and cycling the module cannot
-write one. The same holds after L-195's revisions run out, which only a
-controller reboot clears. A controller that has a `device_id` and has not yet
-reached L-195's limit is not keeping the link down on purpose, and the ladder
-applies to it in full.
+The answer is withheld too because an answer to `LinkUp` is a statement, and a
+controller statement without field 8 is refused (L-035). The only way to send
+one would be to fill field 8 with something that is not this controller's
+`device_id`, which the comms processor would then advertise. The ladder exists
+to recover a comms processor that has stopped answering. Here the comms
+processor has done nothing wrong; the controller is the side declining to link.
+Applied as written, L-111 would cut the rail every minute from boot and L-112
+would raise `0x0803` after the third cut, a power cycle loop and an alarm on a
+unit whose only fault is missing provisioning, which cycling the module cannot
+supply. The same holds after L-195's revisions run out. A controller that had a
+`device_id` at boot and has not reached L-195's limit is not keeping the link
+down on purpose, and the ladder applies to it in full.
 
 **L-114** — The rail's declared fail state MUST be on, so that a controller
 reset is not also a comms reset. Every time the rail goes off, it is because
@@ -1590,7 +1597,7 @@ them evicts:
 | Access points in a scan result | `MAX_SCAN_APS`, 16 | The strongest are listed, the rest counted in `unlisted` (L-202) |
 | Wi-Fi state reports outstanding | 1 | A newer state replaces the one waiting to be sent (L-206) |
 | Authorised comms release | 1 | A new `authorise` replaces the previous one; both are logged (L-174) |
-| ESP32 power cycles | 3 per hour | No cycling for 15 minutes, rail off, or on where the board cannot switch it back on after that long; comms unrecoverable (`0x0803`) raised (L-112) |
+| ESP32 power cycles | 3 per hour | No cycling for 15 minutes, rail off, or on where the board cannot switch it back on after that long; comms unrecoverable (`0x0803`) raised (L-112). Not counted while L-113 or L-115 suspends the ladder |
 
 ---
 
