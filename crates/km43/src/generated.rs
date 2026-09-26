@@ -325,89 +325,92 @@ pub enum LinkMessageType {
     /// The `LinkUp` request. Either side may send it. Answered by
     /// [`LinkMessageType::LinkUpAck`].
     LinkUp = 0x60,
-    /// The answer to [`LinkMessageType::LinkUp`]. Either side may send it.
+    /// The answer to [`LinkMessageType::LinkUp`]. Sent back by whichever side
+    /// received the request.
     LinkUpAck = 0xe0,
     /// The `Heartbeat` request. Either side may send it. Answered by
     /// [`LinkMessageType::HeartbeatAck`].
     Heartbeat = 0x61,
-    /// The answer to [`LinkMessageType::Heartbeat`]. Either side may send it.
+    /// The answer to [`LinkMessageType::Heartbeat`]. Sent back by whichever
+    /// side received the request.
     HeartbeatAck = 0xe1,
     /// The `ClientConnected` request. Only the comms processor sends it; the
     /// controller's is refused (L-001). Answered by
     /// [`LinkMessageType::ClientConnectedAck`].
     ClientConnected = 0x62,
-    /// The answer to [`LinkMessageType::ClientConnected`]. Only the comms
-    /// processor sends it; the controller's is refused (L-001).
+    /// The answer to [`LinkMessageType::ClientConnected`]. Only the controller
+    /// sends it, in answer; the comms processor's is refused (L-001).
     ClientConnectedAck = 0xe2,
     /// The `ClientDisconnected` request. Only the comms processor sends it; the
     /// controller's is refused (L-001). Answered by
     /// [`LinkMessageType::ClientDisconnectedAck`].
     ClientDisconnected = 0x63,
-    /// The answer to [`LinkMessageType::ClientDisconnected`]. Only the comms
-    /// processor sends it; the controller's is refused (L-001).
+    /// The answer to [`LinkMessageType::ClientDisconnected`]. Only the
+    /// controller sends it, in answer; the comms processor's is refused
+    /// (L-001).
     ClientDisconnectedAck = 0xe3,
     /// The `CloseConnection` request. Only the controller sends it; the comms
     /// processor's is refused (L-001). Answered by
     /// [`LinkMessageType::CloseConnectionAck`].
     CloseConnection = 0x64,
-    /// The answer to [`LinkMessageType::CloseConnection`]. Only the controller
-    /// sends it; the comms processor's is refused (L-001).
+    /// The answer to [`LinkMessageType::CloseConnection`]. Only the comms
+    /// processor sends it, in answer; the controller's is refused (L-001).
     CloseConnectionAck = 0xe4,
     /// The `NetConfig` request. Only the controller sends it; the comms
     /// processor's is refused (L-001). Answered by
     /// [`LinkMessageType::NetConfigAck`].
     NetConfig = 0x65,
-    /// The answer to [`LinkMessageType::NetConfig`]. Only the controller sends
-    /// it; the comms processor's is refused (L-001).
+    /// The answer to [`LinkMessageType::NetConfig`]. Only the comms processor
+    /// sends it, in answer; the controller's is refused (L-001).
     NetConfigAck = 0xe5,
     /// The `TimeOffer` request. Only the comms processor sends it; the
     /// controller's is refused (L-001). Answered by
     /// [`LinkMessageType::TimeOfferAck`].
     TimeOffer = 0x66,
-    /// The answer to [`LinkMessageType::TimeOffer`]. Only the comms processor
-    /// sends it; the controller's is refused (L-001).
+    /// The answer to [`LinkMessageType::TimeOffer`]. Only the controller sends
+    /// it, in answer; the comms processor's is refused (L-001).
     TimeOfferAck = 0xe6,
     /// The `CommsRelease` request. Only the controller sends it; the comms
     /// processor's is refused (L-001). Answered by
     /// [`LinkMessageType::CommsReleaseAck`].
     CommsRelease = 0x67,
-    /// The answer to [`LinkMessageType::CommsRelease`]. Only the controller
-    /// sends it; the comms processor's is refused (L-001).
+    /// The answer to [`LinkMessageType::CommsRelease`]. Only the comms
+    /// processor sends it, in answer; the controller's is refused (L-001).
     CommsReleaseAck = 0xe7,
     /// The `EnterDownload` request. Only the controller sends it; the comms
     /// processor's is refused (L-001). Answered by
     /// [`LinkMessageType::EnterDownloadAck`].
     EnterDownload = 0x68,
-    /// The answer to [`LinkMessageType::EnterDownload`]. Only the controller
-    /// sends it; the comms processor's is refused (L-001).
+    /// The answer to [`LinkMessageType::EnterDownload`]. Only the comms
+    /// processor sends it, in answer; the controller's is refused (L-001).
     EnterDownloadAck = 0xe8,
     /// The `PairingWindow` request. Only the controller sends it; the comms
     /// processor's is refused (L-001). Answered by
     /// [`LinkMessageType::PairingWindowAck`].
     PairingWindow = 0x69,
-    /// The answer to [`LinkMessageType::PairingWindow`]. Only the controller
-    /// sends it; the comms processor's is refused (L-001).
+    /// The answer to [`LinkMessageType::PairingWindow`]. Only the comms
+    /// processor sends it, in answer; the controller's is refused (L-001).
     PairingWindowAck = 0xe9,
     /// The `WifiScan` request. Only the controller sends it; the comms
     /// processor's is refused (L-001). Answered by
     /// [`LinkMessageType::WifiScanAck`].
     WifiScan = 0x6a,
-    /// The answer to [`LinkMessageType::WifiScan`]. Only the controller sends
-    /// it; the comms processor's is refused (L-001).
+    /// The answer to [`LinkMessageType::WifiScan`]. Only the comms processor
+    /// sends it, in answer; the controller's is refused (L-001).
     WifiScanAck = 0xea,
     /// The `WifiScanResult` request. Only the comms processor sends it; the
     /// controller's is refused (L-001). Answered by
     /// [`LinkMessageType::WifiScanResultAck`].
     WifiScanResult = 0x6b,
-    /// The answer to [`LinkMessageType::WifiScanResult`]. Only the comms
-    /// processor sends it; the controller's is refused (L-001).
+    /// The answer to [`LinkMessageType::WifiScanResult`]. Only the controller
+    /// sends it, in answer; the comms processor's is refused (L-001).
     WifiScanResultAck = 0xeb,
     /// The `WifiState` request. Only the comms processor sends it; the
     /// controller's is refused (L-001). Answered by
     /// [`LinkMessageType::WifiStateAck`].
     WifiState = 0x6c,
-    /// The answer to [`LinkMessageType::WifiState`]. Only the comms processor
-    /// sends it; the controller's is refused (L-001).
+    /// The answer to [`LinkMessageType::WifiState`]. Only the controller sends
+    /// it, in answer; the comms processor's is refused (L-001).
     WifiStateAck = 0xec,
 }
 
@@ -447,20 +450,21 @@ impl TryFrom<u8> for LinkMessageType {
     }
 }
 
-/// Which side may send a link-local request.
+/// Which side starts a link-local exchange.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum LinkDirection {
-    /// Either side may send it.
+    /// Either side may start it.
     Either,
-    /// Only the comms processor sends it.
+    /// The comms processor sends the request; the controller acknowledges.
     CommsToController,
-    /// Only the controller sends it.
+    /// The controller sends the request; the comms processor acknowledges.
     ControllerToComms,
 }
 
 impl LinkMessageType {
-    /// Which side may send this, request and acknowledgement alike.
+    /// Which side starts this exchange. A request and its acknowledgement
+    /// give the same answer; the acknowledgement travels the other way.
     ///
     /// Left unformatted for the reason `ClientCapability::granted` is:
     /// a pattern list long enough to wrap comes back from `cargo fmt`

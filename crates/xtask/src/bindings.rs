@@ -224,21 +224,30 @@ impl Bindings {
             .iter()
             .flat_map(|m| {
                 let name = variant(&m.name);
-                let sender = match m.direction {
-                    crate::registry::LinkDirection::Either => "Either side may send it.",
-                    crate::registry::LinkDirection::CommsToController => {
-                        "Only the comms processor sends it; the controller's is refused (L-001)."
-                    }
-                    crate::registry::LinkDirection::ControllerToComms => {
-                        "Only the controller sends it; the comms processor's is refused (L-001)."
-                    }
+                // The direction column says who starts the exchange, so the
+                // acknowledgement travels the other way (`linklocal::permitted`).
+                let (request, ack) = match m.direction {
+                    crate::registry::LinkDirection::Either => (
+                        "Either side may send it.",
+                        "Sent back by whichever side received the request.",
+                    ),
+                    crate::registry::LinkDirection::CommsToController => (
+                        "Only the comms processor sends it; the controller's is refused (L-001).",
+                        "Only the controller sends it, in answer; the comms processor's is \
+                         refused (L-001).",
+                    ),
+                    crate::registry::LinkDirection::ControllerToComms => (
+                        "Only the controller sends it; the comms processor's is refused (L-001).",
+                        "Only the comms processor sends it, in answer; the controller's is \
+                         refused (L-001).",
+                    ),
                 };
                 [
                     Member {
                         name: name.clone(),
                         number: m.request.0,
                         doc: format!(
-                            "The `{}` request. {sender} Answered by \
+                            "The `{}` request. {request} Answered by \
                              {{@link LinkMessageType.{name}Ack}}.",
                             m.name
                         ),
@@ -246,7 +255,7 @@ impl Bindings {
                     Member {
                         name: format!("{name}Ack"),
                         number: m.response.0,
-                        doc: format!("The answer to {{@link LinkMessageType.{name}}}. {sender}"),
+                        doc: format!("The answer to {{@link LinkMessageType.{name}}}. {ack}"),
                     },
                 ]
             })
@@ -794,19 +803,20 @@ impl Bindings {
     /// it is looking at.
     fn link_directions(&self) -> String {
         let mut o = String::from(
-            "/// Which side may send a link-local request.\n\
+            "/// Which side starts a link-local exchange.\n\
              #[derive(Debug, Clone, Copy, PartialEq, Eq)]\n\
              #[cfg_attr(feature = \"defmt\", derive(defmt::Format))]\n\
              pub enum LinkDirection {\n    \
-                 /// Either side may send it.\n    \
+                 /// Either side may start it.\n    \
                  Either,\n    \
-                 /// Only the comms processor sends it.\n    \
+                 /// The comms processor sends the request; the controller acknowledges.\n    \
                  CommsToController,\n    \
-                 /// Only the controller sends it.\n    \
+                 /// The controller sends the request; the comms processor acknowledges.\n    \
                  ControllerToComms,\n\
              }\n\n\
              impl LinkMessageType {\n    \
-                 /// Which side may send this, request and acknowledgement alike.\n    \
+                 /// Which side starts this exchange. A request and its acknowledgement\n    \
+                 /// give the same answer; the acknowledgement travels the other way.\n    \
                  ///\n    \
                  /// Left unformatted for the reason `ClientCapability::granted` is:\n    \
                  /// a pattern list long enough to wrap comes back from `cargo fmt`\n    \
@@ -1788,6 +1798,41 @@ mod tests {
         assert_eq!(rust, ts);
         assert!(rust.contains(&"LINK.".to_owned()), "{rust:?}");
         assert_eq!(rust.first().map(String::as_str), Some("The"));
+    }
+
+    /// The direction column says who starts a link exchange, so the answer
+    /// comes back the other way. The first draft of these docs reused the
+    /// request's sender for its `Ack` and told a reader the comms processor
+    /// sends `ClientConnectedAck`, the frame `linklocal::permitted` refuses from
+    /// it.
+    #[test]
+    fn a_link_acknowledgement_is_documented_as_sent_by_the_other_side() {
+        let root = crate::check::repo_root().expect("a repo to read the registry from");
+        let space = Bindings::load(&root)
+            .expect("the registry and REGISTRY.md load")
+            .link_message_space();
+        let doc = |name: &str| {
+            space
+                .members
+                .iter()
+                .find(|m| m.name == name)
+                .map_or_else(|| panic!("{name} is a link message"), |m| m.doc.clone())
+        };
+        assert!(
+            doc("ClientConnected").contains("Only the comms processor sends it;"),
+            "{}",
+            doc("ClientConnected")
+        );
+        assert!(
+            doc("ClientConnectedAck").contains("Only the controller sends it, in answer;"),
+            "{}",
+            doc("ClientConnectedAck")
+        );
+        assert!(
+            doc("LinkUpAck").contains("whichever side received the request"),
+            "{}",
+            doc("LinkUpAck")
+        );
     }
 
     /// Rustdoc reads a stray `[x]` as an intra-doc link and `<x>` as an HTML

@@ -185,13 +185,13 @@ const PARAM_FIELDS: &[Field] = &[
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Value<'a> {
-    /// An unsigned byte.
+    /// For a key its table types `U8`.
     U8(u8),
-    /// An unsigned 16-bit integer.
+    /// For a key its table types `U16`.
     U16(u16),
-    /// An unsigned 32-bit integer.
+    /// For a key its table types `U32`, such as a bus's `rate`.
     U32(u32),
-    /// A signed 32-bit integer.
+    /// For a key its table types `I32`, such as a parameter's `lo` and `hi`.
     I32(i32),
     /// UTF-8 text, borrowed from the caller.
     Text(&'a str),
