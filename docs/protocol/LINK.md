@@ -429,6 +429,12 @@ controller. Required rather than optional, because a comms processor that
 linked without it would advertise a service no client can pick out, and nothing
 would say why.
 
+The same requirement is what keeps a controller with no `device_id` off the
+link. It holds one only once its device secret is written, so a unit fresh off
+the bench has none, and neither does one whose secret failed to read at boot.
+Such a controller cannot send a valid `LinkUp` and sends none, and L-115 says
+what that means for the ladder.
+
 ### boot_id is what makes a reboot visible
 
 **L-040** — Each side MUST redraw `boot_id` randomly on every boot. Both rules
@@ -720,6 +726,7 @@ moment later.
 | 60 s | Cut the ESP32 power rail for 5 s, restore it, log comms power cycled (`0x0802`) with the count (L-111) |
 | 3 power cycles inside an hour | Stop cycling for 15 minutes with the rail **off**, or **on** on a board that cannot switch it back on after that long; raise comms unrecoverable (`0x0803`) (L-112) |
 | A comms firmware install is in flight | The ladder is suspended until the install finishes or its window lapses (L-113) |
+| The controller keeps the link down on purpose | No rail cuts and no comms unrecoverable (`0x0803`) while it does (L-115) |
 
 **L-110** — Six seconds after the comms processor last answered one of the
 controller's requests the controller MUST treat the link as down, drop every connection and every session
@@ -735,7 +742,8 @@ controller's requests, or after the rail last came up if it has not answered
 since, the controller MUST cut the ESP32 power rail for 5 seconds, restore it, and log comms power cycled (`0x0802`)
 carrying the count. A wedged Wi-Fi stack has no other recovery. The count is in
 the record because the rung below is counted on it, and a power cycle nobody
-counts is a boot loop nobody can name afterwards from the log.
+counts is a boot loop nobody can name afterwards from the log. L-113 and L-115
+name the times it does not.
 
 **L-112** — After 3 power cycles inside an hour the controller MUST stop
 cycling the rail for 15 minutes, MUST raise comms unrecoverable (`0x0803`), and
@@ -766,6 +774,24 @@ board it came from. That field lands with the `0x0803` body, which
 suspend the ladder, and MUST resume it only when the install finishes or its
 10-minute window lapses. A 60-second timer that power-cycles the board mid-write
 turns an update into a brick.
+
+**L-115** — While the controller keeps the link down on purpose, because it
+holds no `device_id` or because L-195's revisions are spent, L-111 and L-112
+MUST NOT apply: it MUST NOT cut the rail on their account and MUST NOT raise
+comms unrecoverable (`0x0803`). A controller that holds no `device_id` MUST NOT
+send `LinkUp`, and stays unlinked. The download window is unaffected:
+`EnterDownload` does not depend on `LinkUp`, and the reset L-192 asks for is
+that rule's own, not a rung of the ladder.
+
+The ladder exists to recover a comms processor that has stopped answering. Here
+the comms processor has done nothing wrong; the controller is the side declining
+to link. Applied as written, L-111 would cut the rail every minute from boot and
+L-112 would raise `0x0803` after the third cut, a power cycle loop and an alarm
+on a unit whose only fault is a missing secret, and cycling the module cannot
+write one. The same holds after L-195's revisions run out, which only a
+controller reboot clears. A controller that has a `device_id` and has not yet
+reached L-195's limit is not keeping the link down on purpose, and the ladder
+applies to it in full.
 
 **L-114** — The rail's declared fail state MUST be on, so that a controller
 reset is not also a comms reset. Every time the rail goes off, it is because
@@ -1383,9 +1409,10 @@ its monotonic deadline when first sending, never from the original duration afte
 a delay. Each new report, including a resynchronisation of unchanged state, has a
 strictly increasing revision within the controller boot; retries
 retain the same revision and body. Revisions MUST NOT wrap: at exhaustion the
-controller takes the link down and only a controller reboot permits another
-opening. A closed state supersedes pending open retries; an unsent expired opening
-is replaced by the closed state.
+controller takes the link down, keeps it down without running the ladder
+(L-115), and only a controller reboot permits another opening. A closed state
+supersedes pending open retries; an unsent expired opening is replaced by the
+closed state.
 
 **L-196** — The comms processor MUST retain only the greatest accepted revision
 and one local monotonic deadline. On a newer open revision it sets that deadline
