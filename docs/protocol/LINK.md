@@ -360,7 +360,8 @@ says who it is, and the answer says who the other one is.
 again at any time. Repeating it is harmless: what tears everything down is a
 *changed* `boot_id` (L-041, L-042), not
 the arrival of the message. Read the other way round, a diagnostic resend costs
-every client a reconnect. A controller with no `device_id` sends none (L-115).
+every client a reconnect. A controller keeping the link down sends none
+(L-115).
 
 **L-031** — The controller MUST store field 4 of the last successful `LinkUp`
 and MUST report it as `fw_comms` in the client `Hello` response. That is the
@@ -387,8 +388,8 @@ processor MUST NOT forward a client frame and the controller MUST NOT accept
 one; a client frame arriving before that MUST be answered with code 258. A comms
 processor that starts routing before it knows the controller's protocol version
 is a comms processor that will forward a v2 body to a v1 controller and blame
-the client. A controller with no `device_id` neither sends nor answers a
-`LinkUp` (L-115).
+the client. Two controllers neither send nor answer a `LinkUp`: one with no
+`device_id`, and one whose L-195 revisions are spent (L-115).
 
 A statement received is not a link. A peer that can talk but cannot hear sends
 its `LinkUp` for ever and answers nothing, and a side that counted the statement
@@ -731,7 +732,7 @@ moment later.
 | 60 s | Cut the ESP32 power rail for 5 s, restore it, log comms power cycled (`0x0802`) with the count (L-111) |
 | 3 power cycles inside an hour | Stop cycling for 15 minutes with the rail **off**, or **on** on a board that cannot switch it back on after that long; raise comms unrecoverable (`0x0803`). A controller reset ends the rail-off lockout and the hour's cuts stay counted (L-112) |
 | A comms firmware install is in flight | The ladder is suspended until the install finishes or its window lapses (L-113) |
-| The controller keeps the link down on purpose | No rail cuts and no comms unrecoverable (`0x0803`) while it does (L-115) |
+| The controller keeps the link down on purpose | No rail cuts and no comms unrecoverable (`0x0803`) while it does, and no comms link lost (`0x0801`) for taking it down (L-115) |
 
 **L-110** — Six seconds after the comms processor last answered one of the
 controller's requests the controller MUST treat the link as down, drop every connection and every session
@@ -813,11 +814,15 @@ turns an update into a brick.
 had no `device_id` at boot or because L-195's revisions are spent, L-111 and
 L-112 MUST NOT apply: it MUST NOT cut the rail on their account and MUST NOT
 raise comms unrecoverable (`0x0803`). Either condition holds until the
-controller reboots. A controller with no `device_id` MUST NOT send `LinkUp` and
-MUST NOT answer the comms processor's, whatever L-030 and L-033 ask, and stays
-unlinked for the boot. The download window is unaffected: `EnterDownload` does
-not depend on `LinkUp`, and the reset L-192 asks for is that rule's own, not a
-rung of the ladder.
+controller reboots; a comms processor reboot does not end it. In either condition
+the controller MUST NOT send `LinkUp` or `Heartbeat` and MUST NOT answer the
+comms processor's, whatever L-030, L-033 and L-100 ask, and stays unlinked for
+the rest of the boot. When L-195's revisions run out, the controller MUST drop every
+connection and every session bound to one, as L-110 does, and MUST NOT log comms
+link lost (`0x0801`), whether the link was up or already down; L-110 does not
+apply again in that boot. The download window is unaffected: `EnterDownload`
+does not depend on `LinkUp`, and the reset L-192 asks for is that rule's own,
+not a rung of the ladder.
 
 The answer is withheld too because an answer to `LinkUp` is a statement, and a
 controller statement without field 8 is refused (L-035). The only way to send
@@ -831,6 +836,18 @@ unit whose only fault is missing provisioning, which cycling the module cannot
 supply. The same holds after L-195's revisions run out. A controller that had a
 `device_id` at boot and has not reached L-195's limit is not keeping the link
 down on purpose, and the ladder applies to it in full.
+
+A spent controller is silent for a different reason. Linking owes the comms
+processor a window report (L-195), and the controller has no revision left to
+number one, so any link it made would break L-195 on its first message. The
+counter belongs to the controller's boot, which is why a comms processor reboot
+changes nothing and only a controller reboot does. Heartbeats go with `LinkUp`
+because an answered heartbeat is what keeps the comms processor linked (L-120):
+a controller that kept answering them would leave the comms processor routing
+clients to a side that refuses every frame. And no `0x0801`, because that record
+is the ladder's first rung and says the comms processor stopped answering
+(L-110, L-022). Here it did not, and a log reader would go looking for a radio
+fault that is not there.
 
 **L-116** — When the controller starts keeping the link down on purpose
 (L-115), it MUST write one comms held down (`0x0807`) record naming why, and
@@ -1518,8 +1535,10 @@ its monotonic deadline when first sending, never from the original duration afte
 a delay. Each new report, including a resynchronisation of unchanged state, has a
 strictly increasing revision within the controller boot; retries
 retain the same revision and body. Revisions MUST NOT wrap: at exhaustion the
-controller takes the link down, keeps it down without running the ladder
-(L-115), and only a controller reboot permits another opening. A closed state
+controller takes the link down and goes silent on it as a controller with no
+`device_id` does (L-115): no `LinkUp`, no heartbeat, no answer to either, no
+ladder and no comms link lost (`0x0801`). Only a controller reboot permits
+another link or another opening. A closed state
 supersedes pending open retries; an unsent expired opening is replaced by the
 closed state.
 
