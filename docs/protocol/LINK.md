@@ -347,10 +347,13 @@ LinkUp  0x60  ·  LinkUp  0xE0
                               has no written master (L-132)
   8: device_id        bstr16  controller only: the `device_id` of `Discover`
                               key 3 (L-035)
+  9: net_origin       bstr8   *optional*, comms only: the origin token stored
+                              with that version; absent when `net_version` is
+                              0 or absent (L-132, L-138)
 ```
 
-Request and response carry the same fields, except field 7, which only the comms
-processor sends, and field 8, which only the controller sends. This is a mutual statement, not a query — whoever comes up first
+Request and response carry the same fields, except fields 7 and 9, which only
+the comms processor sends, and field 8, which only the controller sends. This is a mutual statement, not a query — whoever comes up first
 says who it is, and the answer says who the other one is.
 
 **L-030** — Both sides MUST send `LinkUp` at boot, and either side MAY send it
@@ -886,6 +889,8 @@ NetConfig  0x65
   4: psk          text    8–63 bytes, omitted when op = clear
   5: country      text    exactly 2 bytes, ISO 3166-1 alpha-2; omitted for unwritten clear
   6: hostname     text    ≤ 32 bytes; omitted for unwritten clear
+  7: origin       bstr8   the section's origin token (L-138); omitted for
+                          unwritten clear
 
 NetConfigAck  0xE5
   1: outcome      u8      1 stored · 2 rejected_invalid · 3 nvs_write_failed
@@ -911,18 +916,40 @@ persist the absence of the network section and report 0, even if the module
 previously held another unit's network. A successful ordinary clear MUST store
 and report its nonzero version. An empty NVS also reports 0. Zero describes the
 current unwritten master state, not the module's provisioning history.
+`LinkUp.net_origin` MUST be the origin token persisted with that version, in
+the same record, and MUST be absent when the version reported is 0. A receiver
+MUST refuse a comms `LinkUp` carrying `net_origin` without a nonzero
+`net_version`, and a controller `LinkUp` carrying it at all, as it refuses any
+body with a key its sender does not send.
 
 Reporting the version actually stored lets the controller retry a failed write.
 Reporting 0 after an ordinary clear would instead repeat that clear forever:
-the controller holds version *n* and the cache reports 0.
+the controller holds version *n* and the cache reports 0. The token follows the
+version for the same reason: a token read from RAM after a failed write tells
+the controller the cache is its own when the flash still holds somebody
+else's.
 
 **L-133** — The controller MUST push `NetConfig` after every `LinkUp` whose
-`net_version` does not equal its own version, and MUST NOT withhold the push
-because the version reported is higher. The rule is *different*, not *newer*. A
-fresh board reports 0 and gets provisioned. A board that came out of another unit
-reports some larger number and gets overwritten anyway, because those credentials
-belong to somebody else's site and a version comparison is not a claim about who
-is right. Comparing for newer is what turns a board swap into a drive.
+`net_version` does not equal its own version, or whose `net_origin` is absent or
+differs from its own origin token while its master section is written, and MUST
+NOT withhold the push because the version reported is higher. The rule is
+*different*, not *newer*. A fresh board reports 0 and gets provisioned. A board
+that came out of another unit reports some larger number and gets overwritten
+anyway, because those credentials belong to somebody else's site and a version
+comparison is not a claim about who is right. Comparing for newer is what turns
+a board swap into a drive.
+
+A version alone cannot say whose configuration a cache holds. A board out of
+another unit can report the very version this controller has reached, and so
+can a board that was unplugged while this controller repaired its own section
+(P-100, P-108) and counted back up from 1. Both carry credentials this
+controller did not write, and both look current by version. The origin token
+(L-138) is what tells them apart, so with a written master the comparison is
+version **and** token. A `LinkUp` with no `net_origin` is compared as a
+different token: a cache that cannot say where it came from is not one the
+controller vouches for. With an unwritten or unreadable master the controller
+has no token to compare, and the rule stays version-only: 0 against 0 needs no
+push.
 
 When the versions differ and the master section has never been written or is
 unreadable (P-108), the controller MUST send `op = clear`, `version = 0`, with
@@ -936,8 +963,8 @@ MUST be safe. `stored` MUST be sent only after erasure is durable; subsequent
 `LinkUp` reports 0, ending the version mismatch.
 
 A receiver MUST reject a version-zero `set`, an unwritten clear carrying any
-of keys 3 through 6, or a nonzero clear missing country or hostname with
-`rejected_invalid`, without changing its cache or radio state. Unknown extension
+of keys 3 through 7, or a nonzero `set` or `clear` missing country, hostname or
+origin with `rejected_invalid`, without changing its cache or radio state. Unknown extension
 keys retain the ordinary unknown-key behavior. Zero is reserved for the unwritten
 clear; ordinary sets and factory clears use the written section's nonzero version.
 
@@ -950,7 +977,7 @@ nobody finds out from the device.
 
 **L-135** — On a factory reset of a written network section, the controller
 MUST send `NetConfig` with `op = clear` at the incremented, nonzero section
-version, retaining the section's country and hostname, so a passphrase does not
+version, retaining the section's country, hostname and origin token, so a passphrase does not
 survive on a board that is about to be pulled and
 shipped somewhere. The controller is the only side that knows a reset happened,
 so if it does not say so the credential stays where nobody will think to look for
@@ -969,7 +996,9 @@ and the controller MUST push again at the next `LinkUp` and log the failure. A
 board with worn-out NVS otherwise associates fine until its next reboot and then
 goes dark for no visible reason. Staying on the air with the RAM copy keeps the
 site reachable now; the ack and the log entry are what tell somebody the flash is
-finished, before the trip rather than after it.
+finished, before the trip rather than after it. Until a write succeeds,
+`LinkUp` MUST keep reporting the persisted `net_origin` beside the persisted
+version (L-132), never the token of the `NetConfig` held in RAM.
 
 For an unwritten clear, an erase failure MUST still clear the RAM copy and stop
 Wi-Fi transmission. It MUST NOT resume the foreign network. The acknowledgement
@@ -978,6 +1007,26 @@ MUST continue to report that version until erasure succeeds. The controller
 retries the unwritten clear at the next `LinkUp`. After a reboot, the existing
 cached-boot rules apply until the controller resends the clear; an unsuccessful
 erase cannot promise durable removal.
+
+**L-138** — Whenever the controller creates the network section from version
+0, by its first write or by a write that repairs an unreadable section (P-100,
+P-108), it MUST draw a new 8-byte origin token from the random bit generator
+(P-237) and store it in the section. Every later write of that section,
+including the L-135 factory clear, MUST keep the token, and every nonzero
+`NetConfig` MUST carry it as key 7. The comms processor MUST persist the token
+in the same atomic record as the configuration and version it arrived with, so
+no reboot or interrupted write can pair one version with another token.
+
+The token is a fact about the section, not about the controller. The
+controller's `device_id` would catch a board out of another unit, and would
+miss the case this controller creates itself: a repair restarts the version at
+1, and a module that missed it comes back holding the old passphrase at a
+version the repaired section may already have reached. A token drawn at
+creation changes with every repair and stays put through ordinary writes and a
+factory clear, which keeps the section. Eight bytes from P-237 make two
+sections sharing a token a coincidence nobody will see, and the token is not a
+secret: it names a configuration and grants nothing, so diagnostics MAY print
+it where they must not print a passphrase.
 
 ---
 

@@ -1,8 +1,10 @@
 //! An unwritten master can clear a foreign cache without inventing radio metadata.
 use km43::{
-    LinkEnvelope, LinkError, LinkField, LinkHeader, LinkMessageType, NetChange, NetConfigOp, ReqId,
-    SessionId,
+    LinkEnvelope, LinkError, LinkField, LinkHeader, LinkMessageType, NetChange, NetConfigOp,
+    NetOrigin, ReqId, SessionId,
 };
+
+const ORIGIN: NetOrigin = NetOrigin::new(*b"origin-1");
 
 fn header() -> LinkHeader {
     LinkHeader {
@@ -75,11 +77,13 @@ fn l_135_written_operations_cannot_use_zero_version() {
             psk: "password",
             country: "CA",
             hostname: "unit",
+            origin: ORIGIN,
         },
         NetChange::Clear {
             version: 0,
             country: "CA",
             hostname: "unit",
+            origin: ORIGIN,
         },
     ] {
         assert_eq!(
@@ -108,6 +112,7 @@ fn l_135_written_clear_still_requires_both_metadata_fields() {
             version,
             country: "CA",
             hostname: "unit",
+            origin: ORIGIN,
         };
         let len = clear.write(header(), &mut bytes).unwrap();
         assert_eq!(

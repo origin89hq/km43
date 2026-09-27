@@ -1077,7 +1077,7 @@ fn every_published_link_frame_is_the_one_this_crate_frames_and_checksums() {
     let envelopes = strings_of(link, "envelope_cbor");
     let frames = strings_of(link, "encoded_with_delimiter");
     let crcs = strings_of(link, "crc16_ccitt_false");
-    assert_eq!(envelopes.len(), 22, "the link block changed shape");
+    assert_eq!(envelopes.len(), 24, "the link block changed shape");
     assert_eq!(frames.len(), envelopes.len());
     assert_eq!(crcs.len(), envelopes.len());
 
@@ -2008,7 +2008,7 @@ fn the_published_change_records_are_the_ones_this_crate_reads() {
 /// That is the test: the artefact is the witness, and it is read here rather
 /// than transcribed.
 ///
-/// cites: L-010, L-070, L-132, L-152, L-170
+/// cites: L-010, L-070, L-132, L-133, L-152, L-170
 #[test]
 fn every_published_link_frame_is_one_this_crate_decodes() {
     use km43::{
@@ -2020,7 +2020,7 @@ fn every_published_link_frame_is_one_this_crate_decodes() {
     let frames = link_envelopes();
     assert_eq!(
         frames.len(),
-        22,
+        24,
         "the published link section changed shape; this test walks it by count \
          so a vector that stops being published cannot go unnoticed"
     );
@@ -2045,7 +2045,7 @@ fn every_published_link_frame_is_one_this_crate_decodes() {
             // carries no session because it carries no client; a frame with one
             // is refused above, and this is where that would show.
             LinkMessageType::LinkUp => {
-                a_published_link_up_reads(envelope);
+                a_published_link_up_reads(envelope, bytes);
                 seen += 1;
             }
             LinkMessageType::LinkUpAck => {
@@ -2078,7 +2078,7 @@ fn every_published_link_frame_is_one_this_crate_decodes() {
                 seen += 1;
             }
             LinkMessageType::NetConfig => {
-                a_published_unwritten_clear_reads_and_writes(envelope, bytes);
+                a_published_net_config_reads_and_writes(envelope, bytes);
                 seen += 1;
             }
             LinkMessageType::NetConfigAck => {
@@ -2127,8 +2127,25 @@ fn every_published_link_frame_is_one_this_crate_decodes() {
     assert_eq!(seen, frames.len(), "a published frame was walked past");
 }
 
-fn a_published_link_up_reads(envelope: km43::LinkEnvelope<'_>) {
+fn a_published_link_up_reads(envelope: km43::LinkEnvelope<'_>, bytes: &[u8]) {
+    let header = km43::LinkHeader {
+        kind: km43::LinkMessageType::LinkUp,
+        session: envelope.session(),
+        req_id: envelope.req_id(),
+    };
     let up = km43::LinkUp::decode(envelope).expect("the published LinkUp reads");
+    let mut written = [0; 128];
+    let len = up.write(header, &mut written).expect("the LinkUp encodes");
+    assert_eq!(
+        &written[..len],
+        bytes,
+        "a published comms LinkUp this crate writes differently"
+    );
+    if up.net_version != Some(0) {
+        l_133_the_published_module_holds_the_published_section(&up);
+        return;
+    }
+    assert_eq!(up.net_origin, None, "an empty board names no origin");
     assert_eq!(up.role, km43::Side::Comms);
     assert_eq!(up.boot_id, 0x5eed_face, "the boot_id the generator wrote");
     // L-031 makes this `fw` the `fw_comms` the controller reports, so the
@@ -2167,17 +2184,71 @@ fn l_035_the_published_controller_link_up_carries_the_published_device_id(
     );
 }
 
-fn a_published_unwritten_clear_reads_and_writes(envelope: km43::LinkEnvelope<'_>, bytes: &[u8]) {
+fn a_published_net_config_reads_and_writes(envelope: km43::LinkEnvelope<'_>, bytes: &[u8]) {
     let header = km43::LinkHeader {
         kind: km43::LinkMessageType::NetConfig,
         session: envelope.session(),
         req_id: envelope.req_id(),
     };
-    let change = km43::NetChange::decode(envelope).expect("published unwritten clear");
-    assert_eq!(change, km43::NetChange::ClearUnwritten);
-    let mut written = [0; 64];
-    let len = change.write(header, &mut written).expect("clear encodes");
+    let change = km43::NetChange::decode(envelope).expect("a published NetConfig");
+    match change {
+        km43::NetChange::ClearUnwritten => {}
+        km43::NetChange::Set {
+            version,
+            country,
+            origin,
+            ..
+        } => {
+            assert_eq!(
+                country.len(),
+                2,
+                "a written set carries its country (L-134)"
+            );
+            assert_eq!(
+                (Some(version), Some(origin)),
+                published_written_link_up_stamp(),
+                "the published set and the module that stored it name two sections"
+            );
+        }
+        km43::NetChange::Clear { .. } => panic!("no written clear is published"),
+    }
+    let mut written = [0; 128];
+    let len = change
+        .write(header, &mut written)
+        .expect("the NetConfig encodes");
     assert_eq!(&written[..len], bytes);
+}
+
+/// The version and origin in the published written `LinkUp`, read from the
+/// file rather than retyped, so the set above is compared with the other
+/// published frame.
+fn published_written_link_up_stamp() -> (Option<u32>, Option<km43::NetOrigin>) {
+    let bytes = hex_in(object("link_up_0x60_written"), "envelope_cbor");
+    let envelope = km43::LinkEnvelope::decode(&bytes).expect("an envelope");
+    let up = km43::LinkUp::decode(envelope).expect("the written LinkUp reads");
+    (up.net_version, up.net_origin)
+}
+
+/// The published pair is the equal-version, same-origin case: the module
+/// holds what the controller would send, so L-133 pushes nothing, and the
+/// empty board beside it is pushed.
+fn l_133_the_published_module_holds_the_published_section(up: &km43::LinkUp<'_>) {
+    let bytes = hex_in(object("net_config_set_0x65"), "envelope_cbor");
+    let set = km43::NetChange::decode(km43::LinkEnvelope::decode(&bytes).expect("an envelope"))
+        .expect("the published set reads");
+    let master = km43::NetStamp::of(&set).expect("a written set");
+    assert_eq!(up.net_version, Some(master.net_version()));
+    assert_eq!(up.net_origin, master.net_origin());
+    assert!(
+        !master.needs_push(up),
+        "the module holds the published section"
+    );
+    let empty = km43::LinkUp {
+        net_version: Some(0),
+        net_origin: None,
+        ..*up
+    };
+    assert!(master.needs_push(&empty), "an empty board is provisioned");
 }
 
 /// Re-encode the actual committed bytes, so moving a field changes the witness.

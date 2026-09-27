@@ -36,6 +36,7 @@ use crate::generated::{
 use crate::handshake::Version;
 use crate::kdf::DEVICE_ID_BYTES;
 use crate::limits::MAX_LINK_TEXT;
+use crate::net_origin::NetOrigin;
 use crate::wifi::WifiError;
 
 impl LinkErrorCode {
@@ -224,6 +225,9 @@ pub enum LinkField {
     NetVersion,
     /// The controller's `device_id`, which the comms processor advertises.
     DeviceId,
+    /// `LinkUp`'s `net_origin`: the origin token stored with `net_version`
+    /// (L-132, L-138).
+    NetOrigin,
     /// A connection handle. Never 0 on a `ClientConnected`; 0 means *all* on a
     /// `CloseConnection`.
     Conn,
@@ -251,6 +255,8 @@ pub enum LinkField {
     Country,
     /// `NetConfig`'s `hostname`.
     Hostname,
+    /// `NetConfig`'s `origin`, the section's origin token (L-138).
+    Origin,
     /// `TimeOffer`'s `unix_ms`.
     UnixMs,
     /// `TimeOffer`'s `source`.
@@ -286,6 +292,7 @@ impl fmt::Display for LinkField {
             Self::Hw => "hw",
             Self::NetVersion => "net_version",
             Self::DeviceId => "device_id",
+            Self::NetOrigin => "net_origin",
             Self::Conn => "conn",
             Self::Uptime => "uptime_s",
             Self::Conns => "conns",
@@ -299,6 +306,7 @@ impl fmt::Display for LinkField {
             Self::Psk => "psk",
             Self::Country => "country",
             Self::Hostname => "hostname",
+            Self::Origin => "origin",
             Self::UnixMs => "unix_ms",
             Self::Source => "source",
             Self::AccuracyMs => "accuracy_ms",
@@ -338,6 +346,13 @@ pub enum LinkError {
     NetVersionFromController,
     /// `device_id` from the comms processor, which only the controller sends.
     DeviceIdFromComms,
+    /// `net_origin` from the controller, which only the comms processor sends.
+    NetOriginFromController,
+    /// A comms `net_origin` beside a `net_version` of 0 or none. A token names
+    /// a written network, and a cache that holds none has nothing to name.
+    NetOriginWithoutVersion,
+    /// An origin token that is not 8 bytes (L-138). Never padded or cut.
+    OriginNotEight(usize),
     /// A `conn` of 0 where a handle is required. L-060 never allocates 0, so it
     /// names no connection — except in `CloseConnection`, where it deliberately
     /// names every one.
@@ -364,6 +379,9 @@ pub enum LinkError {
     ZeroNetworkVersion,
     /// An unwritten clear carried radio metadata absent from its master.
     UnwrittenClearCarriedMetadata,
+    /// An unwritten clear carried an origin token. There is no section for it
+    /// to name, and a cache that stored one would report a network it erased.
+    UnwrittenClearCarriedOrigin,
     /// A `digest` that is not the 32 bytes a SHA-256 is. Carried rather than
     /// padded or cut: a digest of any other length matches no image, and an
     /// `authorise` built on one is a release nothing can ever install.
@@ -417,6 +435,13 @@ impl fmt::Display for LinkError {
             Self::DeviceIdFromComms => {
                 f.write_str("device_id arrived from comms, and only the controller sends it")
             }
+            Self::NetOriginFromController => {
+                f.write_str("net_origin arrived from the controller, and only comms sends it")
+            }
+            Self::NetOriginWithoutVersion => {
+                f.write_str("net_origin arrived without a written net_version to go with it")
+            }
+            Self::OriginNotEight(len) => write!(f, "an origin token of {len} bytes is not 8"),
             Self::NoSuchConnection => f.write_str("conn 0 names no connection"),
             Self::UnknownTransport(raw) => write!(f, "transport {raw} is not allocated"),
             Self::UnknownReason(raw) => write!(f, "reason {raw} is not allocated"),
@@ -435,6 +460,9 @@ impl fmt::Display for LinkError {
             Self::ZeroNetworkVersion => f.write_str("a written network version is zero"),
             Self::UnwrittenClearCarriedMetadata => {
                 f.write_str("an unwritten clear carried radio metadata")
+            }
+            Self::UnwrittenClearCarriedOrigin => {
+                f.write_str("an unwritten clear carried an origin token")
             }
             Self::DigestNotSha256(len) => {
                 write!(f, "a digest of {len} bytes is not a SHA-256")
@@ -456,8 +484,8 @@ impl core::error::Error for LinkError {}
 ///
 /// A mutual statement rather than a query: whoever comes up first says who it
 /// is, and the answer says who the other one is. Both directions carry the same
-/// fields except `net_version`, which only the comms processor sends, and
-/// `device_id`, which only the controller sends.
+/// fields except `net_version` and `net_origin`, which only the comms processor
+/// sends, and `device_id`, which only the controller sends.
 ///
 /// **`boot_id` is the field that matters.** What tears every connection down is
 /// a *changed* one, not the arrival of this message (L-030, L-042) — so a
@@ -487,6 +515,11 @@ pub struct LinkUp<'a> {
     /// processor advertises in TXT `id` (L-035). The comms processor has no
     /// other way to learn it short of reading relayed `Discover` bodies.
     pub device_id: Option<[u8; DEVICE_ID_BYTES]>,
+    /// Key 9, comms only: the origin token persisted with `net_version`, and
+    /// absent when that is 0 (L-132). The controller compares it as well as
+    /// the version, because an equal version can still be somebody else's
+    /// network (L-133).
+    pub net_origin: Option<NetOrigin>,
 }
 
 impl<'a> LinkUp<'a> {
@@ -496,16 +529,17 @@ impl<'a> LinkUp<'a> {
     /// Write the whole envelope and hand back its length.
     ///
     /// # Errors
-    /// A text field past the cap, an `fw` outside L-034's format, a
-    /// `net_version` from the controller, or a `dst` that will not hold it.
+    /// A text field past the cap, an `fw` outside L-034's format, a key from
+    /// the side that does not send it, or a `dst` that will not hold it.
     pub fn write(&self, header: LinkHeader, dst: &mut [u8]) -> Result<usize, LinkError> {
         bounded(LinkField::Fw, self.fw)?;
         versioned(LinkField::Fw, self.fw)?;
         bounded(LinkField::Hw, self.hw)?;
-        Self::sides_agree(self.role, self.net_version, self.device_id)?;
+        self.sides_agree()?;
         let keys = LinkUp::SHARED_KEYS
             + usize::from(self.net_version.is_some())
-            + usize::from(self.device_id.is_some());
+            + usize::from(self.device_id.is_some())
+            + usize::from(self.net_origin.is_some());
         let mut cbor = header
             .write(keys, dst)
             .map_err(|_| LinkError::Cbor(CborError::DestinationTooSmall))?;
@@ -529,12 +563,16 @@ impl<'a> LinkUp<'a> {
             cbor.key(8)?;
             cbor.bytes(device_id)?;
         }
+        if let Some(origin) = &self.net_origin {
+            cbor.key(9)?;
+            cbor.bytes(origin.bytes())?;
+        }
         Ok(cbor.finish()?)
     }
 
     /// Read one out of a link-local envelope.
     ///
-    /// A key beside the eight is skipped (P-013): an unknown extra field is a
+    /// A key beside the nine is skipped (P-013): an unknown extra field is a
     /// newer peer being chatty. An unknown `role` is not — that is P-014, and it
     /// is refused.
     ///
@@ -552,6 +590,7 @@ impl<'a> LinkUp<'a> {
         let mut hw = None;
         let mut net_version = None;
         let mut device_id = None;
+        let mut net_origin = None;
 
         for _ in 0..pairs {
             match body.key()? {
@@ -574,41 +613,59 @@ impl<'a> LinkUp<'a> {
                         .map_err(|_| LinkError::DeviceIdNotSixteen(bytes.len()))?;
                     once(&mut device_id, LinkField::DeviceId, whole)?;
                 }
+                9 => {
+                    let origin = NetOrigin::try_from(body.bytes()?)?;
+                    once(&mut net_origin, LinkField::NetOrigin, origin)?;
+                }
                 _ => body.skip()?,
             }
         }
         body.finish()?;
 
-        let role = role.ok_or(LinkError::Missing(LinkField::Role))?;
-        Self::sides_agree(role, net_version, device_id)?;
-        Ok(Self {
+        let up = Self {
             version: Version {
                 major: major.ok_or(LinkError::Missing(LinkField::ProtocolMajor))?,
                 minor: minor.ok_or(LinkError::Missing(LinkField::ProtocolMinor))?,
             },
-            role,
+            role: role.ok_or(LinkError::Missing(LinkField::Role))?,
             fw: fw.ok_or(LinkError::Missing(LinkField::Fw))?,
             boot_id: boot_id.ok_or(LinkError::Missing(LinkField::BootId))?,
             hw: hw.ok_or(LinkError::Missing(LinkField::Hw))?,
             net_version,
             device_id,
-        })
+            net_origin,
+        };
+        up.sides_agree()?;
+        Ok(up)
     }
 
-    /// Each side's own key comes from that side only, and the controller's is
-    /// required (L-035): a comms processor linked without it would advertise a
-    /// service no client can pick out.
-    fn sides_agree(
-        role: Side,
-        net_version: Option<u32>,
-        device_id: Option<[u8; DEVICE_ID_BYTES]>,
-    ) -> Result<(), LinkError> {
-        match (role, net_version, device_id) {
-            (Side::Controller, Some(_), _) => Err(LinkError::NetVersionFromController),
-            (Side::Controller, None, None) => Err(LinkError::Missing(LinkField::DeviceId)),
-            (Side::Comms, _, Some(_)) => Err(LinkError::DeviceIdFromComms),
-            (Side::Controller, None, Some(_)) | (Side::Comms, _, None) => Ok(()),
+    /// Each side's own keys come from that side only, and the controller's
+    /// `device_id` is required (L-035): a comms processor linked without it
+    /// would advertise a service no client can pick out. A token rides only
+    /// beside a written version (L-132).
+    fn sides_agree(&self) -> Result<(), LinkError> {
+        match self.role {
+            Side::Controller => {
+                if self.net_version.is_some() {
+                    return Err(LinkError::NetVersionFromController);
+                }
+                if self.net_origin.is_some() {
+                    return Err(LinkError::NetOriginFromController);
+                }
+                if self.device_id.is_none() {
+                    return Err(LinkError::Missing(LinkField::DeviceId));
+                }
+            }
+            Side::Comms => {
+                if self.device_id.is_some() {
+                    return Err(LinkError::DeviceIdFromComms);
+                }
+                if self.net_origin.is_some() && matches!(self.net_version, None | Some(0)) {
+                    return Err(LinkError::NetOriginWithoutVersion);
+                }
+            }
         }
+        Ok(())
     }
 }
 
@@ -1017,7 +1074,8 @@ impl CloseReport {
 }
 
 /// The controller's network master, including an explicitly unwritten section.
-/// Clears carry no credentials; an unwritten clear also carries no radio metadata.
+/// Clears carry no credentials; an unwritten clear also carries no radio metadata
+/// and no origin token, and every other change carries the section's (L-138).
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum NetChange<'a> {
     /// Join this network.
@@ -1032,6 +1090,8 @@ pub enum NetChange<'a> {
         country: &'a str,
         /// Key 6, at most [`MAX_LINK_TEXT`].
         hostname: &'a str,
+        /// Key 7, the section's origin token (L-138).
+        origin: NetOrigin,
     },
     /// Forget a foreign cache when the master section has never been written.
     /// Encodes `clear` at version zero without country or hostname (L-133).
@@ -1044,6 +1104,8 @@ pub enum NetChange<'a> {
         country: &'a str,
         /// Key 6.
         hostname: &'a str,
+        /// Key 7, kept through the factory clear (L-135, L-138).
+        origin: NetOrigin,
     },
 }
 
@@ -1059,6 +1121,7 @@ impl fmt::Debug for NetChange<'_> {
                 psk,
                 country,
                 hostname,
+                origin,
             } => f
                 .debug_struct("Set")
                 .field("version", version)
@@ -1066,16 +1129,19 @@ impl fmt::Debug for NetChange<'_> {
                 .field("psk", &format_args!("{} bytes", psk.len()))
                 .field("country", country)
                 .field("hostname", hostname)
+                .field("origin", origin)
                 .finish(),
             Self::Clear {
                 version,
                 country,
                 hostname,
+                origin,
             } => f
                 .debug_struct("Clear")
                 .field("version", version)
                 .field("country", country)
                 .field("hostname", hostname)
+                .field("origin", origin)
                 .finish(),
         }
     }
@@ -1099,20 +1165,32 @@ impl<'a> NetChange<'a> {
                 psk,
                 country,
                 hostname,
+                origin,
             } => {
                 bounded(LinkField::Ssid, ssid)?;
                 if psk.len() < PSK_SHORTEST || psk.len() > PSK_LONGEST {
                     return Err(LinkError::PassphraseLength(psk.len()));
                 }
-                (NetConfigOp::Set, *version, Some((*country, *hostname)), 6)
+                (
+                    NetConfigOp::Set,
+                    *version,
+                    Some((*country, *hostname, *origin)),
+                    7,
+                )
             }
             Self::Clear {
                 version,
                 country,
                 hostname,
-            } => (NetConfigOp::Clear, *version, Some((*country, *hostname)), 4),
+                origin,
+            } => (
+                NetConfigOp::Clear,
+                *version,
+                Some((*country, *hostname, *origin)),
+                5,
+            ),
         };
-        if let Some((country, hostname)) = metadata {
+        if let Some((country, hostname, _)) = metadata {
             if version == 0 {
                 return Err(LinkError::ZeroNetworkVersion);
             }
@@ -1134,17 +1212,20 @@ impl<'a> NetChange<'a> {
             cbor.key(4)?;
             cbor.text(psk)?;
         }
-        if let Some((country, hostname)) = metadata {
+        if let Some((country, hostname, origin)) = metadata {
             cbor.key(5)?;
             cbor.text(country)?;
             cbor.key(6)?;
             cbor.text(hostname)?;
+            cbor.key(7)?;
+            cbor.bytes(origin.bytes())?;
         }
         Ok(cbor.finish()?)
     }
 
-    /// Refuses credentials on any clear and metadata on an unwritten clear.
-    /// Written operations require a nonzero version and both metadata fields.
+    /// Refuses credentials on any clear, and metadata or a token on an
+    /// unwritten clear. Written operations require a nonzero version, both
+    /// metadata fields and the origin token.
     pub fn decode(envelope: LinkEnvelope<'a>) -> Result<Self, LinkError> {
         let pairs = envelope.keys();
         let mut body = envelope.into_body();
@@ -1154,6 +1235,7 @@ impl<'a> NetChange<'a> {
         let mut psk = None;
         let mut country = None;
         let mut hostname = None;
+        let mut origin = None;
         for _ in 0..pairs {
             match body.key()? {
                 1 => {
@@ -1167,6 +1249,10 @@ impl<'a> NetChange<'a> {
                 4 => once(&mut psk, LinkField::Psk, body.text()?)?,
                 5 => once(&mut country, LinkField::Country, body.text()?)?,
                 6 => once(&mut hostname, LinkField::Hostname, body.text()?)?,
+                7 => {
+                    let token = NetOrigin::try_from(body.bytes()?)?;
+                    once(&mut origin, LinkField::Origin, token)?;
+                }
                 _ => body.skip()?,
             }
         }
@@ -1182,6 +1268,9 @@ impl<'a> NetChange<'a> {
                 if country.is_some() || hostname.is_some() {
                     return Err(LinkError::UnwrittenClearCarriedMetadata);
                 }
+                if origin.is_some() {
+                    return Err(LinkError::UnwrittenClearCarriedOrigin);
+                }
                 return Ok(Self::ClearUnwritten);
             }
         }
@@ -1196,6 +1285,7 @@ impl<'a> NetChange<'a> {
             LinkField::Hostname,
             hostname.ok_or(LinkError::Missing(LinkField::Hostname))?,
         )?;
+        let origin = origin.ok_or(LinkError::Missing(LinkField::Origin))?;
 
         match op {
             NetConfigOp::Set => {
@@ -1212,12 +1302,14 @@ impl<'a> NetChange<'a> {
                     psk,
                     country,
                     hostname,
+                    origin,
                 })
             }
             NetConfigOp::Clear => Ok(Self::Clear {
                 version,
                 country,
                 hostname,
+                origin,
             }),
         }
     }
@@ -2307,6 +2399,7 @@ mod tests {
             version: 2,
             country: "CA",
             hostname: "cabin",
+            origin: AN_ORIGIN,
         };
         let NetChange::Clear { version, .. } = cleared else {
             panic!("the fixture is a clear");
@@ -2369,8 +2462,11 @@ mod tests {
             hw: "esp32-c6-devkitc-1",
             net_version: Some(7),
             device_id: None,
+            net_origin: Some(AN_ORIGIN),
         }
     }
+
+    const AN_ORIGIN: NetOrigin = NetOrigin::new(*b"o89-sect");
 
     const A_DEVICE_ID: [u8; DEVICE_ID_BYTES] = *b"ORIGIN89 DEMO 01";
 
@@ -2379,6 +2475,7 @@ mod tests {
             role: Side::Controller,
             net_version: None,
             device_id: Some(A_DEVICE_ID),
+            net_origin: None,
             ..a_link_up()
         }
     }
@@ -2702,7 +2799,7 @@ mod tests {
     /// version", and one sentence for both sends them to the wrong fix.
     #[test]
     fn every_link_refusal_says_something_of_its_own() {
-        const EVERY: [LinkError; 16] = [
+        const EVERY: [LinkError; 20] = [
             LinkError::Missing(LinkField::Fw),
             LinkError::Duplicate(LinkField::Fw),
             LinkError::UnknownRole(3),
@@ -2721,6 +2818,10 @@ mod tests {
             LinkError::PassphraseLength(7),
             LinkError::CountryNotTwoBytes(3),
             LinkError::ClearCarriedCredentials,
+            LinkError::NetOriginFromController,
+            LinkError::NetOriginWithoutVersion,
+            LinkError::OriginNotEight(7),
+            LinkError::UnwrittenClearCarriedOrigin,
             LinkError::Cbor(CborError::WrongType),
         ];
         Rendering::<96>::each_says_something_of_its_own(&EVERY);
@@ -2865,7 +2966,7 @@ mod tests {
     }
 
     /// The same, for the body with the most fields to get wrong. `NetConfig`
-    /// has six, four of them text, and three of the four were reported under
+    /// has seven, four of them text, and three of the four were reported under
     /// another field's name.
     #[test]
     fn a_net_config_refusal_names_its_own_field() {
@@ -2876,6 +2977,10 @@ mod tests {
             ),
             (&[(1, "set"), (2, "1"), (6, "o89")][..], LinkField::Country),
             (&[(1, "set"), (2, "1"), (5, "ca")][..], LinkField::Hostname),
+            (
+                &[(1, "set"), (2, "1"), (5, "ca"), (6, "o89")][..],
+                LinkField::Origin,
+            ),
         ] {
             let mut bytes = [0u8; 96];
             let mut cbor = link_header(LinkMessageType::NetConfig)
@@ -3180,6 +3285,7 @@ mod tests {
             psk: "correct horse battery",
             country: "CA",
             hostname: "o89",
+            origin: AN_ORIGIN,
         }
     }
 
@@ -3205,6 +3311,7 @@ mod tests {
                 version: 5,
                 country: "CA",
                 hostname: "o89",
+                origin: AN_ORIGIN,
             },
         ] {
             let len = change
@@ -3228,12 +3335,13 @@ mod tests {
     fn l_131_a_clear_cannot_be_built_carrying_credentials() {
         // `NetChange::Clear` has no `ssid` and no `psk` field, so the frame
         // cannot be constructed. What is asserted here is the encoding: a clear
-        // writes four keys and neither of the two that carry secrets.
+        // writes five keys and neither of the two that carry secrets.
         let mut bytes = [0u8; 256];
         let len = NetChange::Clear {
             version: 5,
             country: "CA",
             hostname: "o89",
+            origin: AN_ORIGIN,
         }
         .write(link_header(LinkMessageType::NetConfig), &mut bytes)
         .expect("it encodes");
@@ -3243,7 +3351,7 @@ mod tests {
             "a clear put a network name on the link"
         );
         let envelope = crate::envelope::LinkEnvelope::decode(frame).expect("an envelope");
-        assert_eq!(envelope.keys(), 4, "a clear wrote a key it should not have");
+        assert_eq!(envelope.keys(), 5, "a clear wrote a key it should not have");
     }
 
     /// The other half of L-131: a `clear` that **arrives** carrying credentials
@@ -3294,6 +3402,7 @@ mod tests {
                 psk,
                 country: "CA",
                 hostname: "o89",
+                origin: AN_ORIGIN,
             };
             assert_eq!(
                 change
@@ -3318,6 +3427,7 @@ mod tests {
                 psk: "correct horse battery",
                 country,
                 hostname: "o89",
+                origin: AN_ORIGIN,
             };
             assert_eq!(
                 change

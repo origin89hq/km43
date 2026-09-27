@@ -1231,6 +1231,7 @@ mod tests {
                 psk: psk.as_str(),
                 country: write.country.as_str(),
                 hostname: write.hostname.as_str(),
+                origin: crate::NetOrigin::new([0x5A; crate::NET_ORIGIN_BYTES]),
             };
             let mut dst = [0; 256];
             let header = LinkHeader {
