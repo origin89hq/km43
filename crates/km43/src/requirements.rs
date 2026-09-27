@@ -1626,6 +1626,12 @@ pub const REQUIREMENTS: &[Requirement] = &[
         statement: "The controller MUST NOT emit `TimeOfferAck` outcome 3.",
     },
     Requirement {
+        id: "L-153",
+        document: "docs/protocol/LINK.md",
+        section: "Time offers",
+        statement: "The controller MUST refuse an offer whose `unix_ms` is outside the range its clock can hold with `refused_implausible`, and the clock MUST NOT move.",
+    },
+    Requirement {
         id: "L-160",
         document: "docs/protocol/LINK.md",
         section: "Time offers",

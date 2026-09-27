@@ -1369,6 +1369,31 @@ the table unemitted rather than being handed to whoever allocates next, exactly 
 stays in the offer alongside `server`: worth reading in a log, and deciding
 nothing.
 
+**L-153** — The controller MUST refuse an offer whose `unix_ms` is outside the
+range its clock can hold with `refused_implausible`, and the clock MUST NOT
+move. The rule binds at both edges of the range, on the first set after boot
+and on a correction to a known clock alike. The range is the controller's own:
+the Origin89 RTC holds 2000 through 2099, and a controller with another calendar
+has other edges. An offer L-150 or L-151 refuses keeps that refusal.
+
+Neither bound above keeps an offer inside the range. L-140's window comes from
+the controller's history by the same rule on every controller, and the range is
+a fact about one controller's hardware: a floor in 2095 opens a window reaching
+2105, and the Origin89 RTC stops at the end of 2099. L-150's cap does not
+either, because a known clock in the last seconds of 2099 is less than five
+seconds from a time it cannot hold. Before this rule such an offer had no
+answer, and a controller whose calendar refused the write sent nothing. The
+comms processor then retries it three times under L-015 and gives it up as
+failed, with nothing to tell a time the controller will never take from an
+offer lost on the cable.
+
+Outcome 2 is the answer an offer gets when sending it again will not help, which
+is what a time the clock cannot hold is. It is the offer's side of P-266 in
+[PROTOCOL.md](../PROTOCOL.md), which refuses a signed client `Time 0x0A` for the
+same range with `TimeAck` outcome 2, and no outcome of its own is allocated. A
+write that fails is not this refusal and MUST NOT be answered outcome 2: the RTC
+not taking a time it can represent might take it on the next offer.
+
 **L-160** — The controller MUST record any accepted clock change of more than
 5 seconds, whatever moved it, in the `time set` event (`0x0604`), carrying the
 old value alongside the new one and the source that set it. With the cap above,
