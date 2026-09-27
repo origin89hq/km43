@@ -2411,7 +2411,7 @@ scale = -1
 status = "live"
 
 [[metrics]]
-group = "`0x07xx` — charger stage durations"
+group = "`0x07xx` — charger stage"
 kind = 1793
 name = "time in bulk"
 unit = "min"
@@ -2419,7 +2419,7 @@ scale = 0
 status = "reserved"
 
 [[metrics]]
-group = "`0x07xx` — charger stage durations"
+group = "`0x07xx` — charger stage"
 kind = 1794
 name = "time in absorption"
 unit = "min"
@@ -2427,12 +2427,20 @@ scale = 0
 status = "reserved"
 
 [[metrics]]
-group = "`0x07xx` — charger stage durations"
+group = "`0x07xx` — charger stage"
 kind = 1795
 name = "time in float"
 unit = "min"
 scale = 0
 status = "reserved"
+
+[[metrics]]
+group = "`0x07xx` — charger stage"
+kind = 1796
+name = "charge stage (enum, see below)"
+unit = "—"
+scale = 0
+status = "live"
 
 
 [[events]]
@@ -3046,6 +3054,46 @@ value = 9
 name = "low-power entry"
 meaning = "An illegal entry into a low-power mode"
 
+# A normalized set each vendor's stage register maps onto: EPEver `0x3201`
+# D3–D2, Victron VE.Direct `CS` and Morningstar's charge state all land here
+# without loss. A vendor state with no member here is not rounded to the nearest
+# one: it is published `unnamed_state` with its raw code in a concern (P-164).
+
+[[enums.charge_stage]]
+value = 1
+name = "off"
+meaning = "Not charging: no source, or the charger is switched off"
+
+[[enums.charge_stage]]
+value = 2
+name = "bulk"
+meaning = "Delivering as much current as it can until the bank reaches the absorption voltage"
+
+[[enums.charge_stage]]
+value = 3
+name = "absorption"
+meaning = "Holding the absorption voltage while the current tapers"
+
+[[enums.charge_stage]]
+value = 4
+name = "float"
+meaning = "Holding the lower float voltage to keep a full bank full"
+
+[[enums.charge_stage]]
+value = 5
+name = "equalise"
+meaning = "A deliberate overcharge to even out a flooded bank's cells. The charger started it; this value never asks for one"
+
+[[enums.charge_stage]]
+value = 6
+name = "storage"
+meaning = "Holding a voltage below float for a bank left idle"
+
+[[enums.charge_stage]]
+value = 7
+name = "fault"
+meaning = "The charger reports it has stopped on a fault. Which fault is a concern, not this value"
+
 # The link-local enum spaces. Allocated here for the same reason the link error
 # codes are: a space allocated somewhere else is a space two people can allocate
 # from. LINK.md's body listings stay the documentation — they are where the rule
@@ -3628,7 +3676,7 @@ role = "battery pack"
 domain = "since_reset"
 dir = "positive_is_out"
 
-# Generator, tank, controller.
+# Generator, tank, charger, controller.
 
 [[dataset_metrics]]
 name = "generator-run-state"
@@ -3644,6 +3692,10 @@ name = "tank-level"
 kind = "tank level"
 
 [[dataset_metrics]]
+name = "charge-stage"
+kind = "charge stage (enum, see below)"
+
+[[dataset_metrics]]
 name = "uptime"
 kind = "uptime since boot"
 domain = "since_reset"
@@ -3657,10 +3709,6 @@ absent = "no metric kind"
 [[dataset_metrics]]
 name = "ac-power-factor"
 absent = "no metric kind"
-
-[[dataset_metrics]]
-name = "charge-stage"
-absent = "the charge stage enum space has no members yet (#3)"
 
 [[dataset_metrics]]
 name = "cycle-count"

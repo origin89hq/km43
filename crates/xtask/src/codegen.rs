@@ -531,6 +531,7 @@ pub fn heading_for(key: &str) -> String {
         "generator_state" => "## Generator states",
         "generator_selector" => "## Generator selector",
         "boot_reason" => "## Boot reasons",
+        "charge_stage" => "## Charge stages",
         "time_source" => "## Time sources",
         "client_kind" => "## Client kinds",
         "role" => "## Roles",

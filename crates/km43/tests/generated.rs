@@ -11,7 +11,7 @@
 //! is the only opinion.
 
 use km43::{
-    Approve, BootReason, Bucket, CapabilityBit, ClientCapability, ClientConnected,
+    Approve, BootReason, Bucket, CapabilityBit, ChargeStage, ClientCapability, ClientConnected,
     ClientDisconnected, ClientKind, CloseConnection, CloseReason, Command, CommandKind,
     CommsRelease, CommsReleaseOp, ConcernState, Concerns, ConfigSection, ControlOwner, Dialect,
     Direction, DisconnectReason, ErrorCode, EventKind, Firmware, GeneratorSelector, GeneratorState,
@@ -681,6 +681,12 @@ closed_set!(
     Bucket,
     u8,
     numbers("enums.bucket", "value", "name", unless_gone)
+);
+closed_set!(
+    charge_stage_matches_the_registry,
+    ChargeStage,
+    u8,
+    numbers("enums.charge_stage", "value", "name", unless_gone)
 );
 closed_set!(
     client_kind_matches_the_registry,
