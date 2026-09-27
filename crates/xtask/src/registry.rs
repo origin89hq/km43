@@ -405,7 +405,23 @@ impl WebSocket {
 #[derive(Clone, Deserialize)]
 pub struct Limits {
     /// Complete encoded envelopes must fit this byte budget.
-    pub max_payload: u16,
+    #[serde(rename = "max_payload")]
+    pub payload: u16,
+    /// Bytes in one text string.
+    #[serde(rename = "max_string")]
+    pub string: u8,
+    /// Nested containers in one message.
+    #[serde(rename = "max_depth")]
+    pub depth: u8,
+    /// Bytes in one bus address.
+    #[serde(rename = "max_addr")]
+    pub addr: u8,
+    /// Bus entries one `0x0003 buses and devices` body may list.
+    #[serde(rename = "max_config_buses")]
+    pub config_buses: u8,
+    /// Device entries one `0x0003 buses and devices` body may list.
+    #[serde(rename = "max_config_devices")]
+    pub config_devices: u8,
 }
 
 /// One limit rendered into both languages with the caller's constraint attached.
@@ -803,7 +819,7 @@ impl Registry {
             TransportLimit {
                 name: "MAX_PAYLOAD",
                 rust_type: "usize",
-                value: u64::from(self.limits.max_payload),
+                value: u64::from(self.limits.payload),
                 doc: "An encoded envelope larger than this is refused; size receive buffers for the whole envelope, not just its body.",
             },
             TransportLimit {
@@ -835,6 +851,45 @@ impl Registry {
                 rust_type: "usize",
                 value: u64::from(self.ble.tx_capacity),
                 doc: "Refuse new messages when this per-direction slot count is occupied; never evict a queued message.",
+            },
+        ]
+    }
+
+    /// The fixed bounds a body decoder needs in either language: what a string,
+    /// a nesting and an address may be, and how many entries the buses and
+    /// devices section lists. Generated beside the transport limits rather than
+    /// in their table, because they bound a body and not a link.
+    pub fn wire_limits(&self) -> [TransportLimit; 5] {
+        [
+            TransportLimit {
+                name: "MAX_STRING",
+                rust_type: "usize",
+                value: u64::from(self.limits.string),
+                doc: "A UTF-8 string on the wire; a longer one gets error 1 rather than being truncated into a different string.",
+            },
+            TransportLimit {
+                name: "MAX_DEPTH",
+                rust_type: "u8",
+                value: u64::from(self.limits.depth),
+                doc: "CBOR nesting; a deeper body gets error 1, which is what stops a hostile message walking off the stack.",
+            },
+            TransportLimit {
+                name: "MAX_ADDR",
+                rust_type: "usize",
+                value: u64::from(self.limits.addr),
+                doc: "A bus address, as the bus defines one. Longer cannot be expressed: a driver is refused at registration and a configured device is refused invalid.",
+            },
+            TransportLimit {
+                name: "MAX_CONFIG_BUSES",
+                rust_type: "usize",
+                value: u64::from(self.limits.config_buses),
+                doc: "Bus entries one buses-and-devices body may list; a write naming more is refused invalid, never trimmed.",
+            },
+            TransportLimit {
+                name: "MAX_CONFIG_DEVICES",
+                rust_type: "usize",
+                value: u64::from(self.limits.config_devices),
+                doc: "Device entries one buses-and-devices body may list, whatever `max_devices` says; a write naming more is refused invalid.",
             },
         ]
     }

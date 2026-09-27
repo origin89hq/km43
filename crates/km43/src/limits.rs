@@ -51,10 +51,10 @@ pub const MAX_LOG_PAGE_BYTES: usize = 896;
 pub const MAX_LOG_PAGE_ENTRIES: usize = 64;
 
 /// A UTF-8 string on the wire; a longer one gets error 1 rather than being truncated into a different string.
-pub const MAX_STRING: usize = 64;
+pub use crate::generated::MAX_STRING;
 
 /// CBOR nesting; a deeper body gets error 1, which is what stops a hostile message walking off the stack.
-pub const MAX_DEPTH: u8 = 8;
+pub use crate::generated::MAX_DEPTH;
 
 /// Bindings this controller holds, reported in `Hello 0x81` key 12; a ninth gets error 8 and the oldest is **not** evicted.
 pub const MAX_SESSIONS: usize = 8;
@@ -193,7 +193,15 @@ pub const MAX_IDENT: usize = 24;
 
 /// A bus address, as the bus defines one. Longer cannot be expressed and the driver is refused at
 /// registration.
-pub const MAX_ADDR: usize = 8;
+pub use crate::generated::MAX_ADDR;
+
+/// Bus entries in one `0x0003 buses and devices` body. Fixed on the wire rather than reported,
+/// because it is what makes the widest body fit a write (P-265).
+pub use crate::generated::MAX_CONFIG_BUSES;
+
+/// Device entries in one `0x0003 buses and devices` body. Below `MAX_DEVICES` because 24 devices at
+/// their widest are a write no client can send; a write listing more is refused invalid (P-265).
+pub use crate::generated::MAX_CONFIG_DEVICES;
 
 /// The scratch one descriptor row is encoded into before it is measured, 14 over the widest row
 /// the design costs (a `DeviceRow` at 170). A row that would exceed it is refused at registration,
@@ -799,6 +807,8 @@ mod tests {
             MAX_LINK_TEXT,
             MAX_IDENT,
             MAX_ADDR,
+            MAX_CONFIG_BUSES,
+            MAX_CONFIG_DEVICES,
             MAX_ROW_BYTES,
             MAX_SAMPLES,
             MAX_SERIES,

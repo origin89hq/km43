@@ -644,7 +644,7 @@ Which part of the configuration a `GetConfig` or `SetConfig` names in its
 |---|---|---|
 | `0x0001` | identity and site | live |
 | `0x0002` | channels | reserved |
-| `0x0003` | buses and devices | reserved |
+| `0x0003` | buses and devices | live |
 | `0x0010` | generator behaviour | reserved |
 | `0x0011` | frost behaviour | reserved |
 | `0x0012` | schedule behaviour | reserved |
@@ -652,9 +652,9 @@ Which part of the configuration a `GetConfig` or `SetConfig` names in its
 | `0x0020` | network | live |
 | `0x0021` | cloud | reserved |
 
-The two **live** rows have bodies, defined in [PROTOCOL.md](../PROTOCOL.md)
-under *Section bodies*: identity and site, and the network. The **reserved** rows
-have a number and no field list — a client can ask for `0x0011` and be told it
+The three **live** rows have bodies, defined in [PROTOCOL.md](../PROTOCOL.md)
+under *Section bodies*: identity and site, buses and devices, and the network.
+The **reserved** rows have a number and no field list — a client can ask for `0x0011` and be told it
 exists — and their bodies are open in [DEFERRED.md](DEFERRED.md) entry 9. The
 behaviour sections among them already share one settled key, `shadow`, in the
 table below.
@@ -684,6 +684,50 @@ person can confirm rather than believe, and it is one number because a `shadow`
 that meant key 9 for frost and key 4 for the generator is a flag somebody reads
 wrong exactly once. It is not capability bit 7: that bit says *some* behaviour is
 in shadow, site-wide, and cannot say which.
+
+---
+
+## Device option keys — `u16`
+
+The keys of a device's `options` map in `0x0003 buses and devices` (P-264).
+One space for every dialect, so a key means the same thing on whichever device
+carries it. Which dialects accept which keys is the controller's dialect table,
+not this one, and a key the device's dialect does not define is refused
+`invalid` rather than skipped.
+
+| Key | Name | Status |
+|---|---|---|
+| 1 | current direction | live |
+| 2 | pylontech version | live |
+| 3 | ve direct 3v3 | live |
+| 4 | poll period | live |
+
+A key is allocated here before any dialect accepts it, which is what lets the
+Pylontech and VE.Direct keys exist while those dialects are still being
+allocated: a controller whose table does not bind a key to a dialect refuses it
+on that dialect, and nothing on the wire has to change when the binding lands.
+
+---
+
+## Serial parity
+
+The parity of a serial bus in `0x0003 buses and devices`, `BusEntry` key 4.
+
+| Value | Name | Meaning |
+|---|---|---|
+| 1 | none | No parity bit |
+| 2 | even | Even parity |
+| 3 | odd | Odd parity |
+
+## Pylontech protocol versions
+
+Device option 2. The two revisions read the same registers differently and a
+battery does not say which one it speaks.
+
+| Value | Name | Meaning |
+|---|---|---|
+| 1 | v1_2 | Protocol revision 1.2 |
+| 2 | v1_3 | Protocol revision 1.3 |
 
 ---
 

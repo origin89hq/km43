@@ -90,6 +90,8 @@ negotiated. They are the same on every device, forever.
 | `MAX_LOG_PAGE_ENTRIES` | 64 entries | Page truncated, `complete = false` |
 | `MAX_LOG_PAGE_BYTES` | 896 bytes | Page truncated, `complete = false` |
 | `MAX_SCAN_APS` | 16 access points | The strongest are listed, the rest counted in `unlisted` |
+| `MAX_CONFIG_BUSES` | 8 bus entries in one `0x0003 buses and devices` body | `SetConfigAck` outcome 3 `invalid`, nothing stored |
+| `MAX_CONFIG_DEVICES` | 16 device entries in one `0x0003 buses and devices` body | `SetConfigAck` outcome 3 `invalid`, nothing stored (P-265) |
 | `MAX_STRING` | 64 bytes, UTF-8 | Error 1 |
 | `MAX_DEPTH` | 8 | Error 1 |
 
@@ -226,6 +228,34 @@ The envelope is 11 rather than 9 because `req_id` is a `u32` (P-022): a CBOR
 integer at the top of the `u16` range is three bytes and at the top of the `u32`
 range it is five. Two bytes on every frame, and every derivation on this page
 carries them.
+
+`MAX_CONFIG_DEVICES` is derived the same way, from the operation that carries a
+write and the response that carries the answer. The widest body is sixteen
+devices and eight buses with every key present at its widest value:
+
+```
+BusEntry     map head 1, bus 3, rate 6, data_bits 2, parity 2, stop_bits 2   16
+DeviceEntry  map head 1, dev 4, bus 3, addr 10, product 4, dialect 4,
+             role 4, parent 4, options 14 (key 1, map head 1, and
+             options 1 to 4 at 2 + 2 + 2 + 6)                                48
+
+body         map head                                                         1
+             key 1, array head 1, 8 × 16                                    130
+             key 2, array head 1, 16 × 48                                   770
+                                                                            ───
+                                                                            901
+
+SetConfig    operation header 12 + 901 = 913  ≤  MAX_OPERATION 960
+Config       answer header 12 + 901    = 913  ≤  982, MAX_PAYLOAD less the
+                                                  42 a response spends first
+```
+
+A `bus` costs three bytes rather than two because `max_buses` is reported, and a
+controller reporting 24 or more writes a bus number in two value bytes. The cap
+is not `max_devices`: at 24 devices the same arithmetic is 1,286 bytes, a write
+no client can send and an answer no controller can build. `max_devices` counts
+sub-devices a controller adopts at run time, which this section never lists, so
+it can sit above the configured cap without the two disagreeing.
 
 A limit that cannot fit inside the thing that carries it is not a limit, it is a
 frame that gets built and then refused. `MAX_LOG_PAGE_BYTES` was derived that way from
@@ -3908,6 +3938,43 @@ NetworkWrite  0x0020    network, as SetConfig carries it
   5: hostname     text     1 to 32 bytes: letters, digits and hyphens, with
                            no hyphen first or last
 
+BusesAndDevices  0x0003  buses and devices, in Config and SetConfig
+  1: buses        [ BusEntry ]     0..MAX_CONFIG_BUSES; the buses whose settings
+                                   are configured, each at most once
+  2: devices      [ DeviceEntry ]  0..MAX_CONFIG_DEVICES
+
+BusEntry
+  1: bus          u8       a bus the inventory lists, BusRow key 1 (P-261)
+  2: rate         u32      optional; bit/s, scale 0. rs485, can and ve_direct
+  3: data_bits    u8       optional; 7 or 8. rs485 and ve_direct
+  4: parity       u8       optional; see REGISTRY. rs485 and ve_direct
+  5: stop_bits    u8       optional; 1 or 2. rs485 and ve_direct
+
+DeviceEntry
+  1: dev          u16      1..; the controller's id for the device (P-262).
+                           Optional in SetConfig, where absent adds a
+                           device; REQUIRED in Config
+  2: bus          u8       as DeviceRow key 2
+  3: addr         bstr     optional; 1 to MAX_ADDR bytes, as DeviceRow key 3,
+                           under P-202
+  4: product      u16      product registry, as DeviceRow key 4
+  5: dialect      u16      driver dialect registry, as DeviceRow key 5
+  6: role         u16      device role registry, as DeviceRow key 6
+  7: parent       u16      optional; 1..; the dev of the device this is a
+                           sub-device of, listed in the same body
+  8: options      map      optional; DeviceOptions, keyed by REGISTRY's device
+                           option keys (P-264). Absent = none set
+
+DeviceOptions
+  1: current_direction  u8   optional; which way the battery current the
+                             device reports counts positive: 1 positive_is_in,
+                             into the battery · 2 positive_is_out, out of it
+  2: pylontech_version  u8   optional; see REGISTRY
+  3: ve_direct_3v3      bool optional; true when the product's VE.Direct
+                             port runs at 3.3 V
+  4: poll_period        u32  optional; ms between polls, scale 0, at least
+                             the dialect's minimum
+
 NetworkRead  0x0020     network, as Config carries it
   1: ssid         text     optional; as above
   3: psk_set      bool     present exactly when key 1 is: whether a passphrase
@@ -3949,6 +4016,105 @@ what lets a person change the hostname without retyping a passphrase nobody can
 show them. It is never a passphrase following a network it was not given for:
 the controller would join the neighbour's access point with the cabin's
 credential, and the site would drop off the air with nothing to point at.
+
+The **buses and devices** section says what is wired to the controller and how
+to talk to it. It does not say what the controller reads from each device: a
+device's components, signals and ids come from its dialect, and a person
+configuring a site four hours from a road should not be the one deciding that
+tracker 2's power is signal 41. The inventory (`Inventory 0x8D`) is where a
+client reads the result.
+
+**P-261** — Buses are fixed by the board: the section configures the settings
+of buses the controller has and never adds, removes or renumbers one. A
+`BusEntry` MUST name a `bus` the controller lists as a `BusRow`, MUST NOT name
+one twice, and MUST carry only the settings its transport has: `rate` on
+`rs485`, `can` and `ve_direct`, and `data_bits`, `parity` and `stop_bits` on
+the two serial lines, `rs485` and `ve_direct`. A write breaking any of these,
+or carrying a `rate` of 0, a `data_bits` other than 7 or 8, or a `stop_bits`
+other than 1 or 2, MUST be refused with outcome 3 `invalid`. A `BusEntry`
+carrying no setting at all is error 1: a bus left out already says *nothing
+configured here*, and one meaning with two encodings is where two controllers
+start to differ.
+
+A bus is a connector on the board. A write that could add one would store a
+bus the firmware has no UART for, and every device configured on it would sit
+in the inventory as *offline* with nothing anybody can fix from a phone. A
+setting the body leaves out, and a bus it leaves out entirely, runs at what its
+devices' dialects require.
+
+**P-262** — The controller allocates `dev`, and a client never chooses one. A
+`DeviceEntry` in a `SetConfig` that carries no `dev` adds a device, and the
+controller MUST give it an id it has never given before, in the order the
+entries appear; once every id has been given, a write that adds a device MUST
+be refused with outcome 3 `invalid` rather than wrap round to one in use. One that carries a `dev` edits the device the section already
+holds under that id, and MUST be refused with outcome 3 `invalid` when the
+section holds no such device, when the same `dev` appears twice, or when its
+`product` or `dialect` differs from the one held: changing either is removing
+a device and adding a new one, which is a new `dev`. A device the write leaves
+out is removed, and its `dev` is never given to another. Every other field,
+`bus` and `addr` included, may change under the same `dev`. `Config` MUST
+list buses by `bus` and devices by `dev`, each ascending, and a client MUST
+refuse one that does not.
+
+A `dev` is the one thing a year of history is filed under. Reused, the
+charger somebody removed in March and the battery monitor added in June draw
+as one line, and the kilowatt-hours under it belong to neither. Chosen by a
+client, two phones editing one site pick the same free number for two
+different devices. Moving a charger to another port is the same charger, so
+its history continues; putting a different product at the same address is not,
+so its history starts again, and P-205's `since` is still what tells a client
+the physical box behind a `dev` changed.
+
+**P-263** — A device's components, its signals and their ids MUST be derived
+by the controller from the device's dialect, and are not configurable. The
+section carries no component, no signal and no id for either.
+
+Two people describing one charger's registers from the configuration side
+describe two chargers. The dialect is the one place a register's meaning is
+written down, and a signal id a client assigned is a number the next client
+has no way to know is taken.
+
+**P-264** — A device's `options` carry only keys from REGISTRY's **device
+option keys**, and only those the device's dialect defines. A key the dialect
+does not define, including one this document has not allocated at all, MUST
+be refused with outcome 3 `invalid` and not skipped. P-013 does not apply to
+this map, because skipping here means a setting a client sent and the
+controller never used. A `current_direction` of 3 `magnitude_only`, and a
+`poll_period` below the dialect's minimum, MUST be refused the same way. An
+`options` map with no key is error 1, as P-261's empty `BusEntry` is.
+
+An option that is absent is never guessed. A device whose dialect needs to know
+which way its current counts, and was not told, publishes that current
+`unsupported` rather than a sign somebody assumed; a battery whose protocol
+revision was not given has nothing decoded under either revision. An absent
+`poll_period` is the dialect's own period, because a period is not a
+measurement and there is nothing to mistake it for.
+
+The keys are allocated per option rather than per dialect so that one key means
+one thing on every device. Which dialects accept which keys is the controller's
+table, next to the driver that reads the option, and a dialect this document has
+not yet allocated can accept a key without the wire changing.
+
+**P-265** — The controller MUST refuse with outcome 3 `invalid`, and MUST NOT
+store, a `buses and devices` write in which a device names a `bus` the
+controller does not list; breaks P-202, by leaving out `addr` on an addressed
+transport, carrying one on another, or repeating one within a bus; names a
+`dialect` the controller cannot drive over that bus's transport, one it does
+not drive at all included; names a `parent` that is not the `dev` of another
+entry in the same body, or a chain that returns to itself or runs deeper than
+`MAX_TOPOLOGY_DEPTH` (P-187); or lists more devices than `MAX_CONFIG_DEVICES`
+or than the `max_devices` it reports in `Hello 0x81` key 21. No outcome is
+added for any of these: each is a body the schema forbids, which is what P-101
+says outcome 3 is for, and a client can check every one before it writes —
+the buses and their transports are in the inventory and both caps are known.
+
+A parent has to be listed rather than new because a new device has no `dev`
+until the write is accepted. Adding a battery bank and its packs is two writes:
+the bank, then the packs naming the `dev` it was given.
+
+A controller answering `GetConfig` for this section lists the devices it was
+configured with and never a sub-device it adopted at run time, so the answer is
+bounded by `MAX_CONFIG_DEVICES` as the write was.
 
 ---
 

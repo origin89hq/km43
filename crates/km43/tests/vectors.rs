@@ -73,7 +73,7 @@ fn every_published_body_is_one_this_reader_walks_to_the_end() {
             seen += 1;
         }
     }
-    assert_eq!(seen, 83, "the vector file grew or shrank a body");
+    assert_eq!(seen, 90, "the vector file grew or shrank a body");
 }
 
 /// The envelope the generator publishes must decode here to the same four
@@ -735,8 +735,8 @@ fn the_published_sealed_error_is_refused_when_read_bare() {
 /// `Enrol 0x93` answer, `ReadLog 0x05`, `LogPage 0x85`, the `Time 0x0A`
 /// operation, the two `TimeAck 0x8A`, the six Wi-Fi bodies, the four vouch
 /// bodies, the two `Clients` bodies, the three invite bodies, the six approval
-/// and removal bodies, the seven config section bodies, and the five
-/// configuration messages around them.
+/// and removal bodies, the seven config section bodies, the seven buses and
+/// devices bodies, and the five configuration messages around them.
 ///
 /// Asserted rather than assumed, so a file that lost one does not hand the
 /// wrong bytes to whichever test still finds something at index 0. The count
@@ -745,7 +745,7 @@ fn the_published_sealed_error_is_refused_when_read_bare() {
 /// after that message was retired.
 fn published_bodies() -> Vec<Vec<u8>> {
     let found = blobs("body_cbor");
-    assert_eq!(found.len(), 68, "the vector file grew or shrank a body");
+    assert_eq!(found.len(), 75, "the vector file grew or shrank a body");
     found
 }
 

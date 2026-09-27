@@ -98,7 +98,12 @@ impl Bindings {
             let _ = writeln!(o, "/// {doc}\npub const {name}: &str = {text:?};\n");
         }
 
-        for limit in self.registry.transport_limits() {
+        for limit in self
+            .registry
+            .transport_limits()
+            .into_iter()
+            .chain(self.registry.wire_limits())
+        {
             let _ = writeln!(
                 o,
                 "/// {}\npub const {}: {} = {};\n",
@@ -957,7 +962,12 @@ impl Bindings {
             let _ = writeln!(o, "/** {doc} */\nexport const {name} = {text:?};\n");
         }
 
-        for limit in self.registry.transport_limits() {
+        for limit in self
+            .registry
+            .transport_limits()
+            .into_iter()
+            .chain(self.registry.wire_limits())
+        {
             let _ = writeln!(
                 o,
                 "/** {} */\nexport const {} = {};\n",
