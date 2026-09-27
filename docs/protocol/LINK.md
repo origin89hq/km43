@@ -763,7 +763,16 @@ about its thermal limit in a place nobody can reach.
 A controller reset ends an active rail-off lockout: the rail comes up in its
 L-114 fail state, on, and the controller MUST NOT resume the lockout after it
 boots. The cuts of the last hour MUST stay counted across the reset, so the next
-cut inside that hour returns straight to the 15-minute rung.
+cut inside that hour returns straight to the 15-minute rung. On boot every
+surviving cut MUST be counted as made at the new boot's tick zero, as P-121 does
+for the dedup table. A record of cuts that was never written carries none; one
+that exists and does not read MUST count as a full set of cuts.
+
+The cuts were timed on the tick of the boot that wrote them, which the reset
+restarted, so the new boot's start is the latest each can have been made.
+Counting them from there keeps a cut recent for at most an hour longer than it
+was, and never for less. An unreadable record is a count the controller has
+lost, and a lost count taken as zero would hand a boot loop three more cuts.
 
 The exception is a property of the board, written in the board's own document,
 never a firmware preference. It exists because one board has it: on controller
