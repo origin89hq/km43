@@ -64,6 +64,7 @@ mod pairing_window;
 mod reading;
 mod readings;
 mod readlog;
+mod received_topology;
 #[cfg(test)]
 mod render;
 mod requirement;
@@ -117,6 +118,7 @@ pub use pairing_window::*;
 pub use reading::*;
 pub use readings::*;
 pub use readlog::*;
+pub use received_topology::*;
 pub use requirement::*;
 pub use requirements::*;
 pub use routing::*;

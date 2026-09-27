@@ -107,7 +107,7 @@ const BUS_FIELDS: &[Field] = &[
 const DEVICE_FIELDS: &[Field] = &[
     req(1, U16),      // dev; 0 is the controller itself
     req(2, U8),       // bus
-    opt(3, Bytes),    // addr — required on an addressed transport (P-189)
+    opt(3, Bytes),    // addr — required on an addressed transport (P-202)
     req(4, U16),      // product
     req(5, U16),      // dialect
     req(6, U16),      // role
@@ -486,6 +486,17 @@ const DIR_KEY: u8 = 9;
 const N_KEY: u8 = 10;
 /// `ebase` is key 12: the **label** of element 0, not its position (P-206).
 const EBASE_KEY: u8 = 12;
+/// `bus` is key 1 on a `BusRow` and key 2 on a `DeviceRow`, which is the join
+/// P-202 is judged across.
+pub(crate) const BUS_ROW_BUS_KEY: u8 = 1;
+/// `transport` is key 2 on a `BusRow`.
+pub(crate) const BUS_ROW_TRANSPORT_KEY: u8 = 2;
+/// `dev` is key 1 on a `DeviceRow`.
+pub(crate) const DEVICE_ROW_DEV_KEY: u8 = 1;
+/// `bus` on a `DeviceRow`.
+pub(crate) const DEVICE_ROW_BUS_KEY: u8 = 2;
+/// `addr` is key 3 on a `DeviceRow`.
+pub(crate) const DEVICE_ROW_ADDR_KEY: u8 = 3;
 
 /// A `SignalRow`'s keys another key decides: `n` for a series, `esp` for a value
 /// drawn from a space, and the three the registry cannot answer for when the
@@ -1460,6 +1471,12 @@ impl InventoryHeader {
     /// refuses to write. A receiver that accepts one is a receiver that will
     /// cache under it.
     pub fn decode(payload: &[u8]) -> Result<Self, InventoryError> {
+        Self::decode_with_rows(payload).map(|(header, _)| header)
+    }
+
+    /// The header, and key 3's array as the bytes it arrived as, for a
+    /// receiver that has to read the rows rather than count them.
+    pub(crate) fn decode_with_rows(payload: &[u8]) -> Result<(Self, &[u8]), InventoryError> {
         let mut body = CborReader::new(payload);
         let pairs = body.map()?;
         let (mut rev, mut what, mut next, mut total, mut outcome, mut digest, mut rows) =
@@ -1469,11 +1486,9 @@ impl InventoryHeader {
                 Some(k @ InventoryKey::Rev) => response_once(&mut rev, k, body.u32()?)?,
                 Some(k @ InventoryKey::What) => response_once(&mut what, k, body.u8()?)?,
                 Some(InventoryKey::Rows) => {
-                    let n = body.array()?;
-                    for _ in 0..n {
-                        body.skip()?;
-                    }
-                    response_once(&mut rows, InventoryKey::Rows, n)?;
+                    let array = body.raw()?;
+                    let n = CborReader::new(array).array()?;
+                    response_once(&mut rows, InventoryKey::Rows, (n, array))?;
                 }
                 Some(k @ InventoryKey::Next) => response_once(&mut next, k, body.u16()?)?,
                 Some(k @ InventoryKey::Total) => response_once(&mut total, k, body.u16()?)?,
@@ -1495,7 +1510,7 @@ impl InventoryHeader {
         let number = outcome.ok_or(InventoryError::MissingResponse(InventoryKey::Outcome))?;
         let outcome = InventoryOutcome::of(number).ok_or(InventoryError::UnknownOutcome(number))?;
         let next = next.ok_or(InventoryError::MissingResponse(InventoryKey::Next))?;
-        let rows = rows.ok_or(InventoryError::MissingResponse(InventoryKey::Rows))?;
+        let (rows, array) = rows.ok_or(InventoryError::MissingResponse(InventoryKey::Rows))?;
 
         if !matches!(outcome, InventoryOutcome::Ok) && (rows != 0 || digest.is_some()) {
             return Err(InventoryError::AnsweredNothing(outcome));
@@ -1504,7 +1519,7 @@ impl InventoryHeader {
             return Err(InventoryError::DigestMidWalk);
         }
 
-        Ok(Self {
+        let header = Self {
             rev: rev.ok_or(InventoryError::MissingResponse(InventoryKey::Rev))?,
             what: what.ok_or(InventoryError::MissingResponse(InventoryKey::What))?,
             outcome,
@@ -1512,7 +1527,8 @@ impl InventoryHeader {
             total: total.ok_or(InventoryError::MissingResponse(InventoryKey::Total))?,
             rows,
             digest,
-        })
+        };
+        Ok((header, array))
     }
 }
 
@@ -1744,6 +1760,30 @@ pub enum InventoryError {
     Duplicate(ReadInventoryKey),
     /// A response key appeared twice (P-015).
     DuplicateResponse(InventoryKey),
+    /// A device on an addressed transport with no `addr` (P-202): a row a
+    /// client cannot tell from the next one on the same wire.
+    AddrMissing {
+        /// The device that carries none.
+        dev: u16,
+        /// Its bus, whose `BusRow` names an addressed transport.
+        bus: u8,
+    },
+    /// Two devices at one `addr` on one bus (P-202): one of them is answering
+    /// for both.
+    AddrTwice {
+        /// The bus they share.
+        bus: u8,
+        /// One of the two.
+        dev: u16,
+        /// The other.
+        other: u16,
+    },
+    /// An `addr` longer than [`MAX_ADDR`](crate::MAX_ADDR), which no bus defines.
+    AddrTooLong(usize),
+    /// More rows of this kind in one walk than a receiver holds. Refused
+    /// rather than evicted, because a device dropped to make room is one
+    /// whose duplicate nothing would then catch.
+    TopologyFull(RowKind),
     /// The CBOR underneath was refused.
     Cbor(CborError),
 }
@@ -1788,6 +1828,10 @@ impl InventoryError {
             | Self::RowsOutOfOrder { .. }
             | Self::DuplicateResponse(_)
             | Self::Duplicate(_)
+            | Self::AddrMissing { .. }
+            | Self::AddrTwice { .. }
+            | Self::AddrTooLong(_)
+            | Self::TopologyFull(_)
             | Self::Cbor(_) => Refusal::Client(ErrorCode::MalformedFrame),
         }
     }
@@ -1866,6 +1910,16 @@ impl fmt::Display for InventoryError {
             Self::RowsOutOfOrder { after, got } => {
                 write!(w, "a {got} page after a {after} one is not canonical order")
             }
+            Self::AddrMissing { dev, bus } => {
+                write!(w, "dev {dev} on addressed bus {bus} carries no addr")
+            }
+            Self::AddrTwice { bus, dev, other } => {
+                write!(w, "devs {dev} and {other} share one addr on bus {bus}")
+            }
+            Self::AddrTooLong(n) => write!(w, "an addr of {n} bytes is past MAX_ADDR"),
+            Self::TopologyFull(kind) => {
+                write!(w, "more {kind} rows than a receiver holds")
+            }
             Self::Cbor(why) => write!(w, "{why}"),
         }
     }
@@ -1885,7 +1939,7 @@ mod tests {
     /// its bytes fit and it is the shape that is wrong.
     #[test]
     fn every_refusal_says_something_of_its_own() {
-        const EVERY: [InventoryError; 27] = [
+        const EVERY: [InventoryError; 31] = [
             InventoryError::DuplicateResponse(InventoryKey::Rev),
             InventoryError::RowShape {
                 kind: RowKind::Bus,
@@ -1956,6 +2010,14 @@ mod tests {
                 got: RowKind::Bus,
             },
             InventoryError::Duplicate(ReadInventoryKey::Rev),
+            InventoryError::AddrMissing { dev: 2, bus: 1 },
+            InventoryError::AddrTwice {
+                bus: 1,
+                dev: 2,
+                other: 3,
+            },
+            InventoryError::AddrTooLong(9),
+            InventoryError::TopologyFull(RowKind::Device),
             InventoryError::Cbor(CborError::WrongType),
         ];
         Rendering::<128>::each_says_something_of_its_own(&EVERY);
