@@ -2877,6 +2877,11 @@ fn p_215_published_controller_records_pin_each_body_schema() {
         ),
     ];
     for (name, want) in cases {
+        assert_eq!(
+            number_in(name, "kind"),
+            usize::from(want.kind().0),
+            "{name}: the published kind is not the binding's"
+        );
         let published = blob_under(name, "body_cbor");
         assert_eq!(
             ControllerRecord::decode(want.kind(), &published),

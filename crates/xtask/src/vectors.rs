@@ -2509,11 +2509,14 @@ impl Builder {
     }
 
     /// Independent encodings of the controller's durable records (P-215).
+    /// The kind is looked up by name in the registry, so an allocation that
+    /// moves takes the published kind with it instead of leaving a stale one.
     fn controller_events() -> Result<Vec<(&'static str, Value)>> {
+        let registry = crate::registry::Registry::load(&crate::check::repo_root()?)?;
         [
             (
                 "timeset_0x0604",
-                0x0604u16,
+                "time set",
                 cmap! {
                     1 => Cb::U(1_700_000_005_000), 2 => Cb::U(1_700_000_000_000), 3 => Cb::U(1)
                 },
@@ -2521,7 +2524,7 @@ impl Builder {
             ),
             (
                 "time_set_unknown_0x0604",
-                0x0604,
+                "time set",
                 cmap! {
                     2 => Cb::U(1_700_000_000_000), 3 => Cb::U(2)
                 },
@@ -2529,61 +2532,62 @@ impl Builder {
             ),
             (
                 "recordfailedcrc_0x0702",
-                0x0702,
+                "record failed CRC",
                 cmap! { 1 => Cb::U(2) },
                 "two stored records failed CRC in this scan",
             ),
             (
                 "commslinklost_0x0801",
-                0x0801,
+                "comms link lost",
                 Cb::M(BTreeMap::new()),
                 "the first recovery rung; no diagnosis in the body",
             ),
             (
                 "commspowercycled_0x0802",
-                0x0802,
+                "comms power cycled",
                 cmap! { 1 => Cb::U(3) },
                 "third rail cycle in the preceding hour",
             ),
             (
                 "commsunrecoverable_0x0803",
-                0x0803,
+                "comms unrecoverable",
                 cmap! { 1 => Cb::Bool(false) },
                 "the rail left off during the recovery pause",
             ),
             (
                 "comms_unrecoverable_on_0x0803",
-                0x0803,
+                "comms unrecoverable",
                 cmap! { 1 => Cb::Bool(true) },
                 "the board exception: rail left on and uncycled",
             ),
             (
                 "sessionsshedforbackpressure_0x0804",
-                0x0804,
+                "sessions shed for backpressure",
                 cmap! { 1 => Cb::U(1) },
                 "first session shed for backpressure in the preceding hour",
             ),
             (
                 "commsbootnoise_0x0805",
-                0x0805,
+                "comms boot noise",
                 cmap! { 1 => Cb::U(1140) },
                 "1140 bytes classified as non-frames during one comms boot attempt",
             ),
             (
                 "commshelddown_0x0807",
-                0x0807,
+                "comms held down",
                 cmap! { 1 => Cb::U(0) },
                 "reason no_device_id: no device_id at boot (L-116)",
             ),
             (
                 "comms_held_down_revisions_0x0807",
-                0x0807,
+                "comms held down",
                 cmap! { 1 => Cb::U(1) },
                 "reason revisions_spent: L-195's pairing-window revisions ran out (L-116)",
             ),
         ]
         .into_iter()
-        .map(|(name, kind, body, meaning)| {
+        .map(|(name, event, body, meaning)| {
+            let kind = registry.event_kind(event)?;
             let readable = match name {
                 "timeset_0x0604" => Some("{1:old, 2:new, 3:source}"),
                 "recordfailedcrc_0x0702"
