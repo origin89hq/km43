@@ -16,8 +16,9 @@
 
 use core::fmt;
 
+use crate::buses_devices::BusesAndDevicesKey;
 use crate::cbor::{CborError, CborReader, CborWriter};
-use crate::generated::{BehaviourKey, ErrorCode, SetConfig};
+use crate::generated::{BehaviourKey, DeviceOption, ErrorCode, SetConfig};
 use crate::limits::{MAX_LABEL, MAX_LINK_TEXT};
 use crate::linklocal::{COUNTRY_BYTES, PSK_LONGEST, PSK_SHORTEST};
 
@@ -63,6 +64,8 @@ pub enum SectionKey {
     Country,
     /// Network, key 5.
     Hostname,
+    /// A key of `0x0003 buses and devices`, at whichever level it sits.
+    BusesAndDevices(BusesAndDevicesKey),
 }
 
 impl SectionKey {
@@ -74,6 +77,7 @@ impl SectionKey {
             Self::PskSet => 3,
             Self::Country => 4,
             Self::Hostname => 5,
+            Self::BusesAndDevices(key) => key.number(),
         }
     }
 
@@ -86,6 +90,7 @@ impl SectionKey {
             Self::PskSet => "network psk_set",
             Self::Country => "network country",
             Self::Hostname => "network hostname",
+            Self::BusesAndDevices(key) => key.name(),
         }
     }
 
@@ -413,7 +418,12 @@ impl<'a> NetworkWrite<'a> {
                 Some(key @ SectionKey::PskSet) => once(&mut psk_set, key, cbor.bool()?)?,
                 Some(key @ SectionKey::Country) => once(&mut text.country, key, cbor.text()?)?,
                 Some(key @ SectionKey::Hostname) => once(&mut text.hostname, key, cbor.text()?)?,
-                Some(SectionKey::SiteName | SectionKey::Shadow) | None => cbor.skip()?,
+                Some(
+                    SectionKey::SiteName | SectionKey::Shadow | SectionKey::BusesAndDevices(_),
+                )
+                | None => {
+                    cbor.skip()?;
+                }
             }
         }
         cbor.finish()?;
@@ -534,7 +544,12 @@ impl<'a> NetworkRead<'a> {
                 Some(key @ SectionKey::PskSet) => once(&mut psk_set, key, cbor.bool()?)?,
                 Some(key @ SectionKey::Country) => once(&mut text.country, key, cbor.text()?)?,
                 Some(key @ SectionKey::Hostname) => once(&mut text.hostname, key, cbor.text()?)?,
-                Some(SectionKey::SiteName | SectionKey::Shadow) | None => cbor.skip()?,
+                Some(
+                    SectionKey::SiteName | SectionKey::Shadow | SectionKey::BusesAndDevices(_),
+                )
+                | None => {
+                    cbor.skip()?;
+                }
             }
         }
         cbor.finish()?;
@@ -632,6 +647,75 @@ pub enum ConfigError {
     NoPassphraseHeld,
     /// No passphrase in the write, and the one held is for another SSID (P-107).
     PassphraseForAnotherNetwork,
+    /// An entry or map that says nothing, where leaving it out already does
+    /// (P-261, P-264).
+    NothingSet(SectionKey),
+    /// A discriminant the registry does not allocate (P-014).
+    UnknownValue(SectionKey),
+    /// A `Config` whose entries do not ascend (P-262).
+    OutOfOrder(SectionKey),
+    /// A number outside what its key allows: a rate of 0, nine data bits, a
+    /// `dev` of 0, a current that counts no direction.
+    OutOfSchema(SectionKey),
+    /// More entries than the section, or the controller, can hold (P-265).
+    TooMany(SectionKey),
+    /// An option key this document has not allocated (P-264).
+    UnknownOption(i64),
+    /// A bus the board does not have (P-261, P-265).
+    UnknownBus(u8),
+    /// The same bus configured twice (P-261).
+    BusTwice(u8),
+    /// A setting the bus's transport does not have (P-261).
+    NotOnTransport {
+        /// The bus.
+        bus: u8,
+        /// The setting.
+        key: SectionKey,
+    },
+    /// No `addr` for a device on an addressed transport (P-202).
+    AddrRequired(u8),
+    /// An `addr` on a transport that does not address (P-202).
+    AddrNotAddressed(u8),
+    /// Two devices at one address on one bus (P-202).
+    AddrTwice(u8),
+    /// A dialect the controller cannot drive over this bus, or at all (P-265).
+    DialectNotCarried {
+        /// The dialect.
+        dialect: u16,
+        /// The bus it was put on.
+        bus: u8,
+    },
+    /// An option the device's dialect does not define (P-264).
+    OptionNotInDialect {
+        /// The option.
+        option: DeviceOption,
+        /// The dialect.
+        dialect: u16,
+    },
+    /// A poll period below the dialect's minimum (P-264).
+    PollTooShort {
+        /// The dialect.
+        dialect: u16,
+        /// Its minimum, in milliseconds.
+        min: u32,
+    },
+    /// An edit of a device the section does not hold (P-262).
+    UnknownDev(u16),
+    /// One `dev` on two entries (P-262).
+    DevTwice(u16),
+    /// A device whose product or dialect changed under its `dev` (P-262).
+    DeviceChanged(u16),
+    /// Every device id has been given out once (P-262).
+    DevsExhausted,
+    /// A parent that is not another entry's `dev` (P-265).
+    ParentNotListed(u16),
+    /// A parent chain that comes back round (P-187).
+    ParentLoop(u16),
+    /// A parent chain deeper than `max_topology_depth` (P-187).
+    TooDeep(u16),
+    /// The id the allocator gave is one the section shows was given already:
+    /// the controller resumed it from a stale record (P-262).
+    AllocatorBehind(u16),
 }
 
 impl From<CborError> for ConfigError {
@@ -646,16 +730,40 @@ impl ConfigError {
     #[must_use]
     pub const fn answer(self) -> SectionRefusal {
         match self {
-            Self::Missing(_) | Self::Duplicate(_) | Self::Cbor(_) | Self::SecretInConfig(_) => {
-                SectionRefusal::Error(ErrorCode::MalformedFrame)
-            }
+            Self::Missing(_)
+            | Self::Duplicate(_)
+            | Self::Cbor(_)
+            | Self::SecretInConfig(_)
+            | Self::NothingSet(_)
+            | Self::UnknownValue(_)
+            | Self::OutOfOrder(_) => SectionRefusal::Error(ErrorCode::MalformedFrame),
             Self::Length { .. }
             | Self::CountryNotCapitals
             | Self::NotAHostname
             | Self::PassphraseWithoutNetwork
             | Self::ConfigOnly(_)
             | Self::NoPassphraseHeld
-            | Self::PassphraseForAnotherNetwork => SectionRefusal::Outcome(SetConfig::Invalid),
+            | Self::PassphraseForAnotherNetwork
+            | Self::OutOfSchema(_)
+            | Self::TooMany(_)
+            | Self::UnknownOption(_)
+            | Self::UnknownBus(_)
+            | Self::BusTwice(_)
+            | Self::NotOnTransport { .. }
+            | Self::AddrRequired(_)
+            | Self::AddrNotAddressed(_)
+            | Self::AddrTwice(_)
+            | Self::DialectNotCarried { .. }
+            | Self::OptionNotInDialect { .. }
+            | Self::PollTooShort { .. }
+            | Self::UnknownDev(_)
+            | Self::DevTwice(_)
+            | Self::DeviceChanged(_)
+            | Self::DevsExhausted
+            | Self::ParentNotListed(_)
+            | Self::ParentLoop(_)
+            | Self::TooDeep(_)
+            | Self::AllocatorBehind(_) => SectionRefusal::Outcome(SetConfig::Invalid),
         }
     }
 }
@@ -677,6 +785,56 @@ impl fmt::Display for ConfigError {
             Self::NoPassphraseHeld => f.write_str("no passphrase written and none held to keep"),
             Self::PassphraseForAnotherNetwork => {
                 f.write_str("the held passphrase is for another ssid")
+            }
+            Self::NothingSet(key) => write!(f, "{key} sets nothing"),
+            Self::UnknownValue(key) => {
+                write!(f, "{key} carries a value the registry does not allocate")
+            }
+            Self::OutOfOrder(key) => write!(f, "Config entries do not ascend by {key}"),
+            Self::OutOfSchema(key) => write!(f, "{key} is outside what the key allows"),
+            Self::TooMany(key) => write!(f, "{key} lists more entries than can be held"),
+            Self::UnknownOption(number) => write!(f, "device option {number} is not allocated"),
+            Self::UnknownBus(bus) => write!(f, "bus {bus} is not on this board"),
+            Self::BusTwice(bus) => write!(f, "bus {bus} is configured twice"),
+            Self::NotOnTransport { bus, key } => {
+                write!(f, "bus {bus}'s transport has no {key}")
+            }
+            Self::AddrRequired(bus) => write!(f, "a device on bus {bus} needs an addr"),
+            Self::AddrNotAddressed(bus) => write!(f, "bus {bus} does not address its devices"),
+            Self::AddrTwice(bus) => write!(f, "two devices share an addr on bus {bus}"),
+            Self::DialectNotCarried { dialect, bus } => {
+                write!(f, "dialect {dialect:#06x} cannot be driven over bus {bus}")
+            }
+            Self::OptionNotInDialect { option, dialect } => {
+                write!(
+                    f,
+                    "dialect {dialect:#06x} does not define {}",
+                    BusesAndDevicesKey::Option(*option)
+                )
+            }
+            Self::PollTooShort { dialect, min } => {
+                write!(
+                    f,
+                    "dialect {dialect:#06x} polls no faster than every {min} ms"
+                )
+            }
+            Self::UnknownDev(dev) => write!(f, "the section holds no device {dev}"),
+            Self::DevTwice(dev) => write!(f, "device {dev} appears twice"),
+            Self::DeviceChanged(dev) => {
+                write!(
+                    f,
+                    "device {dev} changed product or dialect; that is a new device"
+                )
+            }
+            Self::DevsExhausted => f.write_str("every device id has been given out"),
+            Self::ParentNotListed(dev) => write!(f, "parent {dev} is not a listed device"),
+            Self::ParentLoop(dev) => write!(f, "the parent chain through {dev} comes back round"),
+            Self::TooDeep(dev) => write!(f, "device {dev}'s parent chain is too deep"),
+            Self::AllocatorBehind(dev) => {
+                write!(
+                    f,
+                    "device id {dev} was given before; the allocator is behind"
+                )
             }
         }
     }

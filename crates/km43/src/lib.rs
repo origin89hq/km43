@@ -28,6 +28,7 @@ macro_rules! const_assert {
 mod admission;
 mod ble;
 mod boot;
+mod buses_devices;
 mod cbor;
 mod changes;
 mod clients;
@@ -80,6 +81,7 @@ mod wifi;
 pub use admission::*;
 pub use ble::*;
 pub use boot::*;
+pub use buses_devices::*;
 pub use cbor::*;
 pub use changes::*;
 pub use clients::*;

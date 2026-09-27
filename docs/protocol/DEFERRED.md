@@ -70,10 +70,10 @@ is not deferred, it is forgotten.
 | 6 | Firmware bodies and the signing manifest | **Manifest before the first unit ships with a locked bootloader** |
 | 7 | BLE and MQTT conformance | The first byte over either link |
 | 8 | Command argument schemas | The first output granted authority — it needs exactly one kind |
-| 9 | Config section body schemas: behaviour parameters, channels, devices and cloud | The first behaviour parameter, channel, device or cloud setting written over the API rather than flashed |
+| 9 | Config section body schemas: behaviour parameters, channels and cloud | The first behaviour parameter, channel or cloud setting written over the API rather than flashed |
 | 10 | Event body schemas per kind | The first event on the wire |
 | 11 | Checks that test the specification rather than an implementation | Before the next audit round |
-| 13 | Multi-device topology and complete equipment coverage | Before the `channels` or `buses and devices` config body becomes live, or the first repeated component is exposed over KM43 |
+| 13 | Multi-device topology and complete equipment coverage | Before the `channels` config body becomes live, or the first repeated component is exposed over KM43 |
 
 ---
 
@@ -475,18 +475,24 @@ shadow.**
 
 ## 9. Config section body schemas
 
-**Settled and moved out.** `0x0001 identity and site` and `0x0020 network` have
-bodies in [PROTOCOL.md](../PROTOCOL.md) under *Section bodies*, with the
-validation P-101 names and vectors in [`vectors/v1.json`](vectors/v1.json). The
+**Settled and moved out.** `0x0001 identity and site`, `0x0003 buses and
+devices` and `0x0020 network` have bodies in [PROTOCOL.md](../PROTOCOL.md)
+under *Section bodies*, with the validation P-101 names and vectors in
+[`vectors/v1.json`](vectors/v1.json). Buses and devices carries P-261 to P-265:
+buses fixed by the board with only their settings writable, a `dev` the
+controller gives out once and never reuses, signals and components derived from
+the dialect rather than configured, one options map per device refused rather
+than skipped when it carries a key the dialect does not define, and a
+configured-device cap, `MAX_CONFIG_DEVICES`, derived from the operation that
+has to carry the widest body. The
 `shadow` key every behaviour section carries is allocated as key 1 in
 [REGISTRY](REGISTRY.md#behaviour-section-keys--u16) (P-103). The rule that a
 `secret` field is never returned by `GetConfig` is P-106, and keeping a held
 passphrase only for the SSID it was given for is P-107. What stays here is the
 rest of the section space.
 
-**The question.** `0x0002 channels`, `0x0003 buses and devices`, the four
-behaviour sections `0x0010` to `0x0013` beyond `shadow`, and `0x0021 cloud` have
-numbers and no field lists. What integer key is the frost setpoint? What unit is
+**The question.** `0x0002 channels`, the four behaviour sections `0x0010` to
+`0x0013` beyond `shadow`, and `0x0021 cloud` have numbers and no field lists. What integer key is the frost setpoint? What unit is
 it in, and at what scale?
 
 **Why it is not guessed.** The candidate parameters have names already —
@@ -523,10 +529,25 @@ parameters it reads have stopped moving, and somebody has wanted to change one
 from a phone rather than from a build. Half of a config schema is what an
 operator tried to adjust and could not; a schema written before anybody tried is
 a list of everything the code happens to hold, which is a different list. The
-channel and device sections wait on entry 13 as well.
+channel section waits on entry 13 as well.
 
-**Trigger.** The first behaviour parameter, channel, device or cloud setting
-written over the API rather than flashed. A controller configured by flashing a
+**What the device options do not carry yet.** The drivers need more per-device
+facts than the first four option keys. The PZEM-014/016 range is the product,
+not an option. EPEver's state-of-charge resolution (whole percent or
+hundredths), and the divider and 4–20 mA sense resistances of the controller's
+own analog inputs, have no key: until one is allocated those values publish
+`unsupported` rather than a guessed scale, which is P-264's rule for an absent
+option. A key is allocated in REGISTRY's device option keys when the owner
+decides its unit, and which dialects accept it is the controller's table, so
+the Pylontech CAN and VE.Direct text dialects bind the keys they read when
+their own rows are allocated, with no wire change. Two things the body does not
+decide either: which framing a bus left unconfigured runs at when the dialects
+of its devices disagree, and whether a written `rate` no device's dialect speaks
+is refused. Both are the controller's today; a rule for them waits on the
+first board where it happens.
+
+**Trigger.** The first behaviour parameter, channel or cloud setting written
+over the API rather than flashed. A controller configured by flashing a
 struct needs no wire schema at all — the compiler is the schema. The first
 `SetConfig` that has to change one on a controller nobody is holding needs the
 whole body.
@@ -785,8 +806,7 @@ describe several physical devices, and several repeated components inside one
 device, without turning an instance number into a new metric kind? The current
 `Value` says only `channel`, `kind`, one signed integer, `quality`, and an optional
 sample time. The `channel` is stable by promise and anonymous by schema: the
-`channels` and `buses and devices` config bodies that would say what owns it are
-both deferred in entry 9.
+`channels` config body that would say what owns it is deferred in entry 9.
 
 That is enough for one PV voltage, one PV current, and one PV power. It is not a
 complete equipment model. A Victron MPPT RS reports two or four independent
@@ -886,8 +906,14 @@ profiles should cover PV/charger, inverter/AC, battery/BMS, generator, tank and
 I/O, environmental sensors, and link health; specialist DER, GPS, air-quality,
 and raw diagnostics may remain optional profiles.
 
-**Trigger.** Before entry 9 makes either `0x0002 channels` or `0x0003 buses and
-devices` writable, or before any KM43 driver exposes a second tracker, phase,
+**`0x0003 buses and devices` is writable, and did not wait on the rest of this
+entry.** Its body declares no component and no signal: the controller derives
+both from each device's dialect (P-263), so the configuration side of this
+entry is settled for that section by construction. What a client reads about
+the result is the inventory, which is this entry's and is unchanged.
+
+**Trigger.** Before entry 9 makes `0x0002 channels` writable, or before any
+KM43 driver exposes a second tracker, phase,
 bank, cell, relay, probe, or circuit — whichever comes first. **Hard deadline:
 before KM43 is described as a complete equipment protocol.** Until this entry
 lands, v1 is accurately a bounded, authenticated scalar telemetry and control

@@ -372,7 +372,7 @@ impl Codegen {
         match key {
             "capability_bit" => ("Bit", "Meaning"),
             "config_section" => ("Section", "Name"),
-            "behaviour_key" => ("Key", "Name"),
+            "behaviour_key" | "device_option" => ("Key", "Name"),
             _ => ("Kind", "Name"),
         }
     }
@@ -547,6 +547,9 @@ pub fn heading_for(key: &str) -> String {
         "suite" => "## Suites",
         "config_section" => "## Config sections",
         "behaviour_key" => "## Behaviour section keys",
+        "device_option" => "## Device option keys",
+        "parity" => "## Serial parity",
+        "pylontech_version" => "## Pylontech protocol versions",
         "command_kind" => "## Command kinds",
         "capability_bit" => "## Capability bits",
         "inventory" => "## Inventory outcomes",

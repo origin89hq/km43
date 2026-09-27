@@ -22,6 +22,11 @@
       "types": "./dist/ble.d.ts",
       "import": "./dist/ble.js",
       "default": "./dist/ble.js"
+    },
+    "./buses-and-devices": {
+      "types": "./dist/buses-and-devices.d.ts",
+      "import": "./dist/buses-and-devices.js",
+      "default": "./dist/buses-and-devices.js"
     }
   },
   "files": [

@@ -219,6 +219,21 @@ macro_rules! cmap {
     }};
 }
 
+/// One published section body: its name, how it travels, the body, its
+/// readable key list when it has one, and what its values mean.
+type SectionCase = (
+    &'static str,
+    &'static str,
+    Cb,
+    Option<&'static str>,
+    &'static str,
+);
+
+/// Bus 1 at 9600 8N2, the RS-485 pair the published site's meters are on.
+fn serial_bus() -> Cb {
+    cmap! { 1 => Cb::U(1), 2 => Cb::U(9600), 3 => Cb::U(8), 4 => Cb::U(1), 5 => Cb::U(2) }
+}
+
 pub(crate) fn hex(b: &[u8]) -> String {
     use std::fmt::Write as _;
     b.iter().fold(String::new(), |mut s, x| {
@@ -3110,6 +3125,7 @@ impl Builder {
         .chain(Self::wifi_entries()?)
         .chain(self.vouch_entries()?)
         .chain(Self::config_section_entries()?)
+        .chain(Self::buses_and_devices_entries()?)
         .chain(Self::config_message_entries()?)
         .collect::<Vec<_>>()))
     }
@@ -3294,6 +3310,153 @@ impl Builder {
             ))
         })
         .collect()
+    }
+
+    /// `0x0003 buses and devices`: a small site as `Config` answers with it,
+    /// the write that edits it, the empty section, the widest body the limits
+    /// derivation costs, and the three nested types alone so each one's keys
+    /// are held to the document.
+    ///
+    /// The numbers are written out here rather than looked up, because this
+    /// file is the witness the crate is checked against, not a second reading
+    /// of the crate's own tables.
+    fn buses_and_devices_entries() -> Result<Vec<(&'static str, Value)>> {
+        Self::buses_and_devices_sites()
+            .into_iter()
+            .chain(Self::buses_and_devices_nested())
+            .map(|(name, carried, body, readable, meaning)| {
+                let bytes = cbor(&body)?;
+                Ok((
+                    name,
+                    obj(vec![
+                        ("section", json!(0x0003)),
+                        ("authentication", json!(carried)),
+                        ("body_readable", json!(readable)),
+                        ("values_readable", json!(meaning)),
+                        ("body_cbor", json!(hex(&bytes))),
+                        ("body_len", json!(bytes.len())),
+                    ]),
+                ))
+            })
+            .collect()
+    }
+
+    /// The whole bodies: the site, the write that edits it, nothing configured,
+    /// and the widest.
+    fn buses_and_devices_sites() -> Vec<SectionCase> {
+        const WRITE: &str = "this is a section body; on the wire it is key 3 of the SetConfig 0x07 operation, which is sealed like every request";
+        const READ: &str = "this is a section body; on the wire it is key 3 of Config 0x86, whose body is sealed under the session's controller-to-client key";
+        const BOTH: &str = "this is a section body; on the wire it is key 3 of Config 0x86 or of the SetConfig 0x07 operation, the same in both";
+        let serial = serial_bus;
+        let can = || cmap! { 1 => Cb::U(2), 2 => Cb::U(500_000) };
+        let meter = |addr: u8| {
+            cmap! {
+                1 => Cb::U(1), 2 => Cb::U(1), 3 => Cb::B(vec![addr]), 4 => Cb::U(3),
+                5 => Cb::U(2), 6 => Cb::U(5), 8 => cmap! { 4 => Cb::U(1000) },
+            }
+        };
+        let charger = || {
+            cmap! {
+                1 => Cb::U(2), 2 => Cb::U(1), 3 => Cb::B(vec![0x02]), 4 => Cb::U(4),
+                5 => Cb::U(3), 6 => Cb::U(1), 8 => cmap! { 1 => Cb::U(1), 4 => Cb::U(2000) },
+            }
+        };
+        let mppt = cmap! {
+            1 => Cb::U(4), 2 => Cb::U(3), 4 => Cb::U(5), 5 => Cb::U(4), 6 => Cb::U(1),
+            8 => cmap! { 3 => Cb::Bool(true) },
+        };
+        let moved = meter(0x05);
+        let added = cmap! {
+            2 => Cb::U(1), 3 => Cb::B(vec![0x06]), 4 => Cb::U(2), 5 => Cb::U(2), 6 => Cb::U(5),
+        };
+        let widest_bus = |bus: u64| {
+            cmap! { 1 => Cb::U(bus), 2 => Cb::U(115_200), 3 => Cb::U(8), 4 => Cb::U(3), 5 => Cb::U(2) }
+        };
+        let widest_device = |i: u8| {
+            cmap! {
+                1 => Cb::U(0xFF00 + u64::from(i)),
+                2 => Cb::U(24),
+                3 => Cb::B(vec![i; 8]),
+                4 => Cb::U(0xF001),
+                5 => Cb::U(0xF002),
+                6 => Cb::U(0xF003),
+                7 => Cb::U(0xFF00 + u64::from((i + 1) % 16)),
+                8 => cmap! {
+                    1 => Cb::U(2), 2 => Cb::U(2), 3 => Cb::Bool(true), 4 => Cb::U(100_000),
+                },
+            }
+        };
+        vec![
+            (
+                "busesanddevices_0x0003",
+                READ,
+                cmap! {
+                    1 => Cb::A(vec![serial(), can()]),
+                    2 => Cb::A(vec![meter(0x01), charger(), mppt]),
+                },
+                Some("{1:buses, 2:devices}"),
+                "bus 1 (rs485) at 9600 8N2 and bus 2 (can) at 500 kbit/s; bus 3 (ve_direct) is left out and runs at what its device's dialect requires. dev 1 a PZEM-017 (product 3, dialect 2 pzem dc, role 5 energy meter) at address 1 polled every 1000 ms; dev 2 an EPEver Tracer B (product 4, dialect 3 epever b, role 1 solar charger) at address 2, battery current positive into the battery, polled every 2000 ms; dev 4 a Victron MPPT RS (product 5, dialect 4 victron mppt rs hex) on bus 3 with no addr and a 3.3 V port. dev 3 was removed earlier and is never given again (P-262)",
+            ),
+            (
+                "buses_and_devices_write_0x0003",
+                WRITE,
+                cmap! {
+                    1 => Cb::A(vec![serial(), can()]),
+                    2 => Cb::A(vec![moved, charger(), added]),
+                },
+                None,
+                "an edit of busesanddevices_0x0003: dev 1 moved to address 5 keeps its id; dev 2 unchanged; dev 4 left out is removed; the entry with no key 1 adds a PZEM-003 (product 2) at address 6, and the controller gives it dev 5, the next id it has never given (P-262)",
+            ),
+            (
+                "buses_and_devices_empty_0x0003",
+                BOTH,
+                cmap! { 1 => Cb::A(vec![]), 2 => Cb::A(vec![]) },
+                None,
+                "nothing configured: both arrays present and empty, never a key left out",
+            ),
+            (
+                "buses_and_devices_widest_0x0003",
+                BOTH,
+                cmap! {
+                    1 => Cb::A((24..32).map(widest_bus).collect()),
+                    2 => Cb::A((0..16).map(widest_device).collect()),
+                },
+                None,
+                "the widest body PROTOCOL.md's MAX_CONFIG_DEVICES derivation costs, 901 bytes: eight buses and sixteen devices with every key at its widest value. It decodes, and a controller refuses it invalid (P-265), because every device names a parent and the chain closes on itself. A valid body is at least four bytes shorter: at least one device names no parent, and every chain stays within max_topology_depth (P-187)",
+            ),
+        ]
+    }
+
+    /// The three nested types, one each.
+    fn buses_and_devices_nested() -> Vec<SectionCase> {
+        const NESTED: &str = "this is one element of a buses and devices body, published alone so its keys are checked against the document";
+        vec![
+            (
+                "busentry",
+                NESTED,
+                serial_bus(),
+                Some("{1:bus, 2:rate, 3:data_bits, 4:parity, 5:stop_bits}"),
+                "bus 1 at 9600 bit/s, 8 data bits, parity 1 none, 2 stop bits",
+            ),
+            (
+                "deviceentry",
+                NESTED,
+                cmap! {
+                    1 => Cb::U(6), 2 => Cb::U(1), 3 => Cb::B(vec![0x03]), 4 => Cb::U(7),
+                    5 => Cb::U(6), 6 => Cb::U(4), 7 => Cb::U(5),
+                    8 => cmap! { 1 => Cb::U(2), 4 => Cb::U(1000) },
+                },
+                Some("{1:dev, 2:bus, 3:addr, 4:product, 5:dialect, 6:role, 7:parent, 8:options}"),
+                "dev 6, an EG4 LifePower4 pack (product 7, dialect 6 eg4 lifepower4 serial, role 4 bms) at address 3 on bus 1, a sub-device of the pack at dev 5; current positive out of the battery, polled every 1000 ms",
+            ),
+            (
+                "deviceoptions",
+                NESTED,
+                cmap! { 1 => Cb::U(1), 2 => Cb::U(2), 3 => Cb::Bool(true), 4 => Cb::U(500) },
+                Some("{1:current_direction, 2:pylontech_version, 3:ve_direct_3v3, 4:poll_period}"),
+                "all four keys at once, as the map decodes: positive into the battery, revision 1.3, a 3.3 V port, every 500 ms. A device carries only the keys its dialect defines (P-264)",
+            ),
+        ]
     }
 
     /// `Clients 0x18` and its answer while `inviteack_0x95`'s invite is

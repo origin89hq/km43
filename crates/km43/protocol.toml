@@ -20,6 +20,15 @@ skip_unknown = ["metric_kind", "event_kind"]
 
 [limits]
 max_payload = 1024
+# Fixed on the wire, and needed by a decoder in either language before it
+# decodes (PROTOCOL.md, Limits).
+max_string = 64
+max_depth = 8
+max_addr = 8
+# The bus and device lists of `0x0003 buses and devices`, bounded so the widest
+# body fits a write's operation and a Config answer.
+max_config_buses = 8
+max_config_devices = 16
 
 # Private 128-bit UUIDs; canonical text, not Bluetooth-base short UUIDs.
 [ble]
@@ -455,6 +464,40 @@ value = 7
 name = "internal"
 status = "reserved"
 meaning = "Inside the controller; nothing physical to unplug"
+
+# The framing of a serial bus in `0x0003 buses and devices`, `BusEntry` key 4.
+[[enums.parity]]
+value = 1
+name = "none"
+status = "live"
+meaning = "No parity bit"
+
+[[enums.parity]]
+value = 2
+name = "even"
+status = "live"
+meaning = "Even parity"
+
+[[enums.parity]]
+value = 3
+name = "odd"
+status = "live"
+meaning = "Odd parity"
+
+# Which revision of Pylontech's battery protocol a device speaks, device option
+# 2. The two decode the same registers differently and a device does not say
+# which it is, so nothing can be read until somebody states it.
+[[enums.pylontech_version]]
+value = 1
+name = "v1_2"
+status = "live"
+meaning = "Protocol revision 1.2"
+
+[[enums.pylontech_version]]
+value = 2
+name = "v1_3"
+status = "live"
+meaning = "Protocol revision 1.3"
 
 [[enums.shape]]
 value = 1
@@ -2655,7 +2698,7 @@ status = "reserved"
 [[codes.config_section]]
 number = 3
 name = "buses and devices"
-status = "reserved"
+status = "live"
 
 [[codes.config_section]]
 number = 16
@@ -2695,6 +2738,31 @@ status = "reserved"
 [[codes.behaviour_key]]
 number = 1
 name = "shadow"
+status = "live"
+
+
+# The keys of a device's options map in `0x0003 buses and devices`. One space
+# for every dialect, so a key means one thing wherever it appears; which
+# dialects accept a key is the controller's dialect table, and a key the
+# device's dialect does not define is refused rather than skipped (P-264).
+[[codes.device_option]]
+number = 1
+name = "current direction"
+status = "live"
+
+[[codes.device_option]]
+number = 2
+name = "pylontech version"
+status = "live"
+
+[[codes.device_option]]
+number = 3
+name = "ve direct 3v3"
+status = "live"
+
+[[codes.device_option]]
+number = 4
+name = "poll period"
 status = "live"
 
 
