@@ -960,12 +960,13 @@ fn open_rows(table: &str) -> BTreeSet<(u16, String)> {
         .collect()
 }
 
-/// An open table has no `TryFrom` to walk, so a constant pointing at the
-/// wrong number is invisible to `closed_set!`: firmware writing `PZEM_AC` into
-/// an inventory row would send another meter's dialect and every client would
-/// believe it. Each constant here is named as a driver author types it, and
-/// the set must equal the registry's rows, so a constant off by one, a row
-/// with no constant and a constant with no row all fail.
+/// An open table has no `TryFrom` to walk, so a constant on the wrong number is
+/// invisible to `closed_set!`: firmware writing `PZEM_AC` into an inventory row
+/// would send another meter's dialect and every client would believe it, and a
+/// `DS18B20` one below its row is `pylontech can`, so a client would take a
+/// temperature probe for a battery pack. Each constant is named as a driver
+/// author types it, and the set must equal the registry's rows, so a constant
+/// off by one, a row with no constant and a constant with no row all fail.
 #[test]
 fn every_dialect_constant_carries_its_registry_number() {
     let constants: BTreeSet<(u16, String)> = [
@@ -985,6 +986,9 @@ fn every_dialect_constant_carries_its_registry_number() {
         ),
         (Dialect::ECOFLOW_POWER_KITS, "ecoflow power kits"),
         (Dialect::PZEM_AC, "pzem ac"),
+        (Dialect::VE_DIRECT_TEXT, "ve direct text"),
+        (Dialect::PYLONTECH_CAN, "pylontech can"),
+        (Dialect::DS18B20, "ds18b20"),
     ]
     .into_iter()
     .map(|(d, name)| (d.0, name.to_owned()))
@@ -994,7 +998,10 @@ fn every_dialect_constant_carries_its_registry_number() {
 
 /// The same for products. The PZEM-014 and PZEM-016 share a dialect and must
 /// not share a number: an inventory row keys a device by both, and two
-/// models collapsed into one product lose which meter is on the bus.
+/// models collapsed into one product lose which meter is on the bus. The
+/// DS18B20 is the only one of the three new dialects with a product: a
+/// VE.Direct or Pylontech device waits for its own product row, and a guessed
+/// one here would be an identity no unit reports.
 #[test]
 fn every_product_constant_carries_its_registry_number() {
     let constants: BTreeSet<(u16, String)> = [
@@ -1013,6 +1020,7 @@ fn every_product_constant_carries_its_registry_number() {
         (Product::ECOFLOW_POWER_KIT, "ecoflow power kit"),
         (Product::PZEM_014, "pzem 014"),
         (Product::PZEM_016, "pzem 016"),
+        (Product::DS18B20, "ds18b20"),
     ]
     .into_iter()
     .map(|(p, name)| (p.0, name.to_owned()))

@@ -2687,6 +2687,19 @@ ParamRow
  17: label        text     optional; ≤ MAX_LABEL
 ```
 
+The controller's onboard analogue inputs, its ADC channels, the dividers in
+front of them and the 4–20 mA tank loop, are components and signals of `dev 0`
+on `bus 0`, whose `dialect` is `0x0001 no protocol`. They get no `DeviceRow` and
+no dialect of their own: a channel is wiring on the controller's board, and a
+product per channel would be identity invented for a pin.
+
+A DS18B20 is the other way round. Each probe is its own `DeviceRow` on the
+controller's `onewire` bus, with `ds18b20` as both `product` and `dialect` and
+its 8-byte ROM code as `addr`, in the order the bus sends it: family code first,
+CRC byte last. A probe is replaced, moved and hot-plugged on its own, so its
+history has to follow the probe and not the pin, and a new ROM code in the same
+place is a new instrument under P-205.
+
 A **parameter** is what a downstream device says about itself and does not change
 with the weather — a nameplate rating, an input current limit, a permitted floor
 and ceiling. A *derated* limit, a BMS's present charge-current limit or a charger
@@ -2842,14 +2855,17 @@ bus at three in the morning goes through a different door, and a rule enforced a
 only one of them is enforced at neither.
 
 **P-202** — `DeviceRow` key 3 `addr` MUST be present when the row's `bus` has an
-addressed `transport` — `rs485`, `can` or `ip` — and MUST be **unique within a
-`bus`**. A receiver MUST refuse an `Inventory 0x8D` page that breaks either.
+addressed `transport` — `rs485`, `can`, `ip` or `onewire` — and MUST be **unique
+within a `bus`**. A receiver MUST refuse an `Inventory 0x8D` page that breaks
+either.
 
 Two devices on one RS-485 pair with no `addr` are two rows a client cannot tell
 apart. It can say there are two chargers and not which one is at which end of
 the wire, so *the second charger has stopped answering* names nothing anybody
 can walk up to, and the person who drove four hours to swap it is reading labels
-in the cabinet with a torch.
+in the cabinet with a torch. Three temperature probes on one 1-Wire bus are the
+same failure with less to read: the ROM code is the only thing that tells them
+apart, so it is the address.
 
 Two devices carrying the same `addr` describe a bus that cannot work at all. One
 of them is answering for both, and one instrument's numbers arrive on the screen
