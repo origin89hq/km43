@@ -15,11 +15,11 @@ use km43::{
     ClientDisconnected, ClientKind, CloseConnection, CloseReason, Command, CommandKind,
     CommsRelease, CommsReleaseOp, ConcernState, Concerns, ConfigSection, ControlOwner, Dialect,
     Direction, DisconnectReason, ErrorCode, EventKind, Firmware, GeneratorSelector, GeneratorState,
-    History, HistorySource, HistoryStopReason, Inventory, InventoryKind, Invite, InviteDecision,
-    LinkDirection, LinkErrorCode, LinkMessageType, LinkTransport, MessageType, MetricKind,
-    NetConfig, NetConfigOp, Pair, Presence, Product, Provenance, Quality, Readings, Remove, Role,
-    SetConfig, Severity, Shape, SignalDomain, Time, TimeOffer, TimeSource, TopologyChangeReason,
-    Transport, Unit, Validity, Vtype,
+    HeldDownReason, History, HistorySource, HistoryStopReason, Inventory, InventoryKind, Invite,
+    InviteDecision, LinkDirection, LinkErrorCode, LinkMessageType, LinkTransport, MessageType,
+    MetricKind, NetConfig, NetConfigOp, Pair, Presence, Product, Provenance, Quality, Readings,
+    Remove, Role, SetConfig, Severity, Shape, SignalDomain, Time, TimeOffer, TimeSource,
+    TopologyChangeReason, Transport, Unit, Validity, Vtype,
 };
 use std::collections::BTreeSet;
 
@@ -789,6 +789,12 @@ closed_set!(
     SignalDomain,
     u8,
     numbers("enums.signal_domain", "value", "name", unless_gone)
+);
+closed_set!(
+    held_down_reason_matches_the_registry,
+    HeldDownReason,
+    u8,
+    numbers("enums.held_down_reason", "value", "name", unless_gone)
 );
 closed_set!(
     time_source_matches_the_registry,

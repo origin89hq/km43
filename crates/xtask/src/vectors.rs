@@ -2569,6 +2569,18 @@ impl Builder {
                 cmap! { 1 => Cb::U(1140) },
                 "1140 bytes classified as non-frames during one comms boot attempt",
             ),
+            (
+                "commshelddown_0x0807",
+                0x0807,
+                cmap! { 1 => Cb::U(0) },
+                "reason no_device_id: no device_id at boot (L-116)",
+            ),
+            (
+                "comms_held_down_revisions_0x0807",
+                0x0807,
+                cmap! { 1 => Cb::U(1) },
+                "reason revisions_spent: L-195's pairing-window revisions ran out (L-116)",
+            ),
         ]
         .into_iter()
         .map(|(name, kind, body, meaning)| {
@@ -2579,6 +2591,7 @@ impl Builder {
                 | "sessionsshedforbackpressure_0x0804"
                 | "commsbootnoise_0x0805" => Some("{1:count}"),
                 "commsunrecoverable_0x0803" => Some("{1:rail_on}"),
+                "commshelddown_0x0807" => Some("{1:reason}"),
                 _ => None,
             };
             let bytes = cbor(&body)?;

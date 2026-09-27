@@ -549,6 +549,7 @@ argument for leaving the numbers overlapping is at the head of the metric table.
 | `0x0804` | sessions shed for backpressure | A | live |
 | `0x0805` | comms boot noise | A | live |
 | `0x0806` | wifi status changed | A | live |
+| `0x0807` | comms held down | A | live |
 | `0x0901` | topology changed | A | live |
 | `0x0902` | device presence changed | A | live |
 
@@ -895,6 +896,16 @@ through**: `1` there means *NTP*, `1` here means *a client set the clock*, which
 is the opposite. The point of recording a source at all is to tell a drifted RTC
 from a lying uplink, so a number copied straight across inverts the one thing the
 field exists to say.
+
+## Held-down reasons — `u8`
+
+Why the controller is keeping the link down for this boot, recorded as `reason`
+in the `comms held down` event (L-116).
+
+| Value | Name | Meaning |
+|---|---|---|
+| 0 | no_device_id | The controller had no `device_id` at boot |
+| 1 | revisions_spent | L-195's pairing-window revisions ran out |
 
 ## Scan states — `u8`
 

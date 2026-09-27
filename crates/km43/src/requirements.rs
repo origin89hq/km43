@@ -1452,6 +1452,12 @@ pub const REQUIREMENTS: &[Requirement] = &[
         statement: "While the controller keeps the link down on purpose, because it had no `device_id` at boot or because L-195's revisions are spent, L-111 and L-112 MUST NOT apply: it MUST NOT cut the rail on their account and MUST NOT raise comms unrecoverable (`0x0803`).",
     },
     Requirement {
+        id: "L-116",
+        document: "docs/protocol/LINK.md",
+        section: "When the controller stops hearing the comms processor",
+        statement: "When the controller starts keeping the link down on purpose (L-115), it MUST write one comms held down (`0x0807`) record naming why, and MUST NOT write another in that boot, whatever `LinkUp`, heartbeat or timer follows.",
+    },
+    Requirement {
         id: "L-114",
         document: "docs/protocol/LINK.md",
         section: "When the controller stops hearing the comms processor",

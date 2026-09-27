@@ -73,7 +73,7 @@ fn every_published_body_is_one_this_reader_walks_to_the_end() {
             seen += 1;
         }
     }
-    assert_eq!(seen, 90, "the vector file grew or shrank a body");
+    assert_eq!(seen, 92, "the vector file grew or shrank a body");
 }
 
 /// The envelope the generator publishes must decode here to the same four
@@ -729,7 +729,7 @@ fn the_published_sealed_error_is_refused_when_read_bare() {
 /// `Discover 0x80`, the `HelloReport`, the `Inventory 0x8D`, the
 /// `Readings 0x8E`, the `Concerns 0x8F`, the six event bodies — the two
 /// concern records `0x0501` and `0x0502`, then `0x0102`, `0x0901` and `0x0902`,
-/// then the boot record `0x0601`, followed by nine controller-record examples —
+/// then the boot record `0x0601`, followed by eleven controller-record examples —
 /// and the forty-eight read by name rather than by position: the seven
 /// handshake envelopes and the bare `Error 0xFF`, the two offers and the
 /// `Enrol 0x93` answer, `ReadLog 0x05`, `LogPage 0x85`, the `Time 0x0A`
@@ -745,7 +745,7 @@ fn the_published_sealed_error_is_refused_when_read_bare() {
 /// after that message was retired.
 fn published_bodies() -> Vec<Vec<u8>> {
     let found = blobs("body_cbor");
-    assert_eq!(found.len(), 75, "the vector file grew or shrank a body");
+    assert_eq!(found.len(), 77, "the vector file grew or shrank a body");
     found
 }
 
@@ -2814,7 +2814,7 @@ fn the_published_logpage_is_the_one_this_crate_writes_and_reads() {
 #[test]
 fn p_215_published_controller_records_pin_each_body_schema() {
     use core::num::NonZeroU32;
-    use km43::{CONTROLLER_RECORD_MAX_BYTES, ControllerRecord, TimeSource};
+    use km43::{CONTROLLER_RECORD_MAX_BYTES, ControllerRecord, HeldDownReason, TimeSource};
     let cases = [
         (
             "timeset_0x0604",
@@ -2862,6 +2862,18 @@ fn p_215_published_controller_records_pin_each_body_schema() {
         (
             "commsbootnoise_0x0805",
             ControllerRecord::CommsBootNoise { count: 1140 },
+        ),
+        (
+            "commshelddown_0x0807",
+            ControllerRecord::CommsHeldDown {
+                reason: HeldDownReason::NoDeviceId,
+            },
+        ),
+        (
+            "comms_held_down_revisions_0x0807",
+            ControllerRecord::CommsHeldDown {
+                reason: HeldDownReason::RevisionsSpent,
+            },
         ),
     ];
     for (name, want) in cases {

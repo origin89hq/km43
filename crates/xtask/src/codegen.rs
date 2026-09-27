@@ -538,6 +538,7 @@ pub fn heading_for(key: &str) -> String {
         "boot_reason" => "## Boot reasons",
         "charge_stage" => "## Charge stages",
         "time_source" => "## Time sources",
+        "held_down_reason" => "## Held-down reasons",
         "client_kind" => "## Client kinds",
         "role" => "## Roles",
         "invite_decision" => "## Invite decisions",

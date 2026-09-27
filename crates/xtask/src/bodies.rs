@@ -1,4 +1,5 @@
-//! Holds the published message bodies to the field lists in `PROTOCOL.md`.
+//! Holds the published message bodies to the field lists in `PROTOCOL.md` and
+//! `LINK.md`.
 //!
 //! `preimage.rs` does this for MAC preimages and it exists because a formula
 //! changed in the spec and the generator did not follow. A body has the same
@@ -21,12 +22,19 @@ pub struct Bodies {
 }
 
 impl Bodies {
-    /// The field lists in `PROTOCOL.md`, read out of the fenced blocks that
-    /// define each message.
+    /// The field lists in `PROTOCOL.md` and `LINK.md`, read out of the fenced
+    /// blocks that define each message. `LINK.md` is read second, so a name both
+    /// define keeps `PROTOCOL.md`'s; a body only LINK.md lists, such as the
+    /// held-down record L-116 defines beside its rule, is still compared.
     pub fn from_spec(root: &Path) -> Result<Self> {
-        let path = root.join("docs/PROTOCOL.md");
-        let text = std::fs::read_to_string(&path)
-            .with_context(|| format!("reading {}", path.display()))?;
+        let mut text = String::new();
+        for doc in ["docs/PROTOCOL.md", "docs/protocol/LINK.md"] {
+            let path = root.join(doc);
+            text.push_str(
+                &std::fs::read_to_string(&path)
+                    .with_context(|| format!("reading {}", path.display()))?,
+            );
+        }
 
         let mut bodies = BTreeMap::new();
         let mut name: Option<String> = None;
@@ -95,13 +103,13 @@ impl Bodies {
         for (name, ours) in &self.bodies {
             let Some(theirs) = spec.bodies.get(name) else {
                 out.push(format!(
-                    "the vectors publish a {name} body and PROTOCOL.md defines no such message"
+                    "the vectors publish a {name} body and neither PROTOCOL.md nor LINK.md defines it"
                 ));
                 continue;
             };
             if ours != theirs {
                 out.push(format!(
-                    "{name}: the vectors say {} and PROTOCOL.md says {}",
+                    "{name}: the vectors say {} and the specification says {}",
                     render(ours),
                     render(theirs)
                 ));
