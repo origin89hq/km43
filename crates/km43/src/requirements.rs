@@ -822,6 +822,12 @@ pub const REQUIREMENTS: &[Requirement] = &[
         statement: "`(dev, cmp, kind, shape, vtype, domain, point, dir)` MUST be **unique within a `rev`** across all `SignalRow`s, and `(dev, cmp, kind, vtype, domain, point, dir)` across all `ParamRow`s, which carry no `shape`.",
     },
     Requirement {
+        id: "P-260",
+        document: "docs/PROTOCOL.md",
+        section: "Inventory — `0x0D` / `0x8D`",
+        statement: "A `SignalRow` or `ParamRow` whose `kind` is **DC energy** or **DC charge** MUST be `vtype 2 counter` and MUST carry `dir` **1** (it counts what flows in) or **2** (it counts what flows out).",
+    },
+    Requirement {
         id: "P-198",
         document: "docs/PROTOCOL.md",
         section: "Readings — `0x0E` / `0x8E`",
@@ -843,7 +849,13 @@ pub const REQUIREMENTS: &[Requirement] = &[
         id: "P-196",
         document: "docs/PROTOCOL.md",
         section: "Readings — `0x0E` / `0x8E`",
-        statement: "A reading's value key MUST be present exactly when its `q` byte's validity is `1 ok` or `2 stale`, and absent otherwise.",
+        statement: "A reading's value key MUST be present exactly when its `q` byte's validity is `1 ok`, `2 stale` or `9 reset`, and absent otherwise.",
+    },
+    Requirement {
+        id: "P-259",
+        document: "docs/PROTOCOL.md",
+        section: "Readings — `0x0E` / `0x8E`",
+        statement: "A counter signal (`vtype 2`) whose new total is **below the last total the controller published for it** MUST be published at **`validity 9 reset` with the new total as its value**, and never at `6 out_of_range`.",
     },
     Requirement {
         id: "P-164",

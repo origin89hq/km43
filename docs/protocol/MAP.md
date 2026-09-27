@@ -135,7 +135,7 @@ The high byte is the family. A kind allocated in the wrong one is not wrong on t
 flowchart LR
   metrics["metric kinds"]
   events["event kinds"]
-  metrics --> m1["0x01xx · DC electrical · 11 allocated"]
+  metrics --> m1["0x01xx · DC electrical · 13 allocated"]
   metrics --> m2["0x02xx · AC electrical · 7 allocated"]
   metrics --> m3["0x03xx · temperature · 2 allocated"]
   metrics --> m4["0x04xx · level · 2 allocated"]

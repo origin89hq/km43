@@ -3002,6 +3002,20 @@ pack described twice. A client then plots the string beside itself, or plots the
 fourteen and drops two cells with nothing on the wire saying they are missing,
 which is the failure P-197's per-element `q` byte exists to prevent.
 
+**P-260** — A `SignalRow` or `ParamRow` whose `kind` is **DC energy** or **DC
+charge** MUST be `vtype 2 counter` and MUST carry `dir` **1** (it counts what
+flows in) or **2** (it counts what flows out). A row that is not a counter,
+carries no `dir`, or carries `dir 3` MUST be refused at registration. Its window
+is its `domain`: a lifetime total is `2 lifetime`, today's is `4 today`.
+
+The two kinds are unsigned, and a site with flow both ways publishes two
+signals. One counter running both ways cannot tell a meter that restarted from
+energy going back the other way, which is the judgement P-259 depends on, and
+every source these kinds were allocated for — a PZEM-017's total, an MPPT's
+yield, a shunt's charged and discharged amp-hours — already counts each way
+apart. `dir` is then the only thing separating a bank's two counters, so a row
+that leaves it out hands the charged amp-hours the word for consumed ones.
+
 ### Readings — `0x0E` / `0x8E`
 
 The hot plane: what the numbers *are*, polled. A `Readings` parses with no
@@ -3039,7 +3053,7 @@ Readings  0x8E               sealed
 
 Sample
   1: sig          u16
-  2: v            int      optional; i32 (P-185). Present iff validity is 1 or 2
+  2: v            int      optional; i32 (P-185). Present iff validity is 1, 2 or 9
   3: q            u8       validity<<4 | provenance
   4: age          u32      optional; seconds on P-004's tick.
                            REQUIRED when validity is 2 stale
@@ -3049,7 +3063,7 @@ Series
   2: q            bstr     exactly `n` bytes; byte k is element k's
                            validity<<4 | provenance
   3: v            [ int ]  exactly as many integers as key 2 has bytes whose
-                           validity is 1 or 2, in ascending element order. Each i32
+                           validity is 1, 2 or 9, in ascending element order. Each i32
   4: age          u32      optional; seconds. REQUIRED when any element's validity
                            is 2, and it is the age of the oldest such element
 ```
@@ -3127,7 +3141,7 @@ needs more: the range at a scale of −3 is ±2 147 483 A, and at −2 it is ±2
 volts.
 
 **P-196** — A reading's value key MUST be present exactly when its `q` byte's
-validity is `1 ok` or `2 stale`, and absent otherwise. `provenance` MUST be `0`
+validity is `1 ok`, `2 stale` or `9 reset`, and absent otherwise. `provenance` MUST be `0`
 exactly when there is no value and in `1..6` exactly when there is. A `stale`
 reading MUST carry an `age`, and one that is not stale MUST NOT.
 
@@ -3146,6 +3160,29 @@ receiver MUST refuse both.
 `stale` means *this is old*, and how old is the only thing that makes it usable.
 Without the age a client renders a two-hour-old cell voltage as current and a
 balancing decision is made on it.
+
+**P-259** — A counter signal (`vtype 2`) whose new total is **below the last
+total the controller published for it** MUST be published at **`validity 9
+reset` with the new total as its value**, and never at `6 out_of_range`. A
+total that is equal or higher MUST NOT be marked `reset`. A negative total is
+`6 out_of_range` with no value, and does not replace the last total. Before the
+first total since boot there is nothing to be below, so that one is `1 ok`.
+
+A counter that went backwards restarted: a PV yield returns to zero at
+midnight, and a meter's total does after a power cut. Refusing the reading
+drops a real day of energy on every one of those. Publishing it as `ok` gives a
+client a total that fell, and a chart joining the two draws a day's yield
+flowing back into the array. `reset` keeps the number and says a new run starts
+at it, so whatever joins readings into a line starts a new one there.
+
+The judgement needs the previous total, which one reading does not carry, so
+it is the publisher's to make and a receiver cannot make it from a single
+`Sample`. A restart the controller did not see — a meter that reset while the
+controller was itself down — is not marked, and a client comparing its own
+history still sees the drop. A wrap at the top of a source's width is a restart
+by the same rule. A counter counts up from zero, so a negative total is a
+decode fault, and keeping it as the last total would make the next honest
+reading look like a rise.
 
 **P-164** — A source reporting an operating state this controller has no
 normalized value for MUST be published at **`validity 8 unnamed_state` with no
