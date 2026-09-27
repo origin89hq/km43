@@ -1433,6 +1433,14 @@ number = 9
 name = "ecoflow power kits"
 status = "reserved"
 
+# Peacefair, "PZEM-014/016 AC communication module", §2.1 and §2.3: 9600 8N1
+# against the DC meters' 8N2, and input registers 0x0000–0x0009 read with
+# function 0x04. Different framing and register model, so not `pzem dc`.
+[[open_registries.dialect]]
+number = 10
+name = "pzem ac"
+status = "reserved"
+
 [[open_registries.dialect]]
 range = "`0xF000`–`0xFFFF`"
 name = "vendor range, skip-unknown under P-019"
@@ -1485,6 +1493,18 @@ status = "reserved"
 [[open_registries.product]]
 number = 10
 name = "ecoflow power kit"
+status = "reserved"
+
+# The PZEM-014 and PZEM-016 both speak `pzem ac`, and are two products for the
+# same reason the PZEM-003 and PZEM-017 are two under `pzem dc`.
+[[open_registries.product]]
+number = 11
+name = "pzem 014"
+status = "reserved"
+
+[[open_registries.product]]
+number = 12
+name = "pzem 016"
 status = "reserved"
 
 [[open_registries.product]]
