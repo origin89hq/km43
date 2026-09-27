@@ -607,3 +607,144 @@ test("P-265: MAX_CONFIG_DEVICES and max_devices, each at the limit and one over"
     "too_many",
   );
 });
+
+test("a map key outside the signed 64-bit range is error 1, as Rust refuses it", () => {
+  // An unknown section key 2^63: Rust cannot read it as a key at all.
+  const sectionKey = refused(
+    decodeBusesAndDevicesWrite(
+      hex("a3 01 80 02 80 1b 80 00 00 00 00 00 00 00 00"),
+    ),
+  );
+  assert.deepEqual(sectionKey, {
+    reason: "cbor",
+    failure: "integer_out_of_range",
+  });
+  assertMalformed(sectionKey);
+  // The same key in an options map is error 1 too, not an unknown option.
+  const optionKey = refused(
+    decodeBusesAndDevicesWrite(
+      hex(
+        "a2 01 80 02 81 a5 02 01 04 03 05 02 06 05 08 a1 1b 80 00 00 00 00 00 00 00 00",
+      ),
+    ),
+  );
+  assert.deepEqual(optionKey, {
+    reason: "cbor",
+    failure: "integer_out_of_range",
+  });
+  // i64::MAX itself is a key, unknown and skipped; below i64::MIN is not.
+  assert.ok(
+    decodeBusesAndDevicesWrite(
+      hex("a3 01 80 02 80 1b 7f ff ff ff ff ff ff ff 00"),
+    ).ok,
+  );
+  assert.deepEqual(
+    refused(
+      decodeBusesAndDevicesWrite(
+        hex("a3 01 80 02 80 3b 80 00 00 00 00 00 00 00 00"),
+      ),
+    ),
+    { reason: "cbor", failure: "integer_out_of_range" },
+  );
+});
+
+test("the check refuses what the decoder would, for a body built by hand", () => {
+  const bus = (entry: Partial<BusesAndDevicesWrite["buses"][number]>) =>
+    checkBusesAndDevices({ buses: [{ bus: 1, ...entry }], devices: [] }, RULES);
+  assert.deepEqual(bus({ rate: 0 }), {
+    reason: "out_of_schema",
+    key: "bus entry rate",
+  });
+  assert.deepEqual(bus({ dataBits: 9 as 8 }), {
+    reason: "out_of_schema",
+    key: "bus entry data_bits",
+  });
+  assert.deepEqual(bus({ stopBits: 3 as 2 }), {
+    reason: "out_of_schema",
+    key: "bus entry stop_bits",
+  });
+  assertInvalid(bus({ rate: 0 }));
+
+  const device = (entry: Partial<DeviceEntry<number | undefined>>) =>
+    checkBusesAndDevices(write({ ...meter(undefined, 1), ...entry }), RULES);
+  assert.deepEqual(device({ addr: new Uint8Array() }), {
+    reason: "out_of_schema",
+    key: "device entry addr",
+  });
+  assert.deepEqual(device({ addr: new Uint8Array(9) }), {
+    reason: "out_of_schema",
+    key: "device entry addr",
+  });
+  assert.deepEqual(device({ dev: 0 }), {
+    reason: "out_of_schema",
+    key: "device entry dev",
+  });
+  assert.deepEqual(device({ parent: 0 }), {
+    reason: "out_of_schema",
+    key: "device entry parent",
+  });
+
+  const nine: BusesAndDevicesWrite = {
+    buses: Array.from({ length: 9 }, (_, i) => ({ bus: i + 1, rate: 9600 })),
+    devices: [],
+  };
+  const board = {
+    ...RULES,
+    buses: Array.from({ length: 9 }, (_, i) => ({
+      bus: i + 1,
+      transport: Transport.Rs485,
+    })),
+  };
+  assert.deepEqual(checkBusesAndDevices(nine, board), {
+    reason: "too_many",
+    key: "buses and devices buses",
+  });
+  assertInvalid(checkBusesAndDevices(nine, board));
+  assert.equal(
+    checkBusesAndDevices({ ...nine, buses: nine.buses.slice(0, 8) }, board),
+    undefined,
+  );
+  // Nine on the wire decode to the end and are refused the same way.
+  assert.deepEqual(
+    refused(decodeBusesAndDevicesWrite(encodeBusesAndDevices(nine))),
+    {
+      reason: "too_many",
+      key: "buses and devices buses",
+    },
+  );
+});
+
+test("an answer whose buses do not ascend is refused", () => {
+  const backwards = refused(
+    decodeBusesAndDevicesRead(
+      encodeBusesAndDevices({
+        buses: [
+          { bus: 2, rate: 500_000 },
+          { bus: 1, rate: 9600 },
+        ],
+        devices: [],
+      }),
+    ),
+  );
+  assert.deepEqual(backwards, { reason: "out_of_order", key: "bus entry bus" });
+  assertMalformed(backwards);
+});
+
+test("a device breaking several value rules is refused for dev, then addr, then parent", () => {
+  // dev 0, an empty addr and parent 0 in one entry: Rust notes dev first.
+  const all = refused(
+    decodeBusesAndDevicesWrite(
+      hex("a2 01 80 02 81 a7 01 00 02 01 03 40 04 03 05 02 06 05 07 00"),
+    ),
+  );
+  assert.deepEqual(all, { reason: "out_of_schema", key: "device entry dev" });
+  const addrAndParent = refused(
+    decodeBusesAndDevicesWrite(
+      hex("a2 01 80 02 81 a6 02 01 03 40 04 03 05 02 06 05 07 00"),
+    ),
+  );
+  assert.deepEqual(addrAndParent, {
+    reason: "out_of_schema",
+    key: "device entry addr",
+  });
+});

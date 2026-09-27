@@ -580,11 +580,11 @@ class BodyReader {
     if (dev === 0) {
       invalid.note({ reason: "out_of_schema", key: "device entry dev" });
     }
-    if (parent === 0) {
-      invalid.note({ reason: "out_of_schema", key: "device entry parent" });
-    }
     if (addr !== undefined && (addr.length === 0 || addr.length > MAX_ADDR)) {
       invalid.note({ reason: "out_of_schema", key: "device entry addr" });
+    }
+    if (parent === 0) {
+      invalid.note({ reason: "out_of_schema", key: "device entry parent" });
     }
     const entry: DeviceEntry<number | undefined> = {
       dev,
@@ -861,8 +861,52 @@ function setOptions(options: DeviceOptions | undefined): DeviceOption[] {
 }
 
 /**
- * Check a body against what it does not carry: the board's buses, the dialect
- * table and the caps `Hello 0x81` reports (P-261, P-264, P-265). The same
+ * The rules the decoder applies to values, applied to a body built in memory.
+ * The Rust types make these unrepresentable; these interfaces do not, so a
+ * body a client edited is held to them here before the board is consulted.
+ */
+function schemaRefusal(
+  section: BusesAndDevices<number | undefined>,
+): BusesAndDevicesRefusal | undefined {
+  const refuse = (key: string): BusesAndDevicesRefusal => ({
+    reason: "out_of_schema",
+    key,
+  });
+  if (section.buses.length > MAX_CONFIG_BUSES) {
+    return { reason: "too_many", key: "buses and devices buses" };
+  }
+  for (const bus of section.buses) {
+    if (bus.rate === 0) return refuse("bus entry rate");
+    if (
+      bus.dataBits !== undefined &&
+      bus.dataBits !== 7 &&
+      bus.dataBits !== 8
+    ) {
+      return refuse("bus entry data_bits");
+    }
+    if (
+      bus.stopBits !== undefined &&
+      bus.stopBits !== 1 &&
+      bus.stopBits !== 2
+    ) {
+      return refuse("bus entry stop_bits");
+    }
+  }
+  for (const device of section.devices) {
+    if (device.dev === 0) return refuse("device entry dev");
+    const { addr } = device;
+    if (addr !== undefined && (addr.length === 0 || addr.length > MAX_ADDR)) {
+      return refuse("device entry addr");
+    }
+    if (device.parent === 0) return refuse("device entry parent");
+  }
+  return undefined;
+}
+
+/**
+ * Check a body against the values the decoder refuses and against what it
+ * does not carry: the board's buses, the dialect table and the caps
+ * `Hello 0x81` reports (P-261, P-264, P-265). The same
  * checks the controller makes, so a client can refuse a write before sending
  * one that would come back outcome 3.
  */
@@ -898,6 +942,10 @@ export function checkBusesAndDevices(
     }
     return { reason: "parent_loop", dev: start ?? 0 };
   };
+  const values = schemaRefusal(section);
+  if (values !== undefined) {
+    return values;
+  }
   const transportOf = (bus: number) =>
     rules.buses.find((board) => board.bus === bus)?.transport;
   for (const [index, entry] of section.buses.entries()) {

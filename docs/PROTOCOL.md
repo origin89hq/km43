@@ -4046,7 +4046,11 @@ devices' dialects require.
 `DeviceEntry` in a `SetConfig` that carries no `dev` adds a device, and the
 controller MUST give it an id it has never given before, in the order the
 entries appear; once every id has been given, a write that adds a device MUST
-be refused with outcome 3 `invalid` rather than wrap round to one in use. One that carries a `dev` edits the device the section already
+be refused with outcome 3 `invalid` rather than wrap round to one in use. The
+next id to give MUST be stored in the same A/B record as the section (P-102),
+and a controller whose next id is not above every `dev` the section holds MUST
+refuse the write the same way rather than give one out: a crash that stored one
+without the other is otherwise an id given twice. One that carries a `dev` edits the device the section already
 holds under that id, and MUST be refused with outcome 3 `invalid` when the
 section holds no such device, when the same `dev` appears twice, or when its
 `product` or `dialect` differs from the one held: changing either is removing
@@ -4103,10 +4107,19 @@ transport, carrying one on another, or repeating one within a bus; names a
 not drive at all included; names a `parent` that is not the `dev` of another
 entry in the same body, or a chain that returns to itself or runs deeper than
 `MAX_TOPOLOGY_DEPTH` (P-187); or lists more devices than `MAX_CONFIG_DEVICES`
-or than the `max_devices` it reports in `Hello 0x81` key 21. No outcome is
-added for any of these: each is a body the schema forbids, which is what P-101
-says outcome 3 is for, and a client can check every one before it writes —
-the buses and their transports are in the inventory and both caps are known.
+or than the `max_devices` it reports in `Hello 0x81` key 21; or lists more
+buses than `MAX_CONFIG_BUSES`. No outcome is added for any of these: each is a
+body the schema forbids, which is what P-101 says outcome 3 is for, and a
+client can check every one before it writes — the buses and their transports
+are in the inventory and both caps are known. The channel cap answers outcome
+5 `exceeds_cap` instead because a controller reports it and may lower it; the
+section's caps are fixed on the wire, so a body past them breaks the schema for
+every controller rather than being too large for one.
+
+`MAX_CONFIG_BUSES` is eight because the derivation above costs eight, and it
+bounds the buses a body can configure rather than the buses a board has. A
+board with more than eight settable buses configures eight of them; the rest
+run at what their devices' dialects require.
 
 A parent has to be listed rather than new because a new device has no `dev`
 until the write is accepted. Adding a battery bank and its packs is two writes:

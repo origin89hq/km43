@@ -713,6 +713,9 @@ pub enum ConfigError {
     ParentLoop(u16),
     /// A parent chain deeper than `max_topology_depth` (P-187).
     TooDeep(u16),
+    /// The id the allocator gave is one the section shows was given already:
+    /// the controller resumed it from a stale record (P-262).
+    AllocatorBehind(u16),
 }
 
 impl From<CborError> for ConfigError {
@@ -759,7 +762,8 @@ impl ConfigError {
             | Self::DevsExhausted
             | Self::ParentNotListed(_)
             | Self::ParentLoop(_)
-            | Self::TooDeep(_) => SectionRefusal::Outcome(SetConfig::Invalid),
+            | Self::TooDeep(_)
+            | Self::AllocatorBehind(_) => SectionRefusal::Outcome(SetConfig::Invalid),
         }
     }
 }
@@ -826,6 +830,12 @@ impl fmt::Display for ConfigError {
             Self::ParentNotListed(dev) => write!(f, "parent {dev} is not a listed device"),
             Self::ParentLoop(dev) => write!(f, "the parent chain through {dev} comes back round"),
             Self::TooDeep(dev) => write!(f, "device {dev}'s parent chain is too deep"),
+            Self::AllocatorBehind(dev) => {
+                write!(
+                    f,
+                    "device id {dev} was given before; the allocator is behind"
+                )
+            }
         }
     }
 }

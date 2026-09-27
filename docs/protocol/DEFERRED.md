@@ -540,7 +540,11 @@ own analog inputs, have no key: until one is allocated those values publish
 option. A key is allocated in REGISTRY's device option keys when the owner
 decides its unit, and which dialects accept it is the controller's table, so
 the Pylontech CAN and VE.Direct text dialects bind the keys they read when
-their own rows are allocated, with no wire change.
+their own rows are allocated, with no wire change. Two things the body does not
+decide either: which framing a bus left unconfigured runs at when the dialects
+of its devices disagree, and whether a written `rate` no device's dialect speaks
+is refused. Both are the controller's today; a rule for them waits on the
+first board where it happens.
 
 **Trigger.** The first behaviour parameter, channel or cloud setting written
 over the API rather than flashed. A controller configured by flashing a

@@ -1047,7 +1047,7 @@ pub const REQUIREMENTS: &[Requirement] = &[
         id: "P-265",
         document: "docs/PROTOCOL.md",
         section: "Section bodies",
-        statement: "The controller MUST refuse with outcome 3 `invalid`, and MUST NOT store, a `buses and devices` write in which a device names a `bus` the controller does not list; breaks P-202, by leaving out `addr` on an addressed transport, carrying one on another, or repeating one within a bus; names a `dialect` the controller cannot drive over that bus's transport, one it does not drive at all included; names a `parent` that is not the `dev` of another entry in the same body, or a chain that returns to itself or runs deeper than `MAX_TOPOLOGY_DEPTH` (P-187); or lists more devices than `MAX_CONFIG_DEVICES` or than the `max_devices` it reports in `Hello 0x81` key 21.",
+        statement: "The controller MUST refuse with outcome 3 `invalid`, and MUST NOT store, a `buses and devices` write in which a device names a `bus` the controller does not list; breaks P-202, by leaving out `addr` on an addressed transport, carrying one on another, or repeating one within a bus; names a `dialect` the controller cannot drive over that bus's transport, one it does not drive at all included; names a `parent` that is not the `dev` of another entry in the same body, or a chain that returns to itself or runs deeper than `MAX_TOPOLOGY_DEPTH` (P-187); or lists more devices than `MAX_CONFIG_DEVICES` or than the `max_devices` it reports in `Hello 0x81` key 21; or lists more buses than `MAX_CONFIG_BUSES`.",
     },
     Requirement {
         id: "P-216",

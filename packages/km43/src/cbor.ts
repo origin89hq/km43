@@ -46,6 +46,9 @@ const MAP = 5;
 const TAG = 6;
 const SIMPLE = 7;
 
+/** The largest map key either binding reads: `i64::MAX`. */
+const I64_MAX = 0x7fff_ffff_ffff_ffffn;
+
 interface Head {
   major: number;
   /** The argument; above `Number.MAX_SAFE_INTEGER` only as a bigint. */
@@ -138,13 +141,24 @@ export class CborReader {
     this.close();
   }
 
-  /** A map key: an integer and nothing else (P-011). */
+  /**
+   * A map key: an integer and nothing else (P-011), within a signed 64-bit
+   * range, which is what the Rust reader holds a key in. A key outside it is
+   * refused wherever it sits, known map or skipped, so both bindings answer
+   * the same body the same way.
+   */
   key(): bigint {
     const head = this.#head();
     switch (head.major) {
       case UNSIGNED:
+        if (head.argument > I64_MAX) {
+          throw new CborError("integer_out_of_range");
+        }
         return head.argument;
       case NEGATIVE:
+        if (head.argument > I64_MAX) {
+          throw new CborError("integer_out_of_range");
+        }
         return -1n - head.argument;
       default:
         throw new CborError("key_not_integer");

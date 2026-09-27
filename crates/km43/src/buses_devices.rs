@@ -769,8 +769,12 @@ impl SiteRules<'_> {
             .map(|board| board.transport)
     }
 
-    fn dialect(&self, dialect: Dialect) -> Option<&DialectRule<'_>> {
-        self.dialects.iter().find(|rule| rule.dialect == dialect)
+    /// The rule for a dialect over a transport. A table may give one dialect
+    /// a row per transport, each with its own options.
+    fn dialect(&self, dialect: Dialect, transport: Transport) -> Option<&DialectRule<'_>> {
+        self.dialects
+            .iter()
+            .find(|rule| rule.dialect == dialect && rule.transports.contains(&transport))
     }
 }
 
@@ -971,13 +975,13 @@ impl<'a, D: DevSlot> BusesAndDevices<'a, D> {
                 .transport(device.bus)
                 .ok_or(ConfigError::UnknownBus(device.bus))?;
             self.check_addr(index, device, transport)?;
-            let rule = rules
-                .dialect(device.dialect)
-                .filter(|rule| rule.transports.contains(&transport))
-                .ok_or(ConfigError::DialectNotCarried {
-                    dialect: device.dialect.0,
-                    bus: device.bus,
-                })?;
+            let rule =
+                rules
+                    .dialect(device.dialect, transport)
+                    .ok_or(ConfigError::DialectNotCarried {
+                        dialect: device.dialect.0,
+                        bus: device.bus,
+                    })?;
             device.options.check(rule)?;
             if let Some(dev) = device.dev.dev()
                 && self
@@ -1099,17 +1103,18 @@ impl<'a> BusesAndDevicesWrite<'a> {
                 dev
             } else {
                 let dev = allocator.allocate()?;
-                // An allocator resumed below an id already given would hand it
-                // out again; refusing is the only answer that files no history
-                // under the wrong device.
-                let taken = self.devices().any(|other| other.dev == Some(dev))
-                    || held.devices().any(|was| was.dev == dev);
-                if taken {
-                    return Err(ConfigError::DevTwice(dev.get()));
+                // Ids go out ascending, so one at or below any id the section
+                // holds has been given before: the allocator was resumed from
+                // a stale record. Refusing is the only answer that files no
+                // history under the wrong device.
+                let behind = held.devices().any(|was| was.dev >= dev)
+                    || self.devices().any(|other| other.dev >= Some(dev));
+                if behind {
+                    return Err(ConfigError::AllocatorBehind(dev.get()));
                 }
                 dev
             };
-            section.insert_ascending(DeviceEntry {
+            section.push_device(DeviceEntry {
                 dev,
                 bus: device.bus,
                 addr: device.addr,
@@ -1120,21 +1125,24 @@ impl<'a> BusesAndDevicesWrite<'a> {
                 options: device.options,
             })?;
         }
+        section.sort();
         Ok(Accepted { section, allocator })
     }
 }
 
-impl<'a> BusesAndDevicesRead<'a> {
-    /// Place a device by its `dev`, so the answer ascends however the write
-    /// was ordered.
-    fn insert_ascending(&mut self, entry: DeviceEntry<'a, DevId>) -> Result<(), ConfigError> {
-        self.push_device(entry)?;
-        let len = self.devices().count();
-        let Some(filled) = self.devices.get_mut(..len) else {
-            return Ok(());
-        };
-        filled.sort_unstable_by_key(|slot| slot.map(|device| device.dev));
-        Ok(())
+impl BusesAndDevicesRead<'_> {
+    /// Put buses in `bus` order and devices in `dev` order, so the answer
+    /// ascends however the write was ordered (P-262). Only the filled slots
+    /// are sorted: the empty ones stay at the end, where `push_*` looks.
+    fn sort(&mut self) {
+        let buses = self.buses().count();
+        if let Some(filled) = self.buses.get_mut(..buses) {
+            filled.sort_unstable_by_key(|slot| slot.map(|entry| entry.bus));
+        }
+        let devices = self.devices().count();
+        if let Some(filled) = self.devices.get_mut(..devices) {
+            filled.sort_unstable_by_key(|slot| slot.map(|device| device.dev));
+        }
     }
 }
 
@@ -2032,7 +2040,22 @@ mod tests {
         ]);
         assert_eq!(
             is_invalid(one_more.accept(&rules(), &before.section, behind)),
-            ConfigError::DevTwice(2)
+            ConfigError::AllocatorBehind(2)
+        );
+        // Dev 2 was removed, so it is not held, and it was still given once:
+        // an allocator resumed at 2 would give it to a new device.
+        let without_two = write_of(&[meter(Some(dev(1)), &[0x01]), mppt(Some(dev(3)))]);
+        let removed = without_two
+            .accept(&rules(), &before.section, before.allocator)
+            .expect("a removal");
+        let add = write_of(&[
+            meter(Some(dev(1)), &[0x01]),
+            mppt(Some(dev(3))),
+            pack(None, &[0x09], None),
+        ]);
+        assert_eq!(
+            is_invalid(add.accept(&rules(), &removed.section, behind)),
+            ConfigError::AllocatorBehind(2)
         );
     }
 
@@ -2061,6 +2084,93 @@ mod tests {
             .expect("valid");
         let encoded = Encoded::of(&accepted.section);
         assert!(BusesAndDevicesRead::decode(encoded.body()).is_ok());
+    }
+
+    /// A client that appends a bus to the end of its list writes the buses
+    /// out of order. The write is valid; the answer built from it must still
+    /// ascend, or the controller holds a section it cannot answer with.
+    #[test]
+    fn p_262_an_accepted_write_answers_in_order_whatever_order_it_arrived_in() {
+        let mut write = BusesAndDevicesWrite::EMPTY;
+        for bus in [3, 1, 2] {
+            write
+                .push_bus(BusEntry {
+                    bus,
+                    rate: NonZeroU32::new(9600),
+                    data_bits: None,
+                    parity: None,
+                    stop_bits: None,
+                })
+                .expect("room");
+        }
+        write.push_device(mppt(None)).expect("room");
+        write.push_device(meter(None, &[0x01])).expect("room");
+        let accepted = write
+            .accept(&rules(), &BusesAndDevicesRead::EMPTY, DevAllocator::FIRST)
+            .expect("valid");
+        let encoded = Encoded::of(&accepted.section);
+        let answer = BusesAndDevicesRead::decode(encoded.body()).expect("the answer ascends");
+        let buses: [Option<u8>; 3] = {
+            let mut buses = [None; 3];
+            for (slot, entry) in buses.iter_mut().zip(answer.buses()) {
+                *slot = Some(entry.bus);
+            }
+            buses
+        };
+        assert_eq!(buses, [Some(1), Some(2), Some(3)]);
+        // Devices keep the order they were given ids in, which is the order
+        // they arrived.
+        let first = answer.devices().next().expect("a device");
+        assert_eq!(
+            (first.dev, first.product),
+            (dev(1), Product::VICTRON_MPPT_RS)
+        );
+
+        let mut backwards = BusesAndDevicesRead::EMPTY;
+        backwards
+            .push_bus(BusEntry {
+                bus: 2,
+                ..serial_bus()
+            })
+            .expect("room");
+        backwards.push_bus(serial_bus()).expect("room");
+        let mut dst = [0; 64];
+        assert_eq!(
+            is_malformed(backwards.encode(&mut dst)),
+            ConfigError::OutOfOrder(BusesAndDevicesKey::Bus.key())
+        );
+    }
+
+    /// A table may give one dialect a row per transport. The row that
+    /// matches the bus is the one whose options apply.
+    #[test]
+    fn p_265_a_dialect_with_a_row_per_transport_is_checked_against_its_bus() {
+        const TWO_ROWS: &[DialectRule<'static>] = &[
+            DialectRule {
+                dialect: Dialect::EG4_LIFEPOWER4_SERIAL,
+                transports: &[Transport::Can],
+                options: &[],
+                min_poll_ms: 1000,
+            },
+            DialectRule {
+                dialect: Dialect::EG4_LIFEPOWER4_SERIAL,
+                transports: &[Transport::Rs485],
+                options: &[DeviceOption::CurrentDirection],
+                min_poll_ms: 1000,
+            },
+        ];
+        let rules = SiteRules {
+            dialects: TWO_ROWS,
+            ..rules()
+        };
+        let on_rs485 = write_of(&[DeviceEntry {
+            options: DeviceOptions {
+                current_direction: Some(CurrentDirection::PositiveIsOut),
+                ..DeviceOptions::NONE
+            },
+            ..pack(None, &[0x01], None)
+        }]);
+        assert_eq!(on_rs485.check(&rules), Ok(()));
     }
 
     #[test]
@@ -2466,6 +2576,35 @@ mod tests {
         );
     }
 
+    /// The TypeScript reader holds keys to the same signed 64-bit range; these
+    /// are the bodies its test uses, so the two bindings answer them alike.
+    #[test]
+    fn a_map_key_outside_the_signed_64_bit_range_is_error_1() {
+        let unknown_max: [u8; 14] = [
+            0xA3, 0x01, 0x80, 0x02, 0x80, 0x1B, 0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        ];
+        let mut skipped = [0; 15];
+        skipped
+            .get_mut(..14)
+            .expect("room")
+            .copy_from_slice(&unknown_max);
+        assert!(
+            BusesAndDevicesWrite::decode(&skipped).is_ok(),
+            "i64::MAX is a key"
+        );
+        for head in [0x1B, 0x3B] {
+            let body = [
+                0xA3, 0x01, 0x80, 0x02, 0x80, head, 0x80, 0, 0, 0, 0, 0, 0, 0, 0x00,
+            ];
+            is_malformed(BusesAndDevicesWrite::decode(&body));
+        }
+        let option = [
+            0xA2, 0x01, 0x80, 0x02, 0x81, 0xA5, 0x02, 0x01, 0x04, 0x03, 0x05, 0x02, 0x06, 0x05,
+            0x08, 0xA1, 0x1B, 0x80, 0, 0, 0, 0, 0, 0, 0, 0x00,
+        ];
+        is_malformed(BusesAndDevicesWrite::decode(&option));
+    }
+
     #[test]
     fn every_key_names_itself_and_its_number() {
         let shown = Rendering::<64>::displayed(&SectionKey::BusesAndDevices(
@@ -2510,6 +2649,7 @@ mod tests {
             ConfigError::ParentNotListed(7),
             ConfigError::ParentLoop(2),
             ConfigError::TooDeep(5),
+            ConfigError::AllocatorBehind(2),
         ];
         Rendering::<100>::each_says_something_of_its_own(&errors);
     }
