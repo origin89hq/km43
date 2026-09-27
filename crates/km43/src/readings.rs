@@ -113,6 +113,7 @@ impl SignalQuality {
             0x6 => Validity::OutOfRange,
             0x7 => Validity::Absent,
             0x8 => Validity::UnnamedState,
+            0x9 => Validity::Reset,
             // Only reachable through `from_byte`, which has already refused an
             // unallocated one, or through a constructor that packed it.
             _ => Validity::Ok,
@@ -143,7 +144,15 @@ impl SignalQuality {
     }
 
     const fn has_value(validity: Validity) -> bool {
-        matches!(validity, Validity::Ok | Validity::Stale)
+        match validity {
+            Validity::Ok | Validity::Stale | Validity::Reset => true,
+            Validity::Initialising
+            | Validity::Unsupported
+            | Validity::SensorFault
+            | Validity::OutOfRange
+            | Validity::Absent
+            | Validity::UnnamedState => false,
+        }
     }
 
     const fn pack(validity: Validity, provenance: Provenance) -> u8 {
@@ -1401,6 +1410,29 @@ mod tests {
         assert!(q.carries_value(), "stale carries the last known value");
     }
 
+    /// `reset` is a number, not a refusal: the total the counter restarted at.
+    /// Read as one of the six that carry nothing, the morning's first yield
+    /// would reach a client with no value and a day of energy would be gone
+    /// (P-259). And it is a number with a source, so `0x90` is refused.
+    #[test]
+    fn p_196_a_reset_carries_the_total_it_restarted_at() {
+        let q = SignalQuality::carrying(Validity::Reset, Provenance::Counted).expect("legal");
+        assert!(q.carries_value());
+        assert_eq!(SignalQuality::from_byte(q.byte()), Ok(q));
+        assert_eq!(
+            Sample::new(id(1), q, None, None).unwrap_err(),
+            QualityError::ValueOmitted(Validity::Reset)
+        );
+        assert_eq!(
+            SignalQuality::absent(Validity::Reset).unwrap_err(),
+            QualityError::ValueOmitted(Validity::Reset)
+        );
+        assert!(
+            SignalQuality::from_byte(q.byte() & 0xF0).is_err(),
+            "a reset naming no source says there is a number and not where from"
+        );
+    }
+
     /// `stale` means *this is old*, and how old is what makes it usable. A
     /// client with no age renders a two-hour-old cell voltage as current, and a
     /// balancing decision is made on it.
@@ -1453,9 +1485,14 @@ mod tests {
     /// one. P-165 surfaces an unrecognised value; it does not let a decoder pick.
     #[test]
     fn p_196_an_unallocated_half_is_refused_rather_than_rounded() {
+        // The first the registry has not allocated, found rather than typed: 9
+        // was the example here until `reset` took it.
+        let free = (1u8..=0xF)
+            .find(|v| Validity::try_from(*v).is_err())
+            .expect("the high nibble has room left");
         assert_eq!(
-            SignalQuality::from_byte(0x91).unwrap_err(),
-            QualityError::UnknownValidity(9)
+            SignalQuality::from_byte((free << 4) | 0x1).unwrap_err(),
+            QualityError::UnknownValidity(free)
         );
         assert_eq!(
             SignalQuality::from_byte(0x1F).unwrap_err(),
@@ -1725,8 +1762,8 @@ mod series_tests {
             "the fixture must check out before it is broken, or this proves nothing"
         );
 
-        // Now a controller a version newer sends validity 9 on the middle
-        // element. The `q` string is at a known offset from the assertion in
+        // Now a controller a version newer sends a validity this build has not
+        // allocated on the middle element. The `q` string is at a known offset from the assertion in
         // `p_197_the_encoded_series_has_one_q_byte_per_element_and_no_placeholder`.
         let at = bytes
             .get(..len)
@@ -1735,11 +1772,14 @@ mod series_tests {
             .position(|w| w == [0x43, 0x11, 0x50])
             .expect("the three-byte q string")
             .saturating_add(2);
-        *bytes.get_mut(at).expect("the middle q byte") = 0x91;
+        let free = (1u8..=0xF)
+            .find(|v| Validity::try_from(*v).is_err())
+            .expect("the high nibble has room left");
+        *bytes.get_mut(at).expect("the middle q byte") = (free << 4) | 0x1;
 
         assert_eq!(
             Series::check(bytes.get(..len).expect("encoded")),
-            Err(ReadingsError::Quality(QualityError::UnknownValidity(9))),
+            Err(ReadingsError::Quality(QualityError::UnknownValidity(free))),
             "an unnameable validity was accepted, and every integer after it is now \
              attributed to the wrong cell"
         );

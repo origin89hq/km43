@@ -483,9 +483,10 @@ impl Bindings {
         let mut o = String::new();
         o.push_str(
             "\n/// The public equipment dataset's word for a reading: a metric kind over a\n\
-             /// signal domain, at a place. A `None` place matches any; the domain never\n\
-             /// does, so a limit or a period counter cannot borrow a live reading's word.\n\
-             /// Rows are most specific first, so the first match is the one to take.\n\
+             /// signal domain, at a place, counting one way. A `None` place or direction\n\
+             /// matches any; the domain never does, so a limit or a period counter cannot\n\
+             /// borrow a live reading's word. Rows are most specific first, so the first\n\
+             /// match is the one to take.\n\
              #[derive(Debug, Clone, Copy, PartialEq, Eq)]\n\
              #[cfg_attr(feature = \"defmt\", derive(defmt::Format))]\n\
              pub struct DatasetMetric {\n    \
@@ -497,6 +498,8 @@ impl Bindings {
                  pub role: Option<ComponentRole>,\n    \
                  /// The measurement point, or `None` to match any point.\n    \
                  pub point: Option<MeasurementPoint>,\n    \
+                 /// The flow a counter counts, or `None` to match any direction.\n    \
+                 pub dir: Option<Direction>,\n    \
                  /// The dataset's word, such as `pv-voltage`.\n    \
                  pub name: &'static str,\n\
              }\n\n\
@@ -505,9 +508,13 @@ impl Bindings {
         );
         for c in &self.registry.crosswalk.carried {
             let domain = format!("SignalDomain::{}", variant(&self.domain_name(c.domain)));
+            let dir = c.dir.map_or_else(
+                || "None".to_owned(),
+                |d| format!("Some(Direction::{})", variant(&self.direction_name(d))),
+            );
             let _ = writeln!(
                 o,
-                "    DatasetMetric {{\n        kind: MetricKind({:#06x}),\n        domain: {domain},\n        role: {},\n        point: {},\n        name: {:?},\n    }},",
+                "    DatasetMetric {{\n        kind: MetricKind({:#06x}),\n        domain: {domain},\n        role: {},\n        point: {},\n        dir: {dir},\n        name: {:?},\n    }},",
                 c.kind,
                 place("ComponentRole", c.role),
                 place("MeasurementPoint", c.point),
@@ -534,14 +541,15 @@ impl Bindings {
         }
         o.push_str(
             "];\n\nimpl MetricKind {\n    \
-                 /// The dataset's word for this kind over a domain at a place, or `None`\n    \
-                 /// when it has none.\n    \
+                 /// The dataset's word for this kind over a domain at a place, counting\n    \
+                 /// `dir`, or `None` when it has none.\n    \
                  #[must_use]\n    \
                  pub fn dataset_name(\n        \
                      self,\n        \
                      domain: SignalDomain,\n        \
                      role: Option<ComponentRole>,\n        \
-                     point: Option<MeasurementPoint>,\n    \
+                     point: Option<MeasurementPoint>,\n        \
+                     dir: Option<Direction>,\n    \
                  ) -> Option<&'static str> {\n        \
                      DATASET_METRICS\n            \
                          .iter()\n            \
@@ -549,7 +557,8 @@ impl Bindings {
                              m.kind == self\n                    \
                                  && m.domain == domain\n                    \
                                  && m.role.is_none_or(|r| Some(r) == role)\n                    \
-                                 && m.point.is_none_or(|p| Some(p) == point)\n            \
+                                 && m.point.is_none_or(|p| Some(p) == point)\n                    \
+                                 && m.dir.is_none_or(|d| Some(d) == dir)\n            \
                          })\n            \
                          .map(|m| m.name)\n    \
                  }\n\
@@ -1016,14 +1025,23 @@ impl Bindings {
             .map_or_else(|| value.to_string(), |r| r.name.clone())
     }
 
+    fn direction_name(&self, value: u8) -> String {
+        self.registry
+            .enums
+            .get("direction")
+            .and_then(|rows| rows.iter().find(|r| r.value == value))
+            .map_or_else(|| value.to_string(), |r| r.name.clone())
+    }
+
     /// The same crosswalk for a client, most specific row first.
     fn ts_dataset(&self) -> String {
         let mut o = String::new();
         o.push_str(
             "\n/**\n \
              * The public equipment dataset's word for a reading: a metric kind over a\n \
-             * signal domain, at a place. An undefined place matches any; the domain never\n \
-             * does, so a limit or a period counter cannot borrow a live reading's word.\n \
+             * signal domain, at a place, counting one way. An undefined place or direction\n \
+             * matches any; the domain never does, so a limit or a period counter cannot\n \
+             * borrow a live reading's word.\n \
              */\n\
              export interface DatasetMetric {\n  \
                  /** A {@link MetricKind} value. */\n  \
@@ -1034,6 +1052,8 @@ impl Bindings {
                  readonly role?: number;\n  \
                  /** A {@link MeasurementPoint} value, or undefined to match any point. */\n  \
                  readonly point?: number;\n  \
+                 /** A {@link Direction} value, or undefined to match any direction. */\n  \
+                 readonly dir?: number;\n  \
                  /** The dataset's word, such as `pv-voltage`. */\n  \
                  readonly name: string;\n\
              }\n\n\
@@ -1047,6 +1067,9 @@ impl Bindings {
             }
             if let Some(point) = c.point {
                 let _ = write!(row, ", point: {point:#06x}");
+            }
+            if let Some(dir) = c.dir {
+                let _ = write!(row, ", dir: {dir:#04x}");
             }
             let _ = writeln!(o, "{row}, name: {} }},", js(&c.name));
         }
@@ -1068,14 +1091,16 @@ impl Bindings {
                  kind: number,\n  \
                  domain: number,\n  \
                  role?: number,\n  \
-                 point?: number,\n\
+                 point?: number,\n  \
+                 dir?: number,\n\
              ): string | undefined {\n  \
                  return datasetMetrics.find(\n    \
                      (m) =>\n      \
                          m.kind === kind &&\n      \
                          m.domain === domain &&\n      \
                          (m.role === undefined || m.role === role) &&\n      \
-                         (m.point === undefined || m.point === point),\n  \
+                         (m.point === undefined || m.point === point) &&\n      \
+                         (m.dir === undefined || m.dir === dir),\n  \
                  )?.name;\n\
              }\n",
         );

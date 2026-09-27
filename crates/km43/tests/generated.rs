@@ -189,6 +189,31 @@ fn unit_and_scale_answers_the_registry_s_unit_and_decade_for_every_metric() {
     );
 }
 
+/// The DC counters read in watt-hours and tenths of an amp-hour, as the
+/// registry says, found by name so an allocation that moved takes the test with
+/// it. A decade off by one reads a bank's 212 Ah as 21.2 or 2 120, and both are
+/// plausible on some bank.
+#[test]
+fn the_dc_counters_carry_the_registry_s_unit_and_decade() {
+    for (kind, name) in [
+        (MetricKind::DC_ENERGY, "DC energy"),
+        (MetricKind::DC_CHARGE, "DC charge"),
+    ] {
+        let row = blocks("metrics")
+            .into_iter()
+            .find(|m| m.field("name") == Some(name))
+            .expect("the registry allocates the kind by this name");
+        assert_eq!(row.number("kind"), Some(kind.0), "{name} is {kind:?}");
+        let unit = row.field("unit").expect("a unit");
+        let scale: i8 = row
+            .field("scale")
+            .expect("a scale")
+            .parse()
+            .expect("a small signed integer");
+        assert_eq!(kind.unit_and_scale(), Some((unit, scale)), "{name}");
+    }
+}
+
 /// A kind with no row is `None`, never a default unit: a value rendered in
 /// the wrong unit is a number a person acts on. Every free kind, for the
 /// reason the event check above gives.

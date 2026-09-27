@@ -31,7 +31,8 @@ use crate::cbor::{CborError, CborReader, CborWriter};
 use crate::concerns::ElementAt;
 use crate::envelope::Refusal;
 use crate::generated::{
-    Bucket, Direction, ErrorCode, Inventory, InventoryKind, Shape, SignalDomain, Transport, Vtype,
+    Bucket, Direction, ErrorCode, Inventory, InventoryKind, MetricKind, Shape, SignalDomain,
+    Transport, Vtype,
 };
 use crate::limits::{
     MAX_COMPONENT_CMDS, MAX_INVENTORY_PAGE_BYTES, MAX_INVENTORY_PAGE_ROWS, MAX_ROW_BYTES,
@@ -479,6 +480,8 @@ const KIND_KEY: u8 = 4;
 const SHAPE_KEY: u8 = 5;
 /// `vtype` is key 6 on a `SignalRow` and on a `ParamRow` alike.
 const VTYPE_KEY: u8 = 6;
+/// `dir` is key 9 on a `SignalRow` and on a `ParamRow` alike.
+const DIR_KEY: u8 = 9;
 /// `n` is key 10, and it is how many elements a series has.
 const N_KEY: u8 = 10;
 /// `ebase` is key 12: the **label** of element 0, not its position (P-206).
@@ -568,6 +571,7 @@ impl<'a> Row<'a> {
         row.members_hold()?;
         row.conditions_hold()?;
         row.every_element_can_be_named()?;
+        row.a_dc_counter_counts_one_way()?;
         Ok(row)
     }
 
@@ -592,6 +596,39 @@ impl<'a> Row<'a> {
             }
         }
         Ok(())
+    }
+
+    /// A DC energy or DC charge row is a counter, and counts one flow (P-260).
+    ///
+    /// Both kinds are unsigned totals. One counting both ways cannot tell a
+    /// meter that restarted from energy going the other way, and one naming no
+    /// way hands a bank's charged amp-hours the dataset's word for consumed.
+    fn a_dc_counter_counts_one_way(&self) -> Result<(), InventoryError> {
+        if !matches!(self.kind, RowKind::Signal | RowKind::Param) {
+            return Ok(());
+        }
+        let Some(metric) = self.number(KIND_KEY).map(MetricKind) else {
+            return Ok(());
+        };
+        if metric != MetricKind::DC_ENERGY && metric != MetricKind::DC_CHARGE {
+            return Ok(());
+        }
+        let member = |key| self.number(key).and_then(|v| u8::try_from(v).ok());
+        let counter = member(VTYPE_KEY).and_then(|v| Vtype::try_from(v).ok());
+        let dir = member(DIR_KEY).and_then(|d| Direction::try_from(d).ok());
+        match (counter, dir) {
+            (Some(Vtype::Counter), Some(Direction::PositiveIsIn | Direction::PositiveIsOut)) => {
+                Ok(())
+            }
+            (
+                Some(Vtype::Gauge | Vtype::Counter | Vtype::Enum | Vtype::Flags) | None,
+                Some(Direction::PositiveIsIn | Direction::PositiveIsOut | Direction::MagnitudeOnly)
+                | None,
+            ) => Err(InventoryError::CounterNotOneWay {
+                kind: self.kind,
+                metric,
+            }),
+        }
     }
 
     /// Every element this row declares can be pointed at and can be printed.
@@ -1642,6 +1679,14 @@ pub enum InventoryError {
         /// The position whose label would pass `u16::MAX`.
         at: u8,
     },
+    /// A DC energy or DC charge row that is not a counter of one flow: not
+    /// `vtype 2`, or `dir` absent or `3 magnitude_only` (P-260).
+    CounterNotOneWay {
+        /// The row kind.
+        kind: RowKind,
+        /// The metric kind the row carries.
+        metric: MetricKind,
+    },
     /// A key another key's value makes REQUIRED, left out.
     MissingConditional {
         /// The row kind.
@@ -1730,6 +1775,7 @@ impl InventoryError {
             | Self::SeriesTooShort(_)
             | Self::SeriesTooLong(_)
             | Self::LabelPastRange { .. }
+            | Self::CounterNotOneWay { .. }
             | Self::MissingConditional { .. }
             | Self::UnexpectedConditional { .. }
             | Self::WrongKind { .. }
@@ -1777,6 +1823,11 @@ impl fmt::Display for InventoryError {
                 value,
             } => write!(w, "a {kind} row's key {key} is {value} and no {space} is"),
             Self::SeriesTooShort(n) => write!(w, "a series of {n} is a scalar"),
+            Self::CounterNotOneWay { kind, metric } => write!(
+                w,
+                "a {kind} row of metric {:#06x} must be a counter of one flow, dir 1 or 2",
+                metric.0
+            ),
             Self::SeriesTooLong(n) => {
                 write!(w, "a series of {n} has elements no concern can name")
             }
@@ -1834,7 +1885,7 @@ mod tests {
     /// its bytes fit and it is the shape that is wrong.
     #[test]
     fn every_refusal_says_something_of_its_own() {
-        const EVERY: [InventoryError; 26] = [
+        const EVERY: [InventoryError; 27] = [
             InventoryError::DuplicateResponse(InventoryKey::Rev),
             InventoryError::RowShape {
                 kind: RowKind::Bus,
@@ -1870,6 +1921,10 @@ mod tests {
                 value: 9,
             },
             InventoryError::SeriesTooShort(1),
+            InventoryError::CounterNotOneWay {
+                kind: RowKind::Signal,
+                metric: MetricKind::DC_CHARGE,
+            },
             InventoryError::SeriesTooLong(40),
             InventoryError::LabelPastRange {
                 base: u16::MAX,
@@ -2891,6 +2946,90 @@ mod reading {
 
     fn at(position: u8) -> ElementAt {
         ElementAt::new(position).expect("a 1-based position inside a series")
+    }
+
+    /// A shunt's discharged amp-hours since it last synchronised: a scalar
+    /// counter counting out of the bank. The kind is filled from the binding by
+    /// [`discharged`], so the fixture holds no second copy of the allocation.
+    const DISCHARGED: &[(u8, u64)] = &[
+        (1, 31), // sig
+        (2, 3),  // dev
+        (3, 12), // cmp
+        (4, 0),  // kind, from the binding
+        (5, 1),  // shape: scalar
+        (6, 2),  // vtype: counter
+        (7, 3),  // domain: since_reset
+        (9, 2),  // dir: positive_is_out
+    ];
+
+    fn discharged() -> Pairs {
+        Pairs::of(DISCHARGED).set(4, u64::from(MetricKind::DC_CHARGE.0))
+    }
+
+    fn accepted(kind: RowKind, pairs: &Pairs) {
+        let mut bytes = [0u8; MAX_ROW_BYTES];
+        let len = pairs.bytes(&mut bytes);
+        RowSlots::new()
+            .decode(kind, bytes.get(..len).expect("what was written"))
+            .expect("a legal row");
+    }
+
+    /// **A DC counter counts one flow, and says which.** A bank's charged and
+    /// discharged amp-hours are one kind, and `dir` is all that tells them
+    /// apart: leave it out and a client has two identical rows and cannot say
+    /// which is consumed. Count both ways in one signal, or make it a gauge, and
+    /// a meter that restarted cannot be told from charge going back in, which
+    /// is the reset P-259 marks.
+    #[test]
+    fn p_260_a_dc_counter_that_does_not_name_one_flow_is_refused() {
+        accepted(RowKind::Signal, &discharged());
+        accepted(RowKind::Signal, &discharged().set(9, 1));
+        accepted(
+            RowKind::Signal,
+            &discharged().set(4, u64::from(MetricKind::DC_ENERGY.0)),
+        );
+
+        let not_one_way = InventoryError::CounterNotOneWay {
+            kind: RowKind::Signal,
+            metric: MetricKind::DC_CHARGE,
+        };
+        assert_eq!(
+            refused(RowKind::Signal, &discharged().without(9)),
+            not_one_way,
+            "no direction: charged and discharged read the same"
+        );
+        assert_eq!(
+            refused(RowKind::Signal, &discharged().set(9, 3)),
+            not_one_way,
+            "magnitude only is both ways at once"
+        );
+        assert_eq!(
+            refused(RowKind::Signal, &discharged().set(6, 1)),
+            not_one_way,
+            "a gauge of amp-hours is not a total anybody can restart"
+        );
+
+        // The rule is these two kinds'. AC energy keeps its own import and
+        // export kinds and needs no direction.
+        accepted(
+            RowKind::Signal,
+            &discharged()
+                .set(4, u64::from(MetricKind::AC_ENERGY.0))
+                .without(9),
+        );
+
+        // A parameter of the kind is bound the same way: `dir` is key 9 there
+        // too, and a rated total with no flow is the same two identical rows.
+        let rated = Pairs::of(&[(1, 5), (2, 3), (3, 12), (4, 0), (6, 2), (7, 2), (9, 2)])
+            .set(4, u64::from(MetricKind::DC_ENERGY.0));
+        accepted(RowKind::Param, &rated);
+        assert_eq!(
+            refused(RowKind::Param, &rated.without(9)),
+            InventoryError::CounterNotOneWay {
+                kind: RowKind::Param,
+                metric: MetricKind::DC_ENERGY,
+            }
+        );
     }
 
     /// **What was written is what reads back.**

@@ -612,6 +612,12 @@ name = "unnamed_state"
 status = "live"
 meaning = "The source reported an operating state we have no value for (P-164)"
 
+[[enums.validity]]
+value = 9
+name = "reset"
+status = "live"
+meaning = "Current, and a counter below its previous reading: the source restarted it, and a new run starts here (P-259)"
+
 [[enums.provenance]]
 value = 0
 name = "none"
@@ -2156,6 +2162,29 @@ unit = "°C"
 scale = -1
 status = "retired"
 
+# Two counters, and each counts one way. A signal says which with `dir`: 1
+# counts what flows in, 2 what flows out, never 3 (P-260). A counter that ran in
+# both directions could not tell a meter that restarted from one that went the
+# other way, and every source these were allocated for — a PZEM-017's total, an
+# MPPT's yield, a shunt's charged and discharged amp-hours — already counts each
+# direction apart.
+
+[[metrics]]
+group = "`0x01xx` — DC electrical"
+kind = 262
+name = "DC energy"
+unit = "Wh"
+scale = 0
+status = "live"
+
+[[metrics]]
+group = "`0x01xx` — DC electrical"
+kind = 263
+name = "DC charge"
+unit = "Ah"
+scale = -1
+status = "live"
+
 [[metrics]]
 group = "`0x01xx` — DC electrical"
 kind = 272
@@ -3530,6 +3559,55 @@ name = "ac-energy-today"
 kind = "AC energy"
 domain = "today"
 
+# DC counters name their direction as well as their window. A PV yield is what
+# the array or the tracker put out; consumed amp-hours are what left the bank.
+# The bank's charged amp-hours are the same kind counting the other way and
+# have no dataset word, so a row naming no direction would hand them this one.
+# Consumed amp-hours are counted since the shunt last synchronised to full,
+# which is `since_reset`: not the bank's life, and not since midnight.
+
+[[dataset_metrics]]
+name = "pv-energy-total"
+kind = "DC energy"
+role = "pv array"
+domain = "lifetime"
+dir = "positive_is_out"
+
+[[dataset_metrics]]
+name = "pv-energy-total"
+kind = "DC energy"
+role = "mppt tracker"
+domain = "lifetime"
+dir = "positive_is_out"
+
+[[dataset_metrics]]
+name = "pv-energy-today"
+kind = "DC energy"
+role = "pv array"
+domain = "today"
+dir = "positive_is_out"
+
+[[dataset_metrics]]
+name = "pv-energy-today"
+kind = "DC energy"
+role = "mppt tracker"
+domain = "today"
+dir = "positive_is_out"
+
+[[dataset_metrics]]
+name = "consumed-amp-hours"
+kind = "DC charge"
+role = "battery bank"
+domain = "since_reset"
+dir = "positive_is_out"
+
+[[dataset_metrics]]
+name = "consumed-amp-hours"
+kind = "DC charge"
+role = "battery pack"
+domain = "since_reset"
+dir = "positive_is_out"
+
 # Generator, tank, controller.
 
 [[dataset_metrics]]
@@ -3559,18 +3637,6 @@ absent = "no metric kind"
 [[dataset_metrics]]
 name = "ac-power-factor"
 absent = "no metric kind"
-
-[[dataset_metrics]]
-name = "pv-energy-today"
-absent = "no DC energy kind (#2)"
-
-[[dataset_metrics]]
-name = "pv-energy-total"
-absent = "no DC energy kind (#2)"
-
-[[dataset_metrics]]
-name = "consumed-amp-hours"
-absent = "no DC charge counter kind (#2)"
 
 [[dataset_metrics]]
 name = "charge-stage"

@@ -325,6 +325,8 @@ message — so it needs one range and not two.
 | `0x0103` | DC power (signed) | W | −1 | live |
 | `0x0104` | state of charge | % | −1 | live |
 | `0x0105` | battery temperature | °C | −1 | retired |
+| `0x0106` | DC energy | Wh | 0 | live |
+| `0x0107` | DC charge | Ah | −1 | live |
 | `0x0110` | PV array voltage | V | −3 | retired |
 | `0x0111` | PV array current | A | −3 | retired |
 | `0x0112` | PV array power | W | −1 | retired |
@@ -1315,6 +1317,7 @@ Whether a number is usable now. Separated from provenance because `counted` **an
 | 6 | out_of_range | A number arrived and was refused: impossible here, or outside `i32` at the registry's scale (P-185) |
 | 7 | absent | The component or device is not present |
 | 8 | unnamed_state | The source reported an operating state we have no value for (P-164) |
+| 9 | reset | Current, and a counter below its previous reading: the source restarted it, and a new run starts here (P-259) |
 
 ## Provenance
 
@@ -1574,59 +1577,62 @@ One namespace per vendor, so two drivers cannot both pick 7 for a vendor kind or
 
 ## Dataset metrics
 
-The public equipment dataset ([offgrid-equipment](https://github.com/origin89hq/offgrid-equipment)) names a reading with one flat word, `pv-voltage`; this registry names it as a quantity at a place, DC voltage at an mppt tracker. This table is the one translation between the two, generated from `[[dataset_metrics]]` in `protocol.toml`, so a support list, a client and an assistant setting a live reading against a rated limit all agree on it. A place left as *any* matches every component; a more specific row wins over a less specific one, and a row naming the role outranks one naming only the point, so a bank's cell temperature takes the bank's word. The signal domain is never open: a row that names none carries `live`, the reading as it is now, so a moving limit of the same kind has no word. A counter's word depends on its window: the lifetime AC energy is `ac-energy-total`, today's is `ac-energy-today`, and yesterday's has no word. A word the protocol cannot carry is listed with why, so *not translatable* reads differently from *forgotten*. The dataset's own vocabulary is pinned beside the registry by hash, and `cargo xtask check` refuses a row naming a word outside it, a word no row accounts for, and a live metric kind that neither reaches a word nor is declared the controller's own.
+The public equipment dataset ([offgrid-equipment](https://github.com/origin89hq/offgrid-equipment)) names a reading with one flat word, `pv-voltage`; this registry names it as a quantity at a place, DC voltage at an mppt tracker. This table is the one translation between the two, generated from `[[dataset_metrics]]` in `protocol.toml`, so a support list, a client and an assistant setting a live reading against a rated limit all agree on it. A place left as *any* matches every component; a more specific row wins over a less specific one, and a row naming the role outranks one naming only the point, so a bank's cell temperature takes the bank's word. The signal domain is never open: a row that names none carries `live`, the reading as it is now, so a moving limit of the same kind has no word. A counter's word depends on its window: the lifetime AC energy is `ac-energy-total`, today's is `ac-energy-today`, and yesterday's has no word. A DC counter also names the flow it counts (P-260): consumed amp-hours are the bank's charge counting out, and its charge counting in has no word, so a row that names no direction would hand one twin the other's word. A word the protocol cannot carry is listed with why, so *not translatable* reads differently from *forgotten*. The dataset's own vocabulary is pinned beside the registry by hash, and `cargo xtask check` refuses a row naming a word outside it, a word no row accounts for, and a live metric kind that neither reaches a word nor is declared the controller's own.
 
-| Dataset word | Kind | Role | Point | Domain |
-|---|---|---|---|---|
-| `pv-voltage` | `0x0101` DC voltage | pv array | any | live |
-| `pv-voltage` | `0x0101` DC voltage | mppt tracker | any | live |
-| `battery-voltage` | `0x0101` DC voltage | battery bank | any | live |
-| `battery-voltage` | `0x0101` DC voltage | battery pack | any | live |
-| `load-voltage` | `0x0101` DC voltage | load output | any | live |
-| `pv-current` | `0x0102` DC current (+ into the component) | pv array | any | live |
-| `pv-current` | `0x0102` DC current (+ into the component) | mppt tracker | any | live |
-| `battery-current` | `0x0102` DC current (+ into the component) | battery bank | any | live |
-| `battery-current` | `0x0102` DC current (+ into the component) | battery pack | any | live |
-| `load-current` | `0x0102` DC current (+ into the component) | load output | any | live |
-| `pv-power` | `0x0103` DC power (signed) | pv array | any | live |
-| `pv-power` | `0x0103` DC power (signed) | mppt tracker | any | live |
-| `battery-power` | `0x0103` DC power (signed) | battery bank | any | live |
-| `battery-power` | `0x0103` DC power (signed) | battery pack | any | live |
-| `load-power` | `0x0103` DC power (signed) | load output | any | live |
-| `battery-temperature` | `0x0302` temperature | battery bank | any | live |
-| `battery-temperature` | `0x0302` temperature | battery pack | any | live |
-| `battery-temperature` | `0x0302` temperature | cell | any | live |
-| `state-of-charge` | `0x0104` state of charge | any | any | live |
-| `ac-voltage` | `0x0201` AC voltage | any | any | live |
-| `ac-current` | `0x0202` AC current | any | any | live |
-| `ac-power` | `0x0203` AC power | any | any | live |
-| `ac-frequency` | `0x0204` AC frequency | any | any | live |
-| `ac-energy-total` | `0x0205` AC energy | any | any | lifetime |
-| `ac-energy-today` | `0x0205` AC energy | any | any | today |
-| `temperature` | `0x0302` temperature | any | any | live |
-| `tank-level` | `0x0401` tank level | any | any | live |
-| `generator-run-state` | `0x0501` generator state (enum, see below) | any | any | live |
-| `generator-run-hours` | `0x0502` generator run hours | any | any | lifetime |
-| `uptime` | `0x0602` uptime since boot | any | any | since_reset |
-| `ac-apparent-power` | *not carried: no metric kind* | — | — | — |
-| `ac-power-factor` | *not carried: no metric kind* | — | — | — |
-| `charge-stage` | *not carried: the charge stage enum space has no members yet (#3)* | — | — | — |
-| `consumed-amp-hours` | *not carried: no DC charge counter kind (#2)* | — | — | — |
-| `cycle-count` | *not carried: no metric kind* | — | — | — |
-| `humidity` | *not carried: no metric kind* | — | — | — |
-| `link-downlink` | *not carried: no metric kind* | — | — | — |
-| `link-latency` | *not carried: no metric kind* | — | — | — |
-| `link-online` | *not carried: link state is presence and the comms link events, not a metric* | — | — | — |
-| `link-signal-quality` | *not carried: no metric kind; the comms processor's radio is not a reading the controller carries* | — | — | — |
-| `link-uplink` | *not carried: no metric kind* | — | — | — |
-| `pressure` | *not carried: no metric kind* | — | — | — |
-| `pv-energy-today` | *not carried: no DC energy kind (#2)* | — | — | — |
-| `pv-energy-total` | *not carried: no DC energy kind (#2)* | — | — | — |
-| `pv-irradiance` | *not carried: no metric kind* | — | — | — |
-| `state-of-health` | *not carried: no metric kind* | — | — | — |
-| `switch-state` | *not carried: the only switch metric is the generator run contact command, an echo of a command rather than a measured state* | — | — | — |
-| `tank-volume` | *not carried: the protocol carries a tank level in percent, never a volume* | — | — | — |
-| `time-to-go` | *not carried: no metric kind* | — | — | — |
+| Dataset word | Kind | Role | Point | Domain | Direction |
+|---|---|---|---|---|---|
+| `pv-energy-total` | `0x0106` DC energy | pv array | any | lifetime | positive_is_out |
+| `pv-energy-today` | `0x0106` DC energy | pv array | any | today | positive_is_out |
+| `pv-energy-total` | `0x0106` DC energy | mppt tracker | any | lifetime | positive_is_out |
+| `pv-energy-today` | `0x0106` DC energy | mppt tracker | any | today | positive_is_out |
+| `consumed-amp-hours` | `0x0107` DC charge | battery bank | any | since_reset | positive_is_out |
+| `consumed-amp-hours` | `0x0107` DC charge | battery pack | any | since_reset | positive_is_out |
+| `pv-voltage` | `0x0101` DC voltage | pv array | any | live | any |
+| `pv-voltage` | `0x0101` DC voltage | mppt tracker | any | live | any |
+| `battery-voltage` | `0x0101` DC voltage | battery bank | any | live | any |
+| `battery-voltage` | `0x0101` DC voltage | battery pack | any | live | any |
+| `load-voltage` | `0x0101` DC voltage | load output | any | live | any |
+| `pv-current` | `0x0102` DC current (+ into the component) | pv array | any | live | any |
+| `pv-current` | `0x0102` DC current (+ into the component) | mppt tracker | any | live | any |
+| `battery-current` | `0x0102` DC current (+ into the component) | battery bank | any | live | any |
+| `battery-current` | `0x0102` DC current (+ into the component) | battery pack | any | live | any |
+| `load-current` | `0x0102` DC current (+ into the component) | load output | any | live | any |
+| `pv-power` | `0x0103` DC power (signed) | pv array | any | live | any |
+| `pv-power` | `0x0103` DC power (signed) | mppt tracker | any | live | any |
+| `battery-power` | `0x0103` DC power (signed) | battery bank | any | live | any |
+| `battery-power` | `0x0103` DC power (signed) | battery pack | any | live | any |
+| `load-power` | `0x0103` DC power (signed) | load output | any | live | any |
+| `battery-temperature` | `0x0302` temperature | battery bank | any | live | any |
+| `battery-temperature` | `0x0302` temperature | battery pack | any | live | any |
+| `battery-temperature` | `0x0302` temperature | cell | any | live | any |
+| `state-of-charge` | `0x0104` state of charge | any | any | live | any |
+| `ac-voltage` | `0x0201` AC voltage | any | any | live | any |
+| `ac-current` | `0x0202` AC current | any | any | live | any |
+| `ac-power` | `0x0203` AC power | any | any | live | any |
+| `ac-frequency` | `0x0204` AC frequency | any | any | live | any |
+| `ac-energy-total` | `0x0205` AC energy | any | any | lifetime | any |
+| `ac-energy-today` | `0x0205` AC energy | any | any | today | any |
+| `temperature` | `0x0302` temperature | any | any | live | any |
+| `tank-level` | `0x0401` tank level | any | any | live | any |
+| `generator-run-state` | `0x0501` generator state (enum, see below) | any | any | live | any |
+| `generator-run-hours` | `0x0502` generator run hours | any | any | lifetime | any |
+| `uptime` | `0x0602` uptime since boot | any | any | since_reset | any |
+| `ac-apparent-power` | *not carried: no metric kind* | — | — | — | — |
+| `ac-power-factor` | *not carried: no metric kind* | — | — | — | — |
+| `charge-stage` | *not carried: the charge stage enum space has no members yet (#3)* | — | — | — | — |
+| `cycle-count` | *not carried: no metric kind* | — | — | — | — |
+| `humidity` | *not carried: no metric kind* | — | — | — | — |
+| `link-downlink` | *not carried: no metric kind* | — | — | — | — |
+| `link-latency` | *not carried: no metric kind* | — | — | — | — |
+| `link-online` | *not carried: link state is presence and the comms link events, not a metric* | — | — | — | — |
+| `link-signal-quality` | *not carried: no metric kind; the comms processor's radio is not a reading the controller carries* | — | — | — | — |
+| `link-uplink` | *not carried: no metric kind* | — | — | — | — |
+| `pressure` | *not carried: no metric kind* | — | — | — | — |
+| `pv-irradiance` | *not carried: no metric kind* | — | — | — | — |
+| `state-of-health` | *not carried: no metric kind* | — | — | — | — |
+| `switch-state` | *not carried: the only switch metric is the generator run contact command, an echo of a command rather than a measured state* | — | — | — | — |
+| `tank-volume` | *not carried: the protocol carries a tank level in percent, never a volume* | — | — | — | — |
+| `time-to-go` | *not carried: no metric kind* | — | — | — | — |
 
 ## Inventory outcomes
 

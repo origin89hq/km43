@@ -525,6 +525,10 @@ pub struct DatasetMetric {
     /// as it is now; a counter names its window, so `AC energy` is
     /// `ac-energy-total` only over `lifetime` and `ac-energy-today` over `today`.
     pub domain: Option<String>,
+    /// The flow a counter counts, by `direction` name. Absent matches any, which
+    /// is right for a gauge whose kind fixes its sign and wrong for a counter
+    /// that has a twin counting the other way.
+    pub dir: Option<String>,
     pub absent: Option<String>,
 }
 
@@ -538,6 +542,8 @@ pub struct Carried {
     /// Never open: a row that named no domain carries `live`, so a limit or a
     /// yesterday counter cannot borrow an instantaneous reading's word.
     pub domain: u8,
+    /// `None` matches a signal in any direction, and one that names none.
+    pub dir: Option<u8>,
 }
 
 /// The crosswalk, resolved: what is carried, most specific row first, and what
@@ -878,7 +884,12 @@ impl Registry {
                         .map(|p| self.place_number("measurement_point", p))
                         .transpose()?;
                     let domain = self.domain_number(row.domain.as_deref().unwrap_or("live"))?;
-                    if !places.insert((kind, role, point, domain)) {
+                    let dir = row
+                        .dir
+                        .as_deref()
+                        .map(|d| self.direction_number(d))
+                        .transpose()?;
+                    if !places.insert((kind, role, point, domain, dir)) {
                         bail!(
                             "dataset word {:?} reaches metric {kind_name:?} at a place another \
                              row already claims; one place carries one word",
@@ -891,10 +902,15 @@ impl Registry {
                         role,
                         point,
                         domain,
+                        dir,
                     });
                 }
                 (None, Some(why)) => {
-                    if row.role.is_some() || row.point.is_some() || row.domain.is_some() {
+                    if row.role.is_some()
+                        || row.point.is_some()
+                        || row.domain.is_some()
+                        || row.dir.is_some()
+                    {
                         bail!(
                             "dataset word {:?} is absent and names a place, which nothing can \
                              be at",
@@ -936,6 +952,7 @@ impl Registry {
                 c.role,
                 c.point,
                 c.domain,
+                c.dir,
             )
         });
         absent.sort();
@@ -979,17 +996,34 @@ impl Registry {
             .with_context(|| format!("no allocated `signal_domain` is named {name:?}"))
     }
 
+    /// The value of a direction, by its name.
+    fn direction_number(&self, name: &str) -> Result<u8> {
+        self.enums
+            .get("direction")
+            .and_then(|rows| {
+                rows.iter()
+                    .filter(|r| !r.status.is_gone())
+                    .find(|r| r.name == name)
+            })
+            .map(|r| r.value)
+            .with_context(|| format!("no allocated `direction` is named {name:?}"))
+    }
+
     /// How narrowly a row names its place: both role and point, the role, the
-    /// point, or neither. The role weighs more, which is what makes the order
-    /// total when a role-only row and a point-only row both match one reading.
+    /// point, or neither, and then whether it names a direction. The role weighs
+    /// more, which is what makes the order total when a role-only row and a
+    /// point-only row both match one reading. A direction weighs least, so it
+    /// only ever splits rows that name the same place, and a row that names one
+    /// is never shadowed by a row that matches either way.
     #[must_use]
     pub fn specificity(row: &Carried) -> u8 {
-        match (row.role.is_some(), row.point.is_some()) {
+        let place = match (row.role.is_some(), row.point.is_some()) {
             (true, true) => 3,
             (true, false) => 2,
             (false, true) => 1,
             (false, false) => 0,
-        }
+        };
+        place * 2 + u8::from(row.dir.is_some())
     }
 
     /// The dataset's metric words, read from the pinned copy and refused when its
@@ -1290,6 +1324,7 @@ mod crosswalk {
             role: role.map(str::to_owned),
             point: None,
             domain: None,
+            dir: None,
             absent: absent.map(str::to_owned),
         }
     }
@@ -1354,6 +1389,73 @@ mod crosswalk {
             said.to_string().contains("no allocated `signal_domain`"),
             "{said}"
         );
+    }
+
+    /// A DC counter's word depends on the flow it counts as well as its window:
+    /// a bank's charge counting out is `consumed-amp-hours`, and the same kind
+    /// counting in has no word. A direction nobody allocated, or one on an
+    /// absent row, is refused rather than read as *any*.
+    #[test]
+    fn a_direction_tells_consumed_from_charged() {
+        let reg = loaded();
+        let out = reg
+            .enums
+            .get("direction")
+            .and_then(|rows| rows.iter().find(|r| r.name == "positive_is_out"))
+            .map(|r| r.value)
+            .expect("an allocated direction");
+        let consumed: Vec<_> = reg
+            .crosswalk
+            .carried
+            .iter()
+            .filter(|c| c.name == "consumed-amp-hours")
+            .collect();
+        assert!(!consumed.is_empty());
+        assert!(
+            consumed.iter().all(|c| c.dir == Some(out)),
+            "every consumed-amp-hours row counts out of the bank"
+        );
+        let first_undirected = reg
+            .crosswalk
+            .carried
+            .iter()
+            .position(|c| c.dir.is_none())
+            .expect("most rows name no direction");
+        assert!(
+            reg.crosswalk
+                .carried
+                .iter()
+                .skip(first_undirected)
+                .all(|c| c.dir.is_none() || Registry::specificity(c) < 4),
+            "a directed row at a role sorts before every undirected row at one"
+        );
+
+        let mut reg = loaded();
+        let mut bad = row(
+            "consumed-amp-hours",
+            Some("DC charge"),
+            Some("battery bank"),
+            None,
+        );
+        bad.domain = Some("since_reset".to_owned());
+        bad.dir = Some("sideways".to_owned());
+        reg.dataset_metrics.push(bad);
+        let said = reg
+            .resolve_crosswalk()
+            .expect_err("sideways is not a direction");
+        assert!(
+            said.to_string().contains("no allocated `direction`"),
+            "{said}"
+        );
+
+        let mut reg = loaded();
+        let mut bad = row("humidity", None, None, Some("no metric kind"));
+        bad.dir = Some("positive_is_in".to_owned());
+        reg.dataset_metrics.push(bad);
+        let said = reg
+            .resolve_crosswalk()
+            .expect_err("an absent word cannot count anything");
+        assert!(said.to_string().contains("names a place"), "{said}");
     }
 
     /// The number the registry allocates to a metric, read from the registry so
@@ -1433,6 +1535,7 @@ mod crosswalk {
             role: None,
             point: Some("cell".to_owned()),
             domain: None,
+            dir: None,
             absent: None,
         });
         let temperature = metric(&reg, "temperature");
