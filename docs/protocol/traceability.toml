@@ -1183,7 +1183,7 @@
 # set and on a correction. It is the offer's side of P-266 and is counted for
 # the same reason: the crate carries only the outcome's name, deciding an offer
 # against the clock is the controller's, and nothing in this tree decides one,
-# so L-153 stays counted, owed by the firmware follow-up to km43#179.
+# so L-153 stays counted, owed by origin89hq/firmware#245.
 uncovered = 154
 
 # P-045 is the shape this file is for. Nothing can drive an implementation into
