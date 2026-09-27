@@ -798,3 +798,42 @@ test("a loop the checked device only hangs off is named where it closes", () => 
     { reason: "parent_loop", dev: 2 },
   );
 });
+
+test("the check refuses an enum value the registry does not allocate, as the decoder does", () => {
+  const parity = checkBusesAndDevices(
+    { buses: [{ bus: 1, parity: 99 as Parity }], devices: [] },
+    RULES,
+  );
+  assert.deepEqual(parity, {
+    reason: "unknown_value",
+    key: "bus entry parity",
+  });
+  assert.ok(parity);
+  assertMalformed(parity);
+  const device = (options: DeviceEntry<number | undefined>["options"]) =>
+    checkBusesAndDevices(
+      write({
+        ...pack(undefined, 1),
+        bus: 2,
+        dialect: PYLONTECH_STAND_IN,
+        ...(options ? { options } : {}),
+      }),
+      RULES,
+    );
+  assert.deepEqual(device({ pylontechVersion: 9 as PylontechVersion }), {
+    reason: "unknown_value",
+    key: "device option pylontech_version",
+  });
+  assert.deepEqual(device({ currentDirection: 9 as Direction.PositiveIsIn }), {
+    reason: "unknown_value",
+    key: "device option current_direction",
+  });
+  const magnitude = device({
+    currentDirection: Direction.MagnitudeOnly as Direction.PositiveIsIn,
+  });
+  assert.deepEqual(magnitude, {
+    reason: "out_of_schema",
+    key: "device option current_direction",
+  });
+  assertInvalid(magnitude);
+});

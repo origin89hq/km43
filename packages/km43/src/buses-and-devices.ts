@@ -879,6 +879,9 @@ function schemaRefusal(
   };
   for (const bus of section.buses) {
     if (!fits(bus.bus, U8) || !fits(bus.rate, U32)) return tooWide;
+    if (bus.parity !== undefined && !isParity(bus.parity)) {
+      return { reason: "unknown_value", key: "bus entry parity" };
+    }
     if (
       bus.rate === undefined &&
       bus.dataBits === undefined &&
@@ -902,6 +905,20 @@ function schemaRefusal(
       !fits(device.options?.pollPeriodMs, U32)
     ) {
       return tooWide;
+    }
+    const version = device.options?.pylontechVersion;
+    if (version !== undefined && !isPylontechVersion(version)) {
+      return {
+        reason: "unknown_value",
+        key: "device option pylontech_version",
+      };
+    }
+    const direction = device.options?.currentDirection;
+    if (direction !== undefined && !isDirection(direction)) {
+      return {
+        reason: "unknown_value",
+        key: "device option current_direction",
+      };
     }
   }
   if (section.buses.length > MAX_CONFIG_BUSES) {
@@ -931,6 +948,12 @@ function schemaRefusal(
       return refuse("device entry addr");
     }
     if (device.parent === 0) return refuse("device entry parent");
+    // The type leaves magnitude-only out, and a cast can still put it back;
+    // widened to a number, the comparison needs no cast of its own.
+    const sign: number | undefined = device.options?.currentDirection;
+    if (sign === Direction.MagnitudeOnly) {
+      return refuse("device option current_direction");
+    }
   }
   return undefined;
 }
