@@ -1330,11 +1330,22 @@ impl Registry {
                         row.name
                     );
                 }
-                if row.number.is_none() || row.status.is_none_or(Status::is_gone) {
+                if row.number.is_none() {
                     bail!(
-                        "condition {:?} needs a vendor code and is not one allocated number",
+                        "condition {:?} needs a vendor code and is a span, not one number",
                         row.name
                     );
+                }
+                match row.status {
+                    None => bail!(
+                        "condition {:?} needs a vendor code and has no status",
+                        row.name
+                    ),
+                    Some(gone) if gone.is_gone() => bail!(
+                        "condition {:?} needs a vendor code and is {gone}, so nothing may send it",
+                        row.name
+                    ),
+                    Some(_) => {}
                 }
             }
         }
@@ -1955,19 +1966,45 @@ mod vendor_code {
         }
     }
 
-    /// On the vendor range there is no number to generate, and on a retired
-    /// condition the rule would refuse rows nobody may send.
+    /// On the vendor range there is no number to generate.
     #[test]
-    fn a_mark_on_a_span_or_a_gone_condition_is_refused() {
-        for reg in [
-            marked("condition", true, |r| r.number.is_none()),
-            marked("condition", true, |r| r.status == Some(Status::Retired)),
-        ] {
-            let said = reg.validate().expect_err("a mark with no live number");
-            assert!(
-                said.to_string().contains("not one allocated number"),
-                "{said}"
-            );
+    fn a_mark_on_a_span_is_refused() {
+        let reg = marked("condition", true, |r| r.number.is_none());
+        let said = reg.validate().expect_err("a mark with no number");
+        assert!(said.to_string().contains("a span"), "{said}");
+    }
+
+    /// The registry with the vendor fault's status replaced, since no
+    /// condition is withdrawn in the file to mark instead.
+    fn vendor_fault_with(status: Option<Status>) -> Registry {
+        let mut reg = loaded();
+        let row = reg
+            .open_registries
+            .get_mut("condition")
+            .and_then(|rows| rows.iter_mut().find(|r| r.vendor_code_required))
+            .expect("the vendor fault");
+        row.status = status;
+        reg
+    }
+
+    /// A numbered condition with no status says nothing about whether anyone
+    /// may send it, so a rule refusing rows under it has nothing to stand on.
+    #[test]
+    fn a_mark_on_a_condition_with_no_status_is_refused() {
+        let reg = vendor_fault_with(None);
+        let said = reg.validate().expect_err("a mark with no status");
+        assert!(said.to_string().contains("has no status"), "{said}");
+    }
+
+    /// On a withdrawn or retired condition the rule would refuse rows nobody
+    /// may send. The error once called both "not one allocated number", which
+    /// sent the reader looking for a missing number on a row that has one.
+    #[test]
+    fn a_mark_on_a_withdrawn_or_retired_condition_is_refused() {
+        for gone in [Status::Withdrawn, Status::Retired] {
+            let reg = vendor_fault_with(Some(gone));
+            let said = reg.validate().expect_err("a mark on a gone number");
+            assert!(said.to_string().contains(&format!("is {gone}")), "{said}");
         }
     }
 }
