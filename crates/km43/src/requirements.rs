@@ -1137,7 +1137,7 @@ pub const REQUIREMENTS: &[Requirement] = &[
         id: "P-267",
         document: "docs/PROTOCOL.md",
         section: "Time",
-        statement: "A `Time 0x0A` the RTC does not take MUST be answered error 7 `busy`, and nothing is spent: the clock MUST NOT move, an armed floor override MUST NOT be spent, and P-118's window MUST NOT start.",
+        statement: "A signed `Time 0x0A` whose write fails: 1. When the RTC did not take the time, MUST be answered error 7 `busy`, and nothing is spent: the clock MUST NOT move, an armed floor override MUST NOT be spent, and P-118's window MUST NOT start. 2. When the RTC took the time and the `time set` record P-111 requires did not append, stands, and the record is owed: the clock stays moved, an armed override is spent, and P-118's window runs from the RTC write. The controller MUST retry the record, MUST NOT send `TimeAck` outcome 1 `accepted` until it lands, and MUST NOT accept any other clock change while it is owed.",
     },
     Requirement {
         id: "P-117",

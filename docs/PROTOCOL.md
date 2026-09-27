@@ -4541,7 +4541,7 @@ A write that fails is not this refusal and MUST NOT be answered outcome 2: the
 RTC not taking a time it can represent, or the new time not being stored.
 Outcome 2 tells a client that sending the same time again will not help, and a
 client told that stops sending it. A failed write might land on the next try; a
-time outside the clock's range never will. P-267 names the answer it does get.
+time outside the clock's range never will. P-267 names what it gets instead.
 
 P-113's window is not closed at the clock's edges instead. The window is derived
 from the controller's history by the same rule on every controller that speaks
@@ -4549,25 +4549,31 @@ KM43; the clock's range is a fact about one controller's hardware. Folding the
 range into the window would also hand it to the override, which lifts the
 window's lower edge with the floor.
 
-**P-267** — A `Time 0x0A` the RTC does not take MUST be answered error 7 `busy`,
-and nothing is spent: the clock MUST NOT move, an armed floor override MUST NOT
-be spent, and P-118's window MUST NOT start. It is the answer P-079 and P-254
-give a durable write that failed, for the same reason: *the controller did not
-do this, send it again*, and the next try may land.
+**P-267** — A signed `Time 0x0A` whose write fails:
 
-**When the RTC took the time and the `time set` record P-111 requires did not
-append, the change stands and the record is owed.** The clock stays moved, an
-armed override is spent, and P-118's window runs from the RTC write. The
-controller MUST retry the record, MUST NOT send `TimeAck` outcome 1 `accepted`
-until it lands, and MUST NOT accept any other clock change while it is owed.
+1. When the RTC did not take the time, MUST be answered error 7 `busy`, and
+   nothing is spent: the clock MUST NOT move, an armed floor override MUST NOT
+   be spent, and P-118's window MUST NOT start.
+2. When the RTC took the time and the `time set` record P-111 requires did not
+   append, stands, and the record is owed: the clock stays moved, an armed
+   override is spent, and P-118's window runs from the RTC write. The
+   controller MUST retry the record, MUST NOT send `TimeAck` outcome 1
+   `accepted` until it lands, and MUST NOT accept any other clock change while
+   it is owed.
+
+Error 7 is the answer P-079 and P-254 give a durable write that failed, for the
+same reason: *the controller did not do this, send it again*, and the next try
+may land. A controller that forgets the time it held has moved its clock as
+surely as one that took the new time, so rule 1's clock is the one it had,
+still known.
 
 Undoing the change is not the answer to a record that did not land. Writing the
 old time back is a second clock write that can fail the same way, and a second
 change the log would owe a record for. Keeping the change and owing the record
 means the log catches up with the clock, and holding outcome 1 until
 then keeps its meaning exact: *the clock moved and the record names who moved
-it*. A client that sees no answer before its request expires does not know
-which of the two happened, and asks again. Inside the quarter hour that write
+it*. A client that sees no answer before its request expires cannot tell a
+write that failed from a record still owed, and asks again. Inside the quarter hour that write
 meets P-118's error 7 whether or not the record has landed, and after it the
 write is not accepted while the record is still owed: two separate guards, and
 neither answer says the first write did not happen.
