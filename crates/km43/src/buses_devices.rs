@@ -361,6 +361,13 @@ impl BusEntry {
 
     /// P-261 against the bus's transport.
     fn check(self, transport: Transport) -> Result<(), ConfigError> {
+        if self.rate.is_none()
+            && self.data_bits.is_none()
+            && self.parity.is_none()
+            && self.stop_bits.is_none()
+        {
+            return Err(ConfigError::NothingSet(BusesAndDevicesKey::Bus.key()));
+        }
         let refuse = |key: BusesAndDevicesKey| ConfigError::NotOnTransport {
             bus: self.bus,
             key: key.key(),
@@ -1086,6 +1093,16 @@ impl<'a> BusesAndDevicesWrite<'a> {
         allocator: DevAllocator,
     ) -> Result<Accepted<'a>, ConfigError> {
         self.check(rules)?;
+        // Ids go out ascending, so a next id at or below any id the section
+        // holds was given before: the allocator was resumed from a stale
+        // record. Checked before the write is read, because a write that only
+        // removes the highest dev would erase the evidence. Refusing is the
+        // only answer that files no history under the wrong device.
+        if let Some(next) = allocator.next()
+            && held.devices().any(|was| was.dev >= next)
+        {
+            return Err(ConfigError::AllocatorBehind(next.get()));
+        }
         let mut allocator = allocator;
         let mut section = BusesAndDevicesRead::EMPTY;
         for entry in self.buses() {
@@ -1102,17 +1119,7 @@ impl<'a> BusesAndDevicesWrite<'a> {
                 }
                 dev
             } else {
-                let dev = allocator.allocate()?;
-                // Ids go out ascending, so one at or below any id the section
-                // holds has been given before: the allocator was resumed from
-                // a stale record. Refusing is the only answer that files no
-                // history under the wrong device.
-                let behind = held.devices().any(|was| was.dev >= dev)
-                    || self.devices().any(|other| other.dev >= Some(dev));
-                if behind {
-                    return Err(ConfigError::AllocatorBehind(dev.get()));
-                }
-                dev
+                allocator.allocate()?
             };
             section.push_device(DeviceEntry {
                 dev,
@@ -2171,6 +2178,40 @@ mod tests {
             ..pack(None, &[0x01], None)
         }]);
         assert_eq!(on_rs485.check(&rules), Ok(()));
+    }
+
+    /// A stale allocator is caught before the write is looked at: a write
+    /// that only removes the highest dev would otherwise erase the evidence
+    /// that the allocator's next id was given before.
+    #[test]
+    fn p_262_a_stale_allocator_is_refused_even_by_a_write_that_adds_nothing() {
+        let before = held();
+        let behind = DevAllocator::resume(Some(dev(2)));
+        let removal = write_of(&[meter(Some(dev(1)), &[0x01])]);
+        assert_eq!(
+            is_invalid(removal.accept(&rules(), &before.section, behind)),
+            ConfigError::AllocatorBehind(2)
+        );
+    }
+
+    /// A body built in memory is held to the same shape the decoder
+    /// requires, so `accept` never stores what a reader refuses.
+    #[test]
+    fn p_261_a_bus_entry_that_sets_nothing_is_refused_by_check_as_by_decode() {
+        let mut bare = BusesAndDevicesWrite::EMPTY;
+        bare.push_bus(BusEntry {
+            bus: 1,
+            rate: None,
+            data_bits: None,
+            parity: None,
+            stop_bits: None,
+        })
+        .expect("room");
+        assert_eq!(
+            is_malformed(bare.check(&rules())),
+            ConfigError::NothingSet(BusesAndDevicesKey::Bus.key())
+        );
+        is_malformed(bare.accept(&rules(), &BusesAndDevicesRead::EMPTY, DevAllocator::FIRST));
     }
 
     #[test]

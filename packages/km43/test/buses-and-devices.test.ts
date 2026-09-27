@@ -748,3 +748,43 @@ test("a device breaking several value rules is refused for dev, then addr, then 
     key: "device entry addr",
   });
 });
+
+test("the check refuses a bus entry that sets nothing, as the decoder does", () => {
+  const bare = checkBusesAndDevices(
+    { buses: [{ bus: 1 }], devices: [] },
+    RULES,
+  );
+  assert.deepEqual(bare, { reason: "nothing_set", key: "bus entry bus" });
+  assert.ok(bare);
+  assertMalformed(bare);
+});
+
+test("the check refuses a number wider than its field, as the Rust decoder does", () => {
+  const tooWide = { reason: "cbor", failure: "integer_out_of_range" };
+  const device = (entry: Partial<DeviceEntry<number | undefined>>) =>
+    checkBusesAndDevices(write({ ...meter(undefined, 1), ...entry }), RULES);
+  assert.deepEqual(device({ product: 0x1_0000 }), tooWide);
+  assert.deepEqual(device({ dialect: -1 }), tooWide);
+  assert.deepEqual(device({ role: 1.5 }), tooWide);
+  assert.deepEqual(device({ dev: 0x1_0000 }), tooWide);
+  assert.deepEqual(device({ parent: 0x1_0000 }), tooWide);
+  assert.deepEqual(device({ bus: 256 }), tooWide);
+  assert.deepEqual(device({ options: { pollPeriodMs: 2 ** 32 } }), tooWide);
+  assert.deepEqual(
+    checkBusesAndDevices(
+      { buses: [{ bus: 256, rate: 9600 }], devices: [] },
+      RULES,
+    ),
+    tooWide,
+  );
+  assert.deepEqual(
+    checkBusesAndDevices(
+      { buses: [{ bus: 1, rate: 2 ** 32 }], devices: [] },
+      RULES,
+    ),
+    tooWide,
+  );
+  const refusal = device({ product: 0x1_0000 });
+  assert.ok(refusal);
+  assertMalformed(refusal);
+});

@@ -872,6 +872,42 @@ function schemaRefusal(
     reason: "out_of_schema",
     key,
   });
+  // A number wider than its field is one the Rust decoder cannot read at
+  // all, so it answers error 1 there and is refused the same way here.
+  const fits = (value: number | undefined, max: number) =>
+    value === undefined ||
+    (Number.isInteger(value) && value >= 0 && value <= max);
+  const tooWide: BusesAndDevicesRefusal = {
+    reason: "cbor",
+    failure: "integer_out_of_range",
+  };
+  for (const bus of section.buses) {
+    if (!fits(bus.bus, U8) || !fits(bus.rate, U32)) return tooWide;
+    if (
+      bus.rate === undefined &&
+      bus.dataBits === undefined &&
+      bus.parity === undefined &&
+      bus.stopBits === undefined
+    ) {
+      return { reason: "nothing_set", key: "bus entry bus" };
+    }
+  }
+  for (const device of section.devices) {
+    const u16s = [
+      device.dev,
+      device.product,
+      device.dialect,
+      device.role,
+      device.parent,
+    ];
+    if (
+      !fits(device.bus, U8) ||
+      !u16s.every((value) => fits(value, U16)) ||
+      !fits(device.options?.pollPeriodMs, U32)
+    ) {
+      return tooWide;
+    }
+  }
   if (section.buses.length > MAX_CONFIG_BUSES) {
     return { reason: "too_many", key: "buses and devices buses" };
   }
