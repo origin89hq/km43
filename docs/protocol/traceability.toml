@@ -1184,7 +1184,13 @@
 # the same reason: the crate carries only the outcome's name, deciding an offer
 # against the clock is the controller's, and nothing in this tree decides one,
 # so L-153 stays counted, owed by origin89hq/firmware#245.
-uncovered = 154
+# 154 -> 155: P-267 is new (origin89hq/km43#180), error 7 `busy` for a client
+# time the RTC did not take, with the clock, an armed override and P-118's
+# window untouched, and the record owed when the RTC took it and the log did
+# not. Writing the clock, spending the override and holding outcome 1 for the
+# record are the controller's, and nothing in this tree does any of them, so
+# P-267 stays counted, owed by origin89hq/firmware#248.
+uncovered = 155
 
 # P-045 is the shape this file is for. Nothing can drive an implementation into
 # transmitting a key it does not have, so the thing that stands behind it reads

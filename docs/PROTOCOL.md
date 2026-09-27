@@ -4541,13 +4541,50 @@ A write that fails is not this refusal and MUST NOT be answered outcome 2: the
 RTC not taking a time it can represent, or the new time not being stored.
 Outcome 2 tells a client that sending the same time again will not help, and a
 client told that stops sending it. A failed write might land on the next try; a
-time outside the clock's range never will.
+time outside the clock's range never will. P-267 names what it gets instead.
 
 P-113's window is not closed at the clock's edges instead. The window is derived
 from the controller's history by the same rule on every controller that speaks
 KM43; the clock's range is a fact about one controller's hardware. Folding the
 range into the window would also hand it to the override, which lifts the
 window's lower edge with the floor.
+
+**P-267** — A signed `Time 0x0A` whose write fails:
+
+1. When the RTC did not take the time, MUST be answered error 7 `busy`, and
+   nothing is spent: the clock MUST NOT move, an armed floor override MUST NOT
+   be spent, and P-118's window MUST NOT start.
+2. When the RTC took the time and the `time set` record P-111 requires did not
+   append, stands, and the record is owed: the clock stays moved, an armed
+   override is spent, and P-118's window runs from the RTC write. The
+   controller MUST retry the record, MUST NOT send `TimeAck` outcome 1
+   `accepted` until it lands, and MUST NOT accept any other clock change while
+   it is owed.
+
+Error 7 is the answer P-079 and P-254 give a durable write that failed, for the
+same reason: *the controller did not do this, send it again*, and the next try
+may land. A controller that forgets the time it held has moved its clock as
+surely as one that took the new time, so rule 1's clock is the one it had,
+still known.
+
+Undoing the change is not the answer to a record that did not land. Writing the
+old time back is a second clock write that can fail the same way, and a second
+change the log would owe a record for. Keeping the change and owing the record
+means the log catches up with the clock, and holding outcome 1 until
+then keeps its meaning exact: *the clock moved and the record names who moved
+it*. A client that sees no answer before its request expires cannot tell a
+write that failed from a record still owed, and asks again. Inside the quarter hour that write
+meets P-118's error 7 whether or not the record has landed, and after it the
+write is not accepted while the record is still owed: two separate guards, and
+neither answer says the first write did not happen.
+
+The override is spent and P-118's window started because the clock did move. A
+change that stands and left the override armed would let the same press
+authorise a second floor crossing, which P-117 rule 2 exists to prevent; one
+that stands and did not start P-118's window would give a client a second write
+in the same quarter hour. Refusing every other clock change while the record is
+owed keeps the log's order the clock's: two changes with one record owed are
+two records that can land in either order.
 
 **P-117** — The floor override:
 
@@ -4833,7 +4870,10 @@ and the meaning is *what a receiver will accept*.
 response type, carrying an outcome. `Error 0xFF` is for conditions that stop a
 request reaching a handler at all, plus P-060's challenge-unavailable refusal:
 `Discover` has no refusal outcome. P-251's error 20 is one of those: a read whose
-response has no outcome, refused for the slot's role before its handler runs. Where a registry lists both an outcome and an
+response has no outcome, refused for the slot's role before its handler runs.
+The other exception is a durable write that failed inside the handler: P-079,
+P-254 and P-267 answer it error 7 `busy`, because the instruction is *send it
+again* and none of their outcomes carries it. Where a registry lists both an outcome and an
 error code for the same condition, **the outcome is what is sent**.
 
 Two answers to one refusal is one implementer emitting an error while another
