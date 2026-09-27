@@ -389,10 +389,10 @@ the bank is also what the sun does; 120 V at 60 Hz is not.
 
 ---
 
-## The three spaces inside a metric
+## The four spaces inside a metric
 
-`0x0501`, `0x0601` and `0x0603` carry an **answer** in a `Value`'s key 3 where
-every other metric carries a measurement. P-125 is the rule that follows from
+`0x0501`, `0x0601`, `0x0603` and `0x0704` carry an **answer** in a `Value`'s key
+3 where every other metric carries a measurement. P-125 is the rule that follows from
 that, and it is the one place in the protocol where a discriminant is not in a
 discriminant field: a value here that a client cannot name is surfaced as
 unrecognised **for that one channel** and never rendered as a state, while the
