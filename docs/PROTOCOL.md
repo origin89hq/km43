@@ -4406,8 +4406,8 @@ holding no timestamped record at all it opens at the firmware build timestamp
 instead.
 
 **Below the lower edge is P-114's case and is answered outcome 4
-`needs_button`; outcome 2 is for the upper edge, and for a time the clock cannot
-hold (P-266).** The two requirements share
+`needs_button`; outcome 2 is for the upper edge, and for a time outside the
+clock's range once P-114 has not refused it (P-266).** The two requirements share
 that edge, so without this sentence a set below it matches both and an
 implementer picks. They are not the same refusal: below the floor there is
 something a person at the panel can do about it (P-116), and ten years ahead
@@ -4435,7 +4435,7 @@ log record carrying one MUST be refused with `TimeAck` outcome 4 `needs_button`.
 That timestamp is the **monotonic floor**: the controller already holds it, and
 it is the best evidence on site of a moment that has certainly passed. When no
 record carries a timestamp — the clock has never been set — there is no floor,
-and P-113's window is the whole of the check.
+and P-113's window and P-266's range are the whole of the check.
 
 Outcome 4 rather than outcome 2, because the refusal has an answer and outcome 2
 does not carry it. P-116 says a person at the panel can override the floor; a
@@ -4503,17 +4503,18 @@ may treat as elapsed, not about which message moved the clock, so the forward
 jump P-113 still permits — anywhere inside a ten-year window — starts nothing.
 
 **P-116** — A `Time 0x0A` that the floor would refuse MUST be accepted **while a
-floor override is armed**, unless P-266 refuses it, and the controller MUST
-raise a class A `concern raised` (`0x0501`) at condition `floor overridden`, alongside the
-`time set` record P-111 requires. How far back the clock went is that record's
+floor override is armed**, unless P-266 refuses it, and on accepting it the
+controller MUST raise a class A `concern raised` (`0x0501`) at condition
+`floor overridden`, alongside the `time set` record P-111 requires. How far back the clock went is that record's
 old value against its new one, for the reason P-115 gives. With no override armed
 it is refused under P-114 exactly as before, as `TimeAck 0x8A` outcome 4
 `needs_button`.
 
-**P-266** — A `Time 0x0A` whose `at` the controller's clock cannot represent MUST
-be refused with `TimeAck` outcome 2 `rejected`, whether or not a floor override is
-armed. The clock MUST NOT move, and an armed override MUST NOT be spent by the
-refusal. The range is the controller's own and binds at both of its edges: the
+**P-266** — A `Time 0x0A` whose `at` is outside the range the controller's clock
+can hold, and that P-114 has not refused first, MUST be refused with `TimeAck`
+outcome 2 `rejected`, whether or not a floor override is armed. The clock MUST
+NOT move, an armed override MUST NOT be spent by the refusal, and no `floor
+overridden` concern is raised. The range is the controller's own and binds at both of its edges: the
 Origin89 RTC holds 2000 through 2099, and a controller with another calendar has
 other edges.
 
@@ -4526,6 +4527,10 @@ of the clock's range and no further. A time inside P-113's window and past the
 top of the range is refused in either override state, which happens whenever the
 floor is within ten years of the clock's upper edge: a floor in 2095 opens a
 window reaching 2105, and the Origin89 RTC stops at the end of 2099.
+
+So one time can be answered outcome 4 and then outcome 2: refused below the floor
+while unarmed, sent again with the override armed, and refused for the range. A
+client that shows *hold the button* for outcome 4 has to expect the second answer.
 
 A write that fails is not this refusal and MUST NOT be answered outcome 2: the
 RTC not taking a time it can represent, or the new time not being stored.
