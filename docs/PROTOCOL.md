@@ -4518,6 +4518,11 @@ overridden` concern is raised. The range is the controller's own and binds at bo
 Origin89 RTC holds 2000 through 2099, and a controller with another calendar has
 other edges.
 
+The same range binds the other door. [LINK.md](protocol/LINK.md) L-153 refuses a
+`TimeOffer` outside it with `TimeOfferAck` outcome 2 `refused_implausible`, on
+the first set and on a correction alike, so the comms processor cannot write a
+time this rule refuses a signed client.
+
 **P-114 comes first.** A time below the floor with no override armed is answered
 outcome 4 `needs_button`, even when it is also below the clock's range, so an
 unarmed refusal below the floor does not depend on how far below it is. This rule

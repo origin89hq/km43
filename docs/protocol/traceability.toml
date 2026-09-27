@@ -1178,7 +1178,13 @@
 # order a client fetches the tables. Building it found 1-Wire missing from
 # `Transport::addressed`, so a config write took a DS18B20 with no ROM code;
 # P-265's write now refuses one too.
-uncovered = 153
+# 153 -> 154: L-153 is new (origin89hq/km43#179), the refusal of a `TimeOffer`
+# the controller's clock cannot hold, with `refused_implausible` on the first
+# set and on a correction. It is the offer's side of P-266 and is counted for
+# the same reason: the crate carries only the outcome's name, deciding an offer
+# against the clock is the controller's, and nothing in this tree decides one,
+# so L-153 stays counted, owed by origin89hq/firmware#245.
+uncovered = 154
 
 # P-045 is the shape this file is for. Nothing can drive an implementation into
 # transmitting a key it does not have, so the thing that stands behind it reads

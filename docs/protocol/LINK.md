@@ -1324,8 +1324,8 @@ keeps asking what time it is. It is key 2 of the boot body, defined under
 
 **L-150** — Once the clock is known the controller MUST refuse an offer that
 would move it by more than 5 seconds, in either direction, with
-`refused_step_too_large`. The correction has to arrive as a signed client
-`Time 0x0A` instead.
+`refused_step_too_large`, unless L-153 refuses it first. The correction has
+to arrive as a signed client `Time 0x0A` instead.
 
 Five seconds is drift; an hour is a different Tuesday. The first-set window above
 is ten years wide, so it reaches every day of the week and every time of day —
@@ -1368,6 +1368,38 @@ the table unemitted rather than being handed to whoever allocates next, exactly 
 [REGISTRY.md](REGISTRY.md) holds its four withdrawn error codes. `accuracy_ms`
 stays in the offer alongside `server`: worth reading in a log, and deciding
 nothing.
+
+**L-153** — The controller MUST refuse an offer whose `unix_ms` is outside the
+range its clock can hold with `refused_implausible`, and the clock MUST NOT
+move. The rule binds at both edges of the range, on the first set after boot
+and on a correction to a known clock alike. The range is the controller's own:
+the Origin89 RTC holds 2000 through 2099, and a controller with another calendar
+has other edges. L-151 comes first, and this rule comes before L-150: an
+offer inside the rate window is `refused_rate_limited` whatever its time, and
+one outside the range is `refused_implausible` even when it is also more than
+5 seconds from a known clock.
+
+This rule comes before L-150 because `refused_step_too_large` points at a
+remedy, a signed client `Time 0x0A`, and P-266 refuses that time too. Outcome 2
+is the only true answer for a time the clock can never hold.
+
+Neither bound above keeps an offer inside the range. L-140's window comes from
+the controller's history by the same rule on every controller, and the range is
+a fact about one controller's hardware: a floor in 2095 opens a window reaching
+2105, and the Origin89 RTC stops at the end of 2099. L-150's cap does not
+either, because a known clock in the last seconds of 2099 is less than five
+seconds from a time it cannot hold. Before this rule such an offer had no
+answer, and a controller whose calendar refused the write sent nothing. The
+comms processor then retries it three times under L-015 and gives it up as
+failed, with nothing to tell a time the controller will never take from an
+offer lost on the cable.
+
+Outcome 2 is the answer an offer gets when sending it again will not help, which
+is what a time the clock cannot hold is. It is the offer's side of P-266 in
+[PROTOCOL.md](../PROTOCOL.md), which refuses a signed client `Time 0x0A` for the
+same range with `TimeAck` outcome 2, and no outcome of its own is allocated. A
+write that fails is not this refusal and MUST NOT be answered outcome 2: the RTC
+not taking a time it can represent might take it on the next offer.
 
 **L-160** — The controller MUST record any accepted clock change of more than
 5 seconds, whatever moved it, in the `time set` event (`0x0604`), carrying the

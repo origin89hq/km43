@@ -1611,7 +1611,7 @@ pub const REQUIREMENTS: &[Requirement] = &[
         id: "L-150",
         document: "docs/protocol/LINK.md",
         section: "Time offers",
-        statement: "Once the clock is known the controller MUST refuse an offer that would move it by more than 5 seconds, in either direction, with `refused_step_too_large`.",
+        statement: "Once the clock is known the controller MUST refuse an offer that would move it by more than 5 seconds, in either direction, with `refused_step_too_large`, unless L-153 refuses it first.",
     },
     Requirement {
         id: "L-151",
@@ -1624,6 +1624,12 @@ pub const REQUIREMENTS: &[Requirement] = &[
         document: "docs/protocol/LINK.md",
         section: "Time offers",
         statement: "The controller MUST NOT emit `TimeOfferAck` outcome 3.",
+    },
+    Requirement {
+        id: "L-153",
+        document: "docs/protocol/LINK.md",
+        section: "Time offers",
+        statement: "The controller MUST refuse an offer whose `unix_ms` is outside the range its clock can hold with `refused_implausible`, and the clock MUST NOT move.",
     },
     Requirement {
         id: "L-160",
