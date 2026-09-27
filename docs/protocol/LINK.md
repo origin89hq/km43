@@ -1324,8 +1324,8 @@ keeps asking what time it is. It is key 2 of the boot body, defined under
 
 **L-150** — Once the clock is known the controller MUST refuse an offer that
 would move it by more than 5 seconds, in either direction, with
-`refused_step_too_large`. The correction has to arrive as a signed client
-`Time 0x0A` instead.
+`refused_step_too_large`, unless L-153 refuses it first. The correction has
+to arrive as a signed client `Time 0x0A` instead.
 
 Five seconds is drift; an hour is a different Tuesday. The first-set window above
 is ten years wide, so it reaches every day of the week and every time of day —
@@ -1374,7 +1374,14 @@ range its clock can hold with `refused_implausible`, and the clock MUST NOT
 move. The rule binds at both edges of the range, on the first set after boot
 and on a correction to a known clock alike. The range is the controller's own:
 the Origin89 RTC holds 2000 through 2099, and a controller with another calendar
-has other edges. An offer L-150 or L-151 refuses keeps that refusal.
+has other edges. L-151 comes first, and this rule comes before L-150: an
+offer inside the rate window is `refused_rate_limited` whatever its time, and
+one outside the range is `refused_implausible` even when it is also more than
+5 seconds from a known clock.
+
+This rule comes before L-150 because `refused_step_too_large` points at a
+remedy, a signed client `Time 0x0A`, and P-266 refuses that time too. Outcome 2
+is the only true answer for a time the clock can never hold.
 
 Neither bound above keeps an offer inside the range. L-140's window comes from
 the controller's history by the same rule on every controller, and the range is
