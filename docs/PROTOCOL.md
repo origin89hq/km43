@@ -954,7 +954,7 @@ would leave a slot any stranger can open.
 | Key | Held by | Comes from |
 |---|---|---|
 | controller key `cs`, public half `CS` | the controller | generated at manufacture, permanent (P-235) |
-| DRBG state | the controller | generated at manufacture, ratcheted on every draw (P-237) |
+| DRBG state | the controller | generated at manufacture, ratcheted on every draw, rewritten only by a station reseed once lost (P-237) |
 | `printed_secret` | the label, and the controller | generated at manufacture (P-044) |
 | `pair_psk`, `refusal_key` | anyone holding the label | the printed secret (P-088) |
 | client key `is`, public half `IS` | one client install | the client's CSPRNG, at enrolment |
@@ -966,8 +966,9 @@ would leave a slot any stranger can open.
 **P-235** — The controller key MUST be generated at manufacture from a CSPRNG,
 MUST stay the same for the life of the unit, and MUST NOT be changed by a factory
 reset. The controller MUST store only the private half and derive `CS` from it
-when it needs it. Neither half of it, nor the DRBG state, may be recorded by the
-manufacturing process; the fingerprint of `CS` is all that leaves the station.
+when it needs it. Neither half of it, nor any DRBG state the station writes, at
+manufacture or in a reseed (P-237), may be recorded by the manufacturing process;
+the fingerprint of `CS` is all that leaves the station.
 
 It is the controller's identity, and a client pins it: the owner's phone from the
 label (P-236), an invited phone from the owner's. Rotating it at a reset would
@@ -1009,7 +1010,8 @@ challenge — MUST come from a deterministic random bit generator whose state:
 - is advanced irreversibly on every draw, and the advanced state is persisted and
   read back **before** the draw is used;
 - is never re-initialised: not by a factory reset, not by recovering a corrupt
-  store, not by a firmware update.
+  store, not by a firmware update, not by the comms processor or any wire
+  message. The station reseed below is the one exception.
 
 When the state cannot be read back intact, the controller MUST refuse every `Pair`
 and `Hello`, and MUST raise a class A `concern raised` (`0x0501`) at condition
@@ -1017,7 +1019,16 @@ and `Hello`, and MUST raise a class A `concern raised` (`0x0501`) at condition
 own ADC noise, or bytes the comms processor offers — only through the same
 irreversible step, never by replacing the state.
 
-The part has no random number generator, so this is the one. v1 minted challenges
+The manufacturing station, with physical SWD access at the bench, MAY write a
+fresh state onto a controller whose state cannot be read back intact. The fresh
+state MUST be drawn from the station's own CSPRNG and MUST NOT be recorded
+anywhere. The write MUST be refused while an intact state can be read back, and
+MUST NOT be available to a factory reset, the recovery of a corrupt store, a
+firmware update, the comms processor or any wire message. It writes the state
+and nothing else: the controller key, `controller_fp`, the printed label and the
+enrolled clients stay as they were.
+
+The part has no random number generator, so this generator is the one. v1 minted challenges
 from the printed secret, which was harmless while the printed secret was every
 key anyway; carried over, it would have made every controller ephemeral a value a
 photographed label computes. The three rules each close one hole. Derive the state
@@ -1028,6 +1039,17 @@ under the same session keys. Re-initialise it and every unit returns to the
 sequence it started with. Bytes from the comms processor may be mixed in because a
 hash of secret state and known input is still secret; they may not replace the
 state because then the comms processor chooses it.
+
+The station reseed does not reopen the third hole. What re-initialising breaks is
+that a unit set back to a state it held before walks the same sequence again, so
+a challenge or an ephemeral it already sent comes round a second time. A fresh
+state from the station's CSPRNG is not one the unit held before, so none of its
+draws has been exposed, and recorded `Pair` and `Hello` traffic stays as unusable
+as it was. The write replaces only a state that is already lost, needs a probe on
+the bench rather than a message, and is kept by nobody afterwards. Without it, a
+unit whose state is damaged beyond reading goes back through provisioning with a
+new controller key, a new label and a new `device_id` (P-249), and every client
+enrolled on it pairs again.
 
 Advancing before use also buys forward secrecy against a later capture of the
 controller. A state read out with a probe yields every draw after it and none

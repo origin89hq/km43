@@ -297,7 +297,7 @@ pub const REQUIREMENTS: &[Requirement] = &[
         id: "P-237",
         document: "docs/PROTOCOL.md",
         section: "Keys",
-        statement: "Every random value the controller uses — each ephemeral key and each challenge — MUST come from a deterministic random bit generator whose state: - is generated at manufacture from a CSPRNG and is never derived from, or recoverable from, `printed_secret`, `device_id` or anything the controller transmits; - is advanced irreversibly on every draw, and the advanced state is persisted and read back **before** the draw is used; - is never re-initialised: not by a factory reset, not by recovering a corrupt store, not by a firmware update.",
+        statement: "Every random value the controller uses — each ephemeral key and each challenge — MUST come from a deterministic random bit generator whose state: - is generated at manufacture from a CSPRNG and is never derived from, or recoverable from, `printed_secret`, `device_id` or anything the controller transmits; - is advanced irreversibly on every draw, and the advanced state is persisted and read back **before** the draw is used; - is never re-initialised: not by a factory reset, not by recovering a corrupt store, not by a firmware update, not by the comms processor or any wire message. The station reseed below is the one exception.",
     },
     Requirement {
         id: "P-044",
