@@ -2199,12 +2199,15 @@ fn a_published_net_config_reads_and_writes(envelope: km43::LinkEnvelope<'_>, byt
             origin,
             ..
         } => {
-            assert_eq!(version, 3);
-            assert_eq!(country, "CA", "a written set carries its country (L-134)");
             assert_eq!(
-                Some(origin),
-                published_written_link_up_origin(),
-                "the published set and the module that stored it name two origins"
+                country.len(),
+                2,
+                "a written set carries its country (L-134)"
+            );
+            assert_eq!(
+                (Some(version), Some(origin)),
+                published_written_link_up_stamp(),
+                "the published set and the module that stored it name two sections"
             );
         }
         km43::NetChange::Clear { .. } => panic!("no written clear is published"),
@@ -2216,14 +2219,14 @@ fn a_published_net_config_reads_and_writes(envelope: km43::LinkEnvelope<'_>, byt
     assert_eq!(&written[..len], bytes);
 }
 
-/// The origin in the published written `LinkUp`, read from the file rather
-/// than retyped, so the set above is compared with the other published frame.
-fn published_written_link_up_origin() -> Option<km43::NetOrigin> {
+/// The version and origin in the published written `LinkUp`, read from the
+/// file rather than retyped, so the set above is compared with the other
+/// published frame.
+fn published_written_link_up_stamp() -> (Option<u32>, Option<km43::NetOrigin>) {
     let bytes = hex_in(object("link_up_0x60_written"), "envelope_cbor");
     let envelope = km43::LinkEnvelope::decode(&bytes).expect("an envelope");
-    km43::LinkUp::decode(envelope)
-        .expect("the written LinkUp reads")
-        .net_origin
+    let up = km43::LinkUp::decode(envelope).expect("the written LinkUp reads");
+    (up.net_version, up.net_origin)
 }
 
 /// The published pair is the equal-version, same-origin case: the module

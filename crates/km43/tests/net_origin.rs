@@ -303,10 +303,9 @@ fn l_137_an_interrupted_write_keeps_reporting_the_persisted_origin() {
         }
     );
 
-    // The next LinkUp and the one after a reboot both come from flash.
-    for boot in 0..2 {
-        assert!(pushes(master, &reporting_stamp(held)), "boot {boot}");
-    }
+    // The next LinkUp comes from flash. That the module reads the same
+    // record back after a reboot is the comms firmware's (L-132 clause).
+    assert!(pushes(master, &reporting_stamp(held)));
     // What the RAM copy would have said is exactly what hides the failure.
     let ram = NetStamp::of(&push).expect("a written change");
     assert!(!pushes(master, &reporting_stamp(ram)));
@@ -337,9 +336,7 @@ fn l_137_a_failed_erase_keeps_the_foreign_cache_visible_until_it_is_gone() {
     );
     let up = reporting_stamp(held);
     assert_eq!((up.net_version, up.net_origin), (Some(5), Some(FOREIGN)));
-    for boot in 0..2 {
-        assert!(pushes(NetStamp::Unwritten, &up), "boot {boot}");
-    }
+    assert!(pushes(NetStamp::Unwritten, &up));
 
     let (held, _) = held
         .settle(&NetChange::ClearUnwritten, NvsWrite::Durable)
@@ -414,6 +411,11 @@ fn l_138_the_origin_is_persisted_with_its_version() {
     assert_eq!(
         old.settle(&clear(0, HOME), NvsWrite::Durable),
         Err(LinkError::ZeroNetworkVersion)
+    );
+    assert_eq!(
+        old.settle(&clear(0, HOME), NvsWrite::Failed),
+        Err(LinkError::ZeroNetworkVersion),
+        "a failed write is no reason to accept a change no decoder hands out"
     );
 }
 

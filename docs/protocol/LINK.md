@@ -916,7 +916,6 @@ persist the absence of the network section and report 0, even if the module
 previously held another unit's network. A successful ordinary clear MUST store
 and report its nonzero version. An empty NVS also reports 0. Zero describes the
 current unwritten master state, not the module's provisioning history.
-
 `LinkUp.net_origin` MUST be the origin token persisted with that version, in
 the same record, and MUST be absent when the version reported is 0. A receiver
 MUST refuse a comms `LinkUp` carrying `net_origin` without a nonzero
@@ -997,7 +996,9 @@ and the controller MUST push again at the next `LinkUp` and log the failure. A
 board with worn-out NVS otherwise associates fine until its next reboot and then
 goes dark for no visible reason. Staying on the air with the RAM copy keeps the
 site reachable now; the ack and the log entry are what tell somebody the flash is
-finished, before the trip rather than after it.
+finished, before the trip rather than after it. Until a write succeeds,
+`LinkUp` MUST keep reporting the persisted `net_origin` beside the persisted
+version (L-132), never the token of the `NetConfig` held in RAM.
 
 For an unwritten clear, an erase failure MUST still clear the RAM copy and stop
 Wi-Fi transmission. It MUST NOT resume the foreign network. The acknowledgement
@@ -1006,10 +1007,6 @@ MUST continue to report that version until erasure succeeds. The controller
 retries the unwritten clear at the next `LinkUp`. After a reboot, the existing
 cached-boot rules apply until the controller resends the clear; an unsuccessful
 erase cannot promise durable removal.
-
-After any failed write, `LinkUp` MUST keep reporting the persisted `net_origin`
-beside the persisted version (L-132), never the token of the `NetConfig` held in
-RAM.
 
 **L-138** — Whenever the controller creates the network section from version
 0, by its first write or by a write that repairs an unreadable section (P-100,

@@ -80,10 +80,8 @@ pub enum NetStamp {
 }
 
 impl NetStamp {
-    /// What a change leaves in the cache once it is durably stored.
-    ///
-    /// # Errors
-    /// A `Set` or `Clear` at version 0, which no decoder hands out.
+    /// What a change leaves in the cache once it is durably stored. A `Set` or
+    /// `Clear` at version 0, which no decoder hands out, is refused.
     pub fn of(change: &NetChange<'_>) -> Result<Self, LinkError> {
         let (version, origin) = match change {
             NetChange::ClearUnwritten => return Ok(Self::Unwritten),
@@ -135,18 +133,18 @@ impl NetStamp {
     /// What the comms processor holds and answers after trying to store
     /// `change` (L-132, L-137).
     ///
-    /// A failed write keeps this stamp and reports it, so the next `LinkUp`
-    /// shows the controller the version and token flash still holds.
-    ///
-    /// # Errors
-    /// A `Set` or `Clear` at version 0, which no decoder hands out.
+    /// Call it on the stamp read back from flash, never on one built from the
+    /// RAM copy: a failed write keeps this stamp and reports it, so the next
+    /// `LinkUp` shows the controller the version and token flash still holds.
+    /// A `Set` or `Clear` at version 0 is refused whatever the write did.
     pub fn settle(
         self,
         change: &NetChange<'_>,
         write: NvsWrite,
     ) -> Result<(Self, NetVerdict), LinkError> {
+        let offered = Self::of(change)?;
         let (held, outcome) = match write {
-            NvsWrite::Durable => (Self::of(change)?, NetConfig::Stored),
+            NvsWrite::Durable => (offered, NetConfig::Stored),
             NvsWrite::Failed => (self, NetConfig::NvsWriteFailed),
         };
         Ok((
