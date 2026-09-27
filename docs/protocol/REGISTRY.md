@@ -845,7 +845,7 @@ How a `Time 0x8A` answered.
 | Value | Name | Meaning |
 |---|---|---|
 | 1 | accepted | The clock moved, and the `time set` record names who moved it (P-111) |
-| 2 | rejected | `at` is past the plausibility window's upper edge. The clock did not move (P-113) |
+| 2 | rejected | `at` is past the plausibility window's upper edge, or outside the range the controller's clock can hold. The clock did not move (P-113, P-266) |
 | 3 | unauthorised | This client's capability mask does not let it set the clock (P-105) |
 | 4 | needs_button | `at` is below the monotonic floor. A person at the panel can override it and the client can send it again (P-114, P-116) |
 

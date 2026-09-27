@@ -1125,7 +1125,13 @@ pub const REQUIREMENTS: &[Requirement] = &[
         id: "P-116",
         document: "docs/PROTOCOL.md",
         section: "Time",
-        statement: "A `Time 0x0A` that the floor would refuse MUST be accepted **while a floor override is armed**, and the controller MUST raise a class A `concern raised` (`0x0501`) at condition `floor overridden`, alongside the `time set` record P-111 requires.",
+        statement: "A `Time 0x0A` that the floor would refuse MUST be accepted **while a floor override is armed**, unless P-266 refuses it, and on accepting it the controller MUST raise a class A `concern raised` (`0x0501`) at condition `floor overridden`, alongside the `time set` record P-111 requires.",
+    },
+    Requirement {
+        id: "P-266",
+        document: "docs/PROTOCOL.md",
+        section: "Time",
+        statement: "A `Time 0x0A` whose `at` is outside the range the controller's clock can hold, and that P-114 has not refused first, MUST be refused with `TimeAck` outcome 2 `rejected`, whether or not a floor override is armed.",
     },
     Requirement {
         id: "P-117",
