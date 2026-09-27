@@ -367,9 +367,17 @@ So:
   standing at. P-066's first-enrolment power-on exception grants no downgrade
   permission.
 
-The comms image gets the same treatment, enforced where its signature is enforced
-— by the ESP32's own secure boot at every boot, not by the controller's
-authorisation step. **[LINK.md](LINK.md) step 1 of the comms release flow used
+The comms image gets the same treatment, enforced by the controller at its
+`CommsRelease` authorisation ([LINK.md](LINK.md) L-169), not by the ESP32-C6.
+**The C6's eFuse anti-rollback counter is never advanced.** ESP-IDF refuses any
+image below that counter, so the first advance would refuse the frozen factory
+image, and that image is the comms module's recovery path on revision A
+([firmware#1](https://github.com/origin89hq/firmware/issues/1),
+[firmware#14](https://github.com/origin89hq/firmware/issues/14)). The C6's
+secure boot still verifies whose image it is (L-172); it does not decide which
+version. The cost is accepted: a module reflashed through the ROM download window
+is not stopped by the C6 itself, and the controller, which drives that window, is
+the only gate. **[LINK.md](LINK.md) step 1 of the comms release flow used
 to say a downgrade was permitted and logged, and no longer does** — it now says
 policy does not include one, and points here. That was the half of this entry
 that could be paid immediately: the sentence cost nothing to strike, needed
