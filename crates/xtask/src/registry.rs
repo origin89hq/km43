@@ -708,6 +708,12 @@ pub struct Code {
     /// have one.
     #[serde(default)]
     pub status: Option<Status>,
+    /// A condition that names nothing without the source's own code, so a
+    /// `Concern` carrying it without keys 11 and 12 is refused. Meaningless
+    /// in any other space, and refused there by [`Registry::validate`].
+    /// Named `needs_vendor_code` in the file, after the generated predicate.
+    #[serde(default, rename = "needs_vendor_code")]
+    pub vendor_code_required: bool,
 }
 
 #[derive(Clone, Deserialize)]
@@ -1299,6 +1305,50 @@ impl Registry {
                 }
             }
         }
+        self.only_conditions_need_a_vendor_code()
+    }
+
+    /// `needs_vendor_code` is read by the `Concern` codec and nothing else, so
+    /// on a row of any other space it would sit there looking like a rule that
+    /// no decoder enforces. On a span it has no number to generate, and on a
+    /// withdrawn or retired condition it would refuse rows nobody may emit.
+    fn only_conditions_need_a_vendor_code(&self) -> Result<()> {
+        let spaces = self
+            .codes
+            .iter()
+            .map(|(space, rows)| (space, rows, false))
+            .chain(
+                self.open_registries
+                    .iter()
+                    .map(|(space, rows)| (space, rows, space == "condition")),
+            );
+        for (space, rows, condition) in spaces {
+            for row in rows.iter().filter(|r| r.vendor_code_required) {
+                if !condition {
+                    bail!(
+                        "`{space}` row {:?} needs a vendor code, and only a condition can",
+                        row.name
+                    );
+                }
+                if row.number.is_none() {
+                    bail!(
+                        "condition {:?} needs a vendor code and is a span, not one number",
+                        row.name
+                    );
+                }
+                match row.status {
+                    None => bail!(
+                        "condition {:?} needs a vendor code and has no status",
+                        row.name
+                    ),
+                    Some(gone) if gone.is_gone() => bail!(
+                        "condition {:?} needs a vendor code and is {gone}, so nothing may send it",
+                        row.name
+                    ),
+                    Some(_) => {}
+                }
+            }
+        }
         Ok(())
     }
 }
@@ -1854,6 +1904,108 @@ mod allocation {
         let first = registry.messages.first().cloned().expect("a message");
         reused.messages.push(first);
         assert!(crate::check::no_number_is_allocated_twice(&reused).is_err());
+    }
+}
+
+#[cfg(test)]
+mod vendor_code {
+    use super::{Registry, Status};
+
+    fn loaded() -> Registry {
+        let root = crate::check::repo_root().expect("a repo to read the registry from");
+        Registry::load(&root).expect("the registry parses")
+    }
+
+    /// Mark the first row of `space` in the open registries, or of the closed
+    /// code spaces when `open` is false.
+    fn marked(space: &str, open: bool, row: impl Fn(&super::Code) -> bool) -> Registry {
+        let mut reg = loaded();
+        let rows = if open {
+            reg.open_registries.get_mut(space)
+        } else {
+            reg.codes.get_mut(space)
+        };
+        let found = rows
+            .expect("the space")
+            .iter_mut()
+            .find(|r| row(r))
+            .expect("a row to mark");
+        found.vendor_code_required = true;
+        reg
+    }
+
+    /// The committed registry marks `vendor fault` and nothing else, which is
+    /// what both bindings generate from. Its number is the registry's to say;
+    /// the published vector is what checks the bytes.
+    #[test]
+    fn only_the_vendor_fault_is_marked() {
+        let reg = loaded();
+        reg.validate().expect("the committed registry");
+        let marked: Vec<_> = reg
+            .open_registries
+            .values()
+            .chain(reg.codes.values())
+            .flatten()
+            .filter(|r| r.vendor_code_required)
+            .map(|r| (r.name.as_str(), r.number.is_some()))
+            .collect();
+        assert_eq!(marked, [("vendor fault", true)]);
+    }
+
+    /// A vendor namespace or a config section marked `needs_vendor_code` is a
+    /// rule nothing reads: the `Concern` codec asks the condition and only
+    /// the condition. Left in, it reads as enforced and is not.
+    #[test]
+    fn a_mark_outside_the_condition_registry_is_refused() {
+        for reg in [
+            marked("vendor_namespace", true, |_| true),
+            marked("config_section", false, |_| true),
+        ] {
+            let said = reg.validate().expect_err("a mark nothing reads");
+            assert!(said.to_string().contains("only a condition"), "{said}");
+        }
+    }
+
+    /// On the vendor range there is no number to generate.
+    #[test]
+    fn a_mark_on_a_span_is_refused() {
+        let reg = marked("condition", true, |r| r.number.is_none());
+        let said = reg.validate().expect_err("a mark with no number");
+        assert!(said.to_string().contains("a span"), "{said}");
+    }
+
+    /// The registry with the vendor fault's status replaced, since no
+    /// condition is withdrawn in the file to mark instead.
+    fn vendor_fault_with(status: Option<Status>) -> Registry {
+        let mut reg = loaded();
+        let row = reg
+            .open_registries
+            .get_mut("condition")
+            .and_then(|rows| rows.iter_mut().find(|r| r.vendor_code_required))
+            .expect("the vendor fault");
+        row.status = status;
+        reg
+    }
+
+    /// A numbered condition with no status says nothing about whether anyone
+    /// may send it, so a rule refusing rows under it has nothing to stand on.
+    #[test]
+    fn a_mark_on_a_condition_with_no_status_is_refused() {
+        let reg = vendor_fault_with(None);
+        let said = reg.validate().expect_err("a mark with no status");
+        assert!(said.to_string().contains("has no status"), "{said}");
+    }
+
+    /// On a withdrawn or retired condition the rule would refuse rows nobody
+    /// may send. The error once called both "not one allocated number", which
+    /// sent the reader looking for a missing number on a row that has one.
+    #[test]
+    fn a_mark_on_a_withdrawn_or_retired_condition_is_refused() {
+        for gone in [Status::Withdrawn, Status::Retired] {
+            let reg = vendor_fault_with(Some(gone));
+            let said = reg.validate().expect_err("a mark on a gone number");
+            assert!(said.to_string().contains(&format!("is {gone}")), "{said}");
+        }
     }
 }
 

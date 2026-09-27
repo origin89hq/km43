@@ -1421,7 +1421,21 @@ A normalized thing that has gone wrong. Open, so a condition nobody has allocate
 | `0x0016` | entropy unavailable | reserved |
 | `0x0017` | client table write failed | reserved |
 | `0x0018` | dedup write failed | reserved |
+| `0x0019` | vendor fault, only with a vendor code (keys 11 and 12) | reserved |
 | `0xF000`–`0xFFFF` | vendor range, skip-unknown under P-019 | — |
+
+**`vendor fault` is where a source's fault goes before it has a name here.** A
+charger reports an error code that no condition above means; the row carries
+`vendor fault` with the charger's own code and namespace, and the code is the
+only thing saying what went wrong, which is why the row is refused without it.
+The vendor range is not the way out: it is not allocated here, so a controller
+emitting it is using a number nobody agreed. A vendor fault graduates to a
+condition of its own when **two or more vendors report the same meaning**, and
+not before: one vendor's vocabulary allocated a code at a time would fill this
+table with numbers only that vendor's driver ever emits. Severity is not the
+condition's: `sev` is set per row by the driver, so P-169's reservation applies
+to each code on its own. `unnamed state` is P-164's operating state and is never
+used for a fault.
 
 ## History buckets
 
