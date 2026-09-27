@@ -13,13 +13,13 @@
 use km43::{
     Approve, BootReason, Bucket, CapabilityBit, ClientCapability, ClientConnected,
     ClientDisconnected, ClientKind, CloseConnection, CloseReason, Command, CommandKind,
-    CommsRelease, CommsReleaseOp, ConcernState, Concerns, ConfigSection, ControlOwner, Direction,
-    DisconnectReason, ErrorCode, EventKind, Firmware, GeneratorSelector, GeneratorState, History,
-    HistorySource, HistoryStopReason, Inventory, InventoryKind, Invite, InviteDecision,
+    CommsRelease, CommsReleaseOp, ConcernState, Concerns, ConfigSection, ControlOwner, Dialect,
+    Direction, DisconnectReason, ErrorCode, EventKind, Firmware, GeneratorSelector, GeneratorState,
+    History, HistorySource, HistoryStopReason, Inventory, InventoryKind, Invite, InviteDecision,
     LinkDirection, LinkErrorCode, LinkMessageType, LinkTransport, MessageType, MetricKind,
-    NetConfig, NetConfigOp, Pair, Presence, Provenance, Quality, Readings, Remove, Role, SetConfig,
-    Severity, Shape, SignalDomain, Time, TimeOffer, TimeSource, TopologyChangeReason, Transport,
-    Unit, Validity, Vtype,
+    NetConfig, NetConfigOp, Pair, Presence, Product, Provenance, Quality, Readings, Remove, Role,
+    SetConfig, Severity, Shape, SignalDomain, Time, TimeOffer, TimeSource, TopologyChangeReason,
+    Transport, Unit, Validity, Vtype,
 };
 use std::collections::BTreeSet;
 
@@ -936,3 +936,81 @@ closed_set!(
     u8,
     numbers("link_enums.net_config_op", "value", "name", unless_gone)
 );
+
+/// The numbered rows of an open table, as `(number, name)`. A range row has no
+/// number and a gone row has no constant, so neither is here.
+fn open_rows(table: &str) -> BTreeSet<(u16, String)> {
+    blocks(table)
+        .iter()
+        .filter(|row| !is_gone(row.status()))
+        .filter_map(|row| {
+            Some((
+                row.number("number")?,
+                row.field("name")
+                    .expect("an open row has a name")
+                    .to_owned(),
+            ))
+        })
+        .collect()
+}
+
+/// An open table has no `TryFrom` to walk, so a constant pointing at the
+/// wrong number is invisible to `closed_set!`: firmware writing `PZEM_AC` into
+/// an inventory row would send another meter's dialect and every client would
+/// believe it. Each constant here is named as a driver author types it, and
+/// the set must equal the registry's rows, so a constant off by one, a row
+/// with no constant and a constant with no row all fail.
+#[test]
+fn every_dialect_constant_carries_its_registry_number() {
+    let constants: BTreeSet<(u16, String)> = [
+        (Dialect::NO_PROTOCOL, "no protocol"),
+        (Dialect::PZEM_DC, "pzem dc"),
+        (Dialect::EPEVER_B, "epever b"),
+        (Dialect::VICTRON_MPPT_RS_HEX, "victron mppt rs hex"),
+        (Dialect::VICTRON_GX_MODBUS_VEBUS, "victron gx modbus vebus"),
+        (Dialect::EG4_LIFEPOWER4_SERIAL, "eg4 lifepower4 serial"),
+        (
+            Dialect::MORNINGSTAR_SUNSAVER_DUO,
+            "morningstar sunsaver duo",
+        ),
+        (
+            Dialect::EMPORIA_VUE3_ESPHOME_I2C,
+            "emporia vue3 esphome i2c",
+        ),
+        (Dialect::ECOFLOW_POWER_KITS, "ecoflow power kits"),
+        (Dialect::PZEM_AC, "pzem ac"),
+    ]
+    .into_iter()
+    .map(|(d, name)| (d.0, name.to_owned()))
+    .collect();
+    assert_eq!(constants, open_rows("open_registries.dialect"));
+}
+
+/// The same for products. The PZEM-014 and PZEM-016 share a dialect and must
+/// not share a number: an inventory row keys a device by both, and two
+/// models collapsed into one product lose which meter is on the bus.
+#[test]
+fn every_product_constant_carries_its_registry_number() {
+    let constants: BTreeSet<(u16, String)> = [
+        (Product::ORIGIN_89_CONTROLLER, "origin 89 controller"),
+        (Product::PZEM_003, "pzem 003"),
+        (Product::PZEM_017, "pzem 017"),
+        (Product::EPEVER_TRACER_B, "epever tracer b"),
+        (Product::VICTRON_MPPT_RS, "victron mppt rs"),
+        (Product::VICTRON_MULTIPLUS, "victron multiplus"),
+        (Product::EG4_LIFEPOWER4, "eg4 lifepower4"),
+        (
+            Product::MORNINGSTAR_SUNSAVER_DUO,
+            "morningstar sunsaver duo",
+        ),
+        (Product::EMPORIA_VUE_3, "emporia vue 3"),
+        (Product::ECOFLOW_POWER_KIT, "ecoflow power kit"),
+        (Product::PZEM_014, "pzem 014"),
+        (Product::PZEM_016, "pzem 016"),
+    ]
+    .into_iter()
+    .map(|(p, name)| (p.0, name.to_owned()))
+    .collect();
+    assert_eq!(constants, open_rows("open_registries.product"));
+    assert_ne!(Product::PZEM_014, Product::PZEM_016);
+}
