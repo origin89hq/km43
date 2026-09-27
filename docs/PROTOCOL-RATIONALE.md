@@ -314,6 +314,21 @@ re-initialised, or every unit returns to the sequence it started with. Advancing
 first also means a state read out with a probe yields every later draw and none
 of the earlier ones, so sessions recorded before a capture stay sealed.
 
+**Why the station may reseed a lost state.** A unit whose state no longer reads
+back intact refuses every `Pair` and `Hello`, and without a reseed the only way
+back is to retire it, erase it and provision it again as a new unit: a new
+controller key, a new fingerprint, a new label, a new `device_id`, and every
+enrolled client pairing from scratch. The station may instead write a fresh state from its own CSPRNG
+over SWD at the bench (P-237). That is not the re-initialisation the rule
+forbids. The danger in re-initialising is repetition, a unit set back to a state
+it held before and sending its old challenges and ephemerals again; a fresh
+random state is not one the unit held before, so no draw it yields has been
+exposed and old `Pair` and `Hello` traffic stays unusable. The limits keep it
+that way: it is refused while an intact state is readable, so it never replaces
+a live generator; it needs physical access, so neither the comms processor nor a
+message can choose the state; and the station keeps no copy, so nobody but the
+controller holds it afterwards.
+
 **What it costs, measured rather than estimated.** One X25519 operation is about
 12.0 million instructions on this core: measured under QEMU's micro:bit Cortex-M0
 machine with `-icount shift=0`, `x25519-dalek` 3 on its `u32` backend, built at

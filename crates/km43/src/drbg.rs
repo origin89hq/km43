@@ -56,8 +56,9 @@ pub struct Drbg {
 impl Drbg {
     /// The state as it was read back out of storage, whole and checked by the
     /// caller's own integrity check. A state that cannot be read back intact
-    /// is P-237's refusal and never a fresh one: re-initialising is how every
-    /// unit returns to the sequence it started with.
+    /// is P-237's refusal and never a fresh one the controller makes itself:
+    /// re-initialising is how every unit returns to the sequence it started
+    /// with, and only the station's reseed over SWD may write a new one.
     #[must_use]
     pub fn from_stored(state: [u8; KEY_BYTES]) -> Self {
         Self {
