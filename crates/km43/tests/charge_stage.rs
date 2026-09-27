@@ -64,14 +64,17 @@ fn every_charge_stage_is_named_by_its_space() {
     );
 }
 
-/// **P-164** — a vendor stage with no member is published `unnamed_state`, and
-/// the wire has no slot for its number.
+/// The sample P-164 asks for, for a vendor stage with no member: 245 is not a
+/// charge stage the registry names, an `unnamed_state` sample reads back with
+/// no value, and one that tried to carry 245 anyway is refused before it is
+/// encoded.
 ///
-/// The controller asks the registry, not a list in the dialect. 245 is not a
-/// charge stage this build names, so the sample carries no value at all, and a
-/// sample that tried to carry 245 anyway is refused before it is encoded.
+/// This checks the shapes the crate gives a controller, not the controller's
+/// choice to use them. Deciding to publish `unnamed_state` and raise the
+/// concern is the dialect's, in origin89, and P-164 stays uncovered here until
+/// something in this tree makes that decision.
 #[test]
-fn p_164_a_vendor_stage_with_no_member_is_never_published_as_a_value() {
+fn a_vendor_stage_with_no_member_has_no_value_slot_on_the_wire() {
     let raw = i32::try_from(VICTRON_STARTING_UP).expect("fits");
     assert!(!EnumSpace::CHARGE_STAGE.names(raw));
     assert!(ChargeStage::try_from(u8::try_from(raw).expect("fits a u8")).is_err());
@@ -92,10 +95,10 @@ fn p_164_a_vendor_stage_with_no_member_is_never_published_as_a_value() {
     );
 }
 
-/// **P-164** — the vendor's code is not lost: it goes to the concern, with the
-/// namespace that says whose 245 it is, and survives the trip to the client.
+/// The vendor's code is not lost: a concern carrying it, with the namespace
+/// that says whose 245 it is, survives the trip to the client unchanged.
 #[test]
-fn p_164_a_vendor_stage_with_no_member_raises_a_concern_keeping_its_raw_code() {
+fn a_vendor_stage_concern_keeps_its_raw_code_and_namespace_on_the_wire() {
     let concern = Concern {
         cid: id(14),
         subject: Subject::Part(Part::device(id(5))),

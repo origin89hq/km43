@@ -1147,11 +1147,7 @@
 # named after L-035 rather than counted twice. Withholding the answer and not
 # cutting the rail are the controller's; nothing in this tree runs the ladder,
 # so they stay counted. origin89hq/firmware#152 implements both.
-# 151 -> 150: P-164 is covered by tests/charge_stage.rs (origin89hq/km43#3).
-# A Victron stage the charge stage space has no member for publishes
-# `unnamed_state` with no value, and its raw code and namespace survive the
-# concern row's round trip; each clause has its own test.
-uncovered = 150
+uncovered = 151
 
 # P-045 is the shape this file is for. Nothing can drive an implementation into
 # transmitting a key it does not have, so the thing that stands behind it reads
