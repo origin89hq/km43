@@ -1134,6 +1134,12 @@ pub const REQUIREMENTS: &[Requirement] = &[
         statement: "A `Time 0x0A` whose `at` is outside the range the controller's clock can hold, and that P-114 has not refused first, MUST be refused with `TimeAck` outcome 2 `rejected`, whether or not a floor override is armed.",
     },
     Requirement {
+        id: "P-267",
+        document: "docs/PROTOCOL.md",
+        section: "Time",
+        statement: "A `Time 0x0A` the RTC does not take MUST be answered error 7 `busy`, and nothing is spent: the clock MUST NOT move, an armed floor override MUST NOT be spent, and P-118's window MUST NOT start.",
+    },
+    Requirement {
         id: "P-117",
         document: "docs/PROTOCOL.md",
         section: "Time",
