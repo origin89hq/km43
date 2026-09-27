@@ -1170,7 +1170,15 @@
 # client set against the clock, and leaving the override unspent on a refusal,
 # are the controller's, and nothing in this tree decides one, so P-266 stays
 # counted, owed by origin89hq/firmware#238.
-uncovered = 154
+# 154 -> 153: P-202 comes down, and its receiver half is what did it
+# (origin89hq/km43#174). The 48 -> 47 paragraph above counted it covered
+# because `Topology` held device rows, but nothing in this tree refused a
+# received page for either clause, and the clause check kept it uncovered.
+# `ReceivedTopology` now judges both across every page of a walk, in whichever
+# order a client fetches the tables. Building it found 1-Wire missing from
+# `Transport::addressed`, so a config write took a DS18B20 with no ROM code;
+# P-265's write now refuses one too.
+uncovered = 153
 
 # P-045 is the shape this file is for. Nothing can drive an implementation into
 # transmitting a key it does not have, so the thing that stands behind it reads

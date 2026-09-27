@@ -550,6 +550,39 @@ test("P-265: a missing bus, an address against P-202, or a dialect the bus canno
   );
 });
 
+test("P-265: a 1-Wire probe without its ROM code is invalid", () => {
+  const rules: SiteRules = {
+    ...RULES,
+    buses: [
+      { bus: 1, transport: Transport.Rs485 },
+      { bus: 5, transport: Transport.Onewire },
+    ],
+    dialects: [
+      {
+        dialect: Dialect.DS18B20,
+        transports: [Transport.Onewire],
+        options: [],
+        minPollMs: 1000,
+      },
+    ],
+  };
+  const probe: DeviceEntry<number | undefined> = {
+    dev: undefined,
+    bus: 5,
+    product: Product.DS18B20,
+    dialect: Dialect.DS18B20,
+    role: DeviceRole.TEMPERATURE_SENSOR,
+  };
+  const missing = checkBusesAndDevices(write(probe), rules);
+  assert.deepEqual(missing, { reason: "addr_required", bus: 5 });
+  assertInvalid(missing);
+  const rom = Uint8Array.of(0x28, 0xff, 0x4c, 0x21, 0x93, 0x16, 0x04, 0xa7);
+  assert.equal(
+    checkBusesAndDevices(write({ ...probe, addr: rom }), rules),
+    undefined,
+  );
+});
+
 test("P-265: a parent not listed, a loop and a chain past the depth are invalid", () => {
   assert.deepEqual(checkBusesAndDevices(write(pack(2, 1, 7)), RULES), {
     reason: "parent_not_listed",

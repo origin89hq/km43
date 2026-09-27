@@ -837,7 +837,7 @@ const TRANSPORTS: Record<
   [Transport.VeDirect]: { addressed: false, rate: true, serial: true },
   [Transport.LocalIo]: { addressed: false, rate: false, serial: false },
   [Transport.Ip]: { addressed: true, rate: false, serial: false },
-  [Transport.Onewire]: { addressed: false, rate: false, serial: false },
+  [Transport.Onewire]: { addressed: true, rate: false, serial: false },
   [Transport.Internal]: { addressed: false, rate: false, serial: false },
 };
 
