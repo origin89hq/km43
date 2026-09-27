@@ -1297,10 +1297,10 @@ mod tests {
     /// is a generator controller running newer firmware — surfaced, never
     /// mapped onto the nearest state. A signal drawn from a space with *no
     /// members at all* is a registry entry somebody left half written: it
-    /// reads `unnamed_state` at every poll forever, and the fix is in a config file rather than in a
-    /// cabinet. `members()` answers `None` for the second so the two can be
-    /// told apart; `names()` collapses both to false, which is why the caller
-    /// that cares asks the first.
+    /// reads `unnamed_state` at every poll forever, and the fix is in a
+    /// config file rather than in a cabinet. `members()` answers `None` for
+    /// the second so the two can be told apart; `names()` collapses both to
+    /// false, which is why the caller that cares asks the first.
     #[test]
     fn a_space_that_names_nothing_is_told_from_a_value_that_is_not_named() {
         // Allocated with members, by the registry's own table.
