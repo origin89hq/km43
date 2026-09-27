@@ -137,6 +137,7 @@ impl Bindings {
 
         o.push_str(&self.rust_error_sealed());
         o.push_str(&self.rust_event_class());
+        o.push_str(&self.rust_vendor_code());
         o.push_str(&self.rust_link_and_capability()?);
 
         o.push_str(&self.rust_open_sets()?);
@@ -699,6 +700,49 @@ impl Bindings {
         o
     }
 
+    /// The condition numbers the registry marks `needs_vendor_code`, sorted.
+    fn vendor_code_conditions(&self) -> Vec<u16> {
+        let mut numbers: Vec<u16> = self
+            .registry
+            .open_registries
+            .get("condition")
+            .into_iter()
+            .flatten()
+            .filter(|r| r.vendor_code_required)
+            .filter_map(|r| r.number)
+            .collect();
+        numbers.sort_unstable();
+        numbers
+    }
+
+    fn rust_vendor_code(&self) -> String {
+        let mut o = String::from(
+            "/// The conditions a `Concern` may carry only with the source's own code in\n\
+             /// keys 11 and 12, because that code is the only thing saying what went\n\
+             /// wrong. Sorted, so a lookup can bisect.\n\
+             pub const CONDITION_NEEDS_VENDOR_CODE: &[u16] = &[",
+        );
+        let numbers: Vec<String> = self
+            .vendor_code_conditions()
+            .iter()
+            .map(|n| format!("{n:#06x}"))
+            .collect();
+        o.push_str(&numbers.join(", "));
+        o.push_str(
+            "];\n\n\
+             impl Condition {\n    \
+                 /// Whether a `Concern` carrying this condition is refused without a\n    \
+                 /// vendor code. `false` for a condition this build has never heard of,\n    \
+                 /// which P-019 carries rather than refuses.\n    \
+                 #[must_use]\n    \
+                 pub fn needs_vendor_code(self) -> bool {\n        \
+                     CONDITION_NEEDS_VENDOR_CODE.binary_search(&self.0).is_ok()\n    \
+                 }\n\
+             }\n\n",
+        );
+        o
+    }
+
     fn rust_error_sealed(&self) -> String {
         let mut o = String::new();
         o.push_str(
@@ -1021,7 +1065,37 @@ impl Bindings {
         }
         o.push_str("};\n");
         o.push_str(&self.ts_dataset());
+        o.push_str(&self.ts_vendor_code());
         Ok(o)
+    }
+
+    /// The TypeScript side of [`Self::rust_vendor_code`]. The package has no
+    /// `Concern` codec, so the predicate is its whole share of the rule.
+    fn ts_vendor_code(&self) -> String {
+        let numbers: Vec<String> = self
+            .vendor_code_conditions()
+            .iter()
+            .map(|n| format!("{n:#06x}"))
+            .collect();
+        let mut o = String::new();
+        let _ = writeln!(
+            o,
+            "\nconst conditionsNeedingVendorCode: readonly number[] = [{}];\n",
+            numbers.join(", ")
+        );
+        ts_doc(
+            &mut o,
+            "",
+            "Whether a `Concern` carrying this {@link Condition} must also carry the \
+             source's own code in keys 11 and 12. False for a condition this build has \
+             never heard of, which P-019 carries rather than refuses.",
+        );
+        o.push_str(
+            "export function conditionNeedsVendorCode(cond: number): boolean {\n  \
+                 return conditionsNeedingVendorCode.includes(cond);\n\
+             }\n",
+        );
+        o
     }
 
     /// The name the registry gives a signal domain value, for the generated

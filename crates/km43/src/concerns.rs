@@ -1,11 +1,12 @@
 //! `ReadConcerns 0x0F` / `Concerns 0x8F` — what is wrong at the site, as state.
 //!
-//! Three conditional-presence rules live here rather than in a paragraph, and
+//! Four conditional-presence rules live here rather than in a paragraph, and
 //! each is a sentence somebody would otherwise have to remember: key 12 `vns` is
 //! present exactly when key 11 `raw` is, key 5 `elem` needs the key 4 `sig` that
-//! tells a client which `ebase` to add it to, and key 9 `age` is always there.
-//! Two of the three are held by types that cannot express the wrong shape, and
-//! the third by a field that is not an `Option`.
+//! tells a client which `ebase` to add it to, key 9 `age` is always there, and a
+//! `vendor fault` in key 6 carries keys 11 and 12. Two are held by types that
+//! cannot express the wrong shape and one by a field that is not an `Option`.
+//! The fourth joins two fields, so [`Concern::encode`] refuses it instead.
 //!
 //! The decoder is not the encoder read backwards. A controller at the other end
 //! of the link does not have this crate, so every rule the builder holds by
@@ -245,10 +246,12 @@ impl ConcernKey {
 
 /// One row of a `Concerns 0x8F`.
 ///
-/// Every field is public because not one of them can be set to a shape the wire
+/// Every field is public because no one of them can be set to a shape the wire
 /// forbids: [`Subject`] cannot hold an element without a signal, [`VendorCode`]
 /// cannot hold a code without a namespace, and `age` is not an `Option` because
-/// P-211 says it is always there.
+/// P-211 says it is always there. The one rule that spans two fields, a `cond`
+/// that [needs a vendor code](Condition::needs_vendor_code) with `code` empty,
+/// is refused by [`Self::encode`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Concern {
     /// Key 1. Stable for as long as the row lives, and never reallocated before
@@ -279,8 +282,12 @@ pub struct Concern {
 
 impl Concern {
     /// Keys 1 to 13, ascending, with the optional ones written only when they
-    /// are there.
-    pub fn encode(&self, cbor: &mut CborWriter<'_>) -> Result<(), CborError> {
+    /// are there. Refused before a byte is written when `cond` needs the vendor
+    /// code and `code` is empty, so a page never holds half a row.
+    pub fn encode(&self, cbor: &mut CborWriter<'_>) -> Result<(), ConcernsError> {
+        if self.code.is_none() && self.cond.needs_vendor_code() {
+            return Err(ConcernsError::ConditionWithoutCode(self.cond));
+        }
         let subject = self.subject;
         let pairs = 8
             + usize::from(subject.sig().is_some())
@@ -331,7 +338,8 @@ impl Concern {
     /// this crate. A row with `raw` and no `vns` is a code from nobody rendered
     /// as a bare number; a row with `elem` and no `sig` is a position with no
     /// `ebase` to add it to, which a client either drops or prints as a cell
-    /// number from the wrong pack.
+    /// number from the wrong pack. A `vendor fault` with no code is a fault
+    /// nobody can name, and a client has nothing to show but the word.
     pub fn decode(payload: &[u8]) -> Result<Self, ConcernsError> {
         let mut body = CborReader::new(payload);
         let pairs = body.map()?;
@@ -398,11 +406,15 @@ impl Concern {
             (Some(_), None) => return Err(ConcernsError::CodeWithoutNamespace),
             (None, Some(_)) => return Err(ConcernsError::NamespaceWithoutCode),
         };
+        let cond = cond.ok_or(ConcernsError::MissingRow(ConcernKey::Cond))?;
+        if code.is_none() && cond.needs_vendor_code() {
+            return Err(ConcernsError::ConditionWithoutCode(cond));
+        }
 
         Ok(Self {
             cid: cid.ok_or(ConcernsError::MissingRow(ConcernKey::Cid))?,
             subject,
-            cond: cond.ok_or(ConcernsError::MissingRow(ConcernKey::Cond))?,
+            cond,
             sev: sev.ok_or(ConcernsError::MissingRow(ConcernKey::Sev))?,
             state: state.ok_or(ConcernsError::MissingRow(ConcernKey::State))?,
             age: age.ok_or(ConcernsError::MissingRow(ConcernKey::Age))?,
@@ -965,6 +977,9 @@ pub enum ConcernsError {
     CodeWithoutNamespace,
     /// Key 12 with no key 11: a vendor named and nothing said about them.
     NamespaceWithoutCode,
+    /// A condition that means nothing without the source's own code, such as
+    /// `vendor fault`, with neither key 11 nor key 12.
+    ConditionWithoutCode(Condition),
     /// A severity this version does not allocate. Closed under P-019, so it is
     /// refused rather than carried.
     UnknownSeverity(u8),
@@ -1028,6 +1043,7 @@ impl ConcernsError {
             | Self::ElementWithoutSignal
             | Self::CodeWithoutNamespace
             | Self::NamespaceWithoutCode
+            | Self::ConditionWithoutCode(_)
             | Self::UnknownSeverity(_)
             | Self::UnknownState(_)
             | Self::MissingRequest(_)
@@ -1061,6 +1077,11 @@ impl fmt::Display for ConcernsError {
             }
             Self::NamespaceWithoutCode => w.write_str(
                 "a vendor namespace with no code, which names a vendor and says nothing",
+            ),
+            Self::ConditionWithoutCode(c) => write!(
+                w,
+                "condition {:#06x} with no vendor code, a fault nobody can name",
+                c.0
             ),
             Self::UnknownSeverity(n) => write!(w, "severity {n} is not allocated"),
             Self::UnknownState(n) => write!(w, "concern state {n} is not allocated"),
@@ -1100,7 +1121,7 @@ mod tests {
     /// because its bytes fit and it is the shape that is wrong.
     #[test]
     fn every_refusal_says_something_of_its_own() {
-        const EVERY: [ConcernsError; 19] = [
+        const EVERY: [ConcernsError; 20] = [
             ConcernsError::Duplicate(1),
             ConcernsError::ZeroId,
             ConcernsError::ZeroElement,
@@ -1108,6 +1129,7 @@ mod tests {
             ConcernsError::ElementWithoutSignal,
             ConcernsError::CodeWithoutNamespace,
             ConcernsError::NamespaceWithoutCode,
+            ConcernsError::ConditionWithoutCode(Condition::VENDOR_FAULT),
             ConcernsError::UnknownSeverity(9),
             ConcernsError::UnknownState(9),
             ConcernsError::MissingRequest(1),
@@ -1421,6 +1443,158 @@ mod tests {
             assert_eq!(
                 Concern::decode(out.get(..len).expect("what was written")),
                 Err(want)
+            );
+        }
+    }
+
+    /// A charger's own fault, which no condition means yet.
+    fn vendor_fault(code: Option<VendorCode>) -> Concern {
+        Concern {
+            cid: id(4),
+            subject: Subject::Part(Part::device(id(2))),
+            cond: Condition::VENDOR_FAULT,
+            sev: Severity::Fault,
+            state: ConcernState::Active,
+            age: 90,
+            since: None,
+            code,
+            seq: 17,
+        }
+    }
+
+    const CHARGER_ERR: VendorCode = VendorCode {
+        raw: 17,
+        vns: VendorNamespace::VICTRON,
+    };
+
+    /// **A fault nobody can name.** `vendor fault` says only that the source
+    /// reported something; the code is what says which thing. Written without
+    /// it, the row reaches a screen as *fault* on a charger and somebody drives
+    /// out to find out what. Refused before a byte is written, so neither the
+    /// row's writer nor a page ever holds half of it.
+    #[test]
+    fn a_vendor_fault_without_its_code_is_not_written() {
+        let bare = vendor_fault(None);
+        let mut out = [0u8; CONCERN_MAX_BYTES];
+        let mut cbor = CborWriter::new(&mut out);
+        assert_eq!(
+            bare.encode(&mut cbor),
+            Err(ConcernsError::ConditionWithoutCode(Condition::VENDOR_FAULT))
+        );
+        assert_eq!(cbor.finish(), Ok(0), "the refusal wrote part of a row");
+
+        let mut page = ConcernsPage::new();
+        assert_eq!(
+            page.push(&bare),
+            Err(ConcernsError::ConditionWithoutCode(Condition::VENDOR_FAULT))
+        );
+        assert!(page.is_empty());
+        assert_eq!(page.len(), 0);
+
+        let raised = ConcernRaised {
+            rev: 3,
+            concern: bare,
+        };
+        assert_eq!(
+            raised.encode(&mut out),
+            Err(ConcernsError::ConditionWithoutCode(Condition::VENDOR_FAULT))
+        );
+    }
+
+    /// The same fault with the charger's code is the row the condition was
+    /// allocated for, and it comes back exactly, through a page and through
+    /// the `concern raised` body that shares the row's codec.
+    #[test]
+    fn a_vendor_fault_with_its_code_round_trips() {
+        let fault = vendor_fault(Some(CHARGER_ERR));
+        let mut out = [0u8; CONCERN_MAX_BYTES];
+        let len = encoded(&fault, &mut out);
+        assert_eq!(
+            Concern::decode(out.get(..len).expect("what was written")),
+            Ok(fault)
+        );
+
+        let mut page = ConcernsPage::new();
+        assert_eq!(page.push(&fault), Ok(true));
+        assert_eq!(page.len(), len);
+
+        let raised = ConcernRaised {
+            rev: 3,
+            concern: fault,
+        };
+        let mut body = [0u8; 2 * CONCERN_MAX_BYTES];
+        let len = raised.encode(&mut body).expect("a row with its code");
+        assert_eq!(
+            ConcernRaised::decode(body.get(..len).expect("what was written")),
+            Ok(raised)
+        );
+    }
+
+    /// The other end of the link does not have this crate, so a controller
+    /// that writes the bare row anyway is refused on the way in. Half a code
+    /// is still refused as half a code, which names the actual mistake.
+    #[test]
+    fn a_vendor_fault_without_its_code_is_refused_on_the_way_in() {
+        let cond = (6i64, u64::from(Condition::VENDOR_FAULT.0));
+        let bare = [
+            (1i64, 9u64),
+            (2, 3),
+            (3, 0),
+            cond,
+            (7, Severity::Fault as u64),
+            (8, ConcernState::Active as u64),
+            (9, 90),
+            (13, 41),
+        ];
+        let mut out = [0u8; CONCERN_MAX_BYTES];
+        let len = handmade(&bare, &mut out);
+        let row = out.get(..len).expect("what was written");
+        assert_eq!(
+            Concern::decode(row),
+            Err(ConcernsError::ConditionWithoutCode(Condition::VENDOR_FAULT))
+        );
+
+        let half = [
+            (1i64, 9u64),
+            (2, 3),
+            (3, 0),
+            cond,
+            (7, Severity::Fault as u64),
+            (8, ConcernState::Active as u64),
+            (9, 90),
+            (11, 17),
+            (13, 41),
+        ];
+        let len = handmade(&half, &mut out);
+        assert_eq!(
+            Concern::decode(out.get(..len).expect("what was written")),
+            Err(ConcernsError::CodeWithoutNamespace)
+        );
+    }
+
+    /// The rule is `vendor fault`'s and nobody else's. Every other number a
+    /// `cond` can hold, allocated, unheard of or in the vendor range, still
+    /// goes out and comes back with no code, so the guard cannot have been
+    /// written as *every condition needs a code*. Swept rather than listed, so
+    /// a condition allocated later with the mark goes red here until somebody
+    /// has decided it should.
+    #[test]
+    fn only_a_vendor_fault_needs_its_code() {
+        let others = (0..=u16::MAX)
+            .map(Condition)
+            .filter(|&c| c != Condition::VENDOR_FAULT);
+        for cond in others {
+            let row = Concern {
+                cond,
+                ..vendor_fault(None)
+            };
+            let mut out = [0u8; CONCERN_MAX_BYTES];
+            let len = encoded(&row, &mut out);
+            assert_eq!(
+                Concern::decode(out.get(..len).expect("what was written")),
+                Ok(row),
+                "condition {:#06x}",
+                cond.0
             );
         }
     }
@@ -2056,7 +2230,7 @@ mod tests {
                     let mut cbor = CborWriter::new(&mut out[used..]);
                     match key {
                         2 => widest().encode(&mut cbor),
-                        _ => cbor.u64(1),
+                        _ => cbor.u64(1).map_err(ConcernsError::from),
                     }
                     .expect("value");
                     used += cbor.finish().expect("value length");

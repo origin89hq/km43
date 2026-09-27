@@ -1749,6 +1749,52 @@ fn the_widest_concern_the_generator_publishes_is_the_one_this_crate_budgets_for(
     }
 }
 
+/// **A vendor fault, and the same fault with its code taken away.**
+///
+/// The generator writes `0x0019` itself, so this is where bindings that gave
+/// `VENDOR_FAULT` the wrong number, or a codec that forgot the rule, disagree
+/// with an implementation built from the spec alone. The first row must come
+/// back exactly and go out as the same bytes; the second must be refused, by
+/// the decoder a client runs and not only by the encoder.
+#[test]
+fn the_published_vendor_fault_rows_are_accepted_with_a_code_and_refused_without() {
+    use km43::{ConcernsError, Refusal};
+
+    let fault = Concern {
+        cid: Id::new(14).expect("an id"),
+        subject: Subject::Part(Part::device(Id::new(5).expect("a device"))),
+        cond: Condition::VENDOR_FAULT,
+        sev: Severity::Fault,
+        state: ConcernState::Active,
+        age: 90,
+        since: None,
+        code: Some(VendorCode {
+            raw: 17,
+            vns: VendorNamespace::VICTRON,
+        }),
+        seq: 4_220,
+    };
+    let published = blob_under("concern_vendor_fault", "concern_cbor");
+    assert_eq!(Concern::decode(&published), Ok(fault));
+    let mut dst = [0u8; CONCERN_MAX_BYTES];
+    let mut cbor = CborWriter::new(&mut dst);
+    fault
+        .encode(&mut cbor)
+        .expect("a vendor fault with its code");
+    let len = cbor.finish().expect("finishes");
+    assert_eq!(dst.get(..len), Some(published.as_slice()));
+
+    let bare = blob_under("concern_vendor_fault_without_code", "concern_cbor");
+    assert_eq!(
+        Concern::decode(&bare),
+        Err(ConcernsError::ConditionWithoutCode(Condition::VENDOR_FAULT))
+    );
+    assert_eq!(
+        ConcernsError::ConditionWithoutCode(Condition::VENDOR_FAULT).refusal(),
+        Refusal::Client(ErrorCode::MalformedFrame)
+    );
+}
+
 /// The published `ReadConcerns 0x0F`, decoded by the crate that will answer one.
 ///
 /// `from = 0` is the one place a zero is legal in this message, because it is a
