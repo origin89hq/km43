@@ -837,3 +837,21 @@ test("the check refuses an enum value the registry does not allocate, as the dec
   });
   assertInvalid(magnitude);
 });
+
+test("framing wider than a byte is error 1 from the check, as from the decoder", () => {
+  const tooWide = { reason: "cbor", failure: "integer_out_of_range" };
+  assert.deepEqual(
+    checkBusesAndDevices(
+      { buses: [{ bus: 1, dataBits: 300 as 8 }], devices: [] },
+      RULES,
+    ),
+    tooWide,
+  );
+  assert.deepEqual(
+    checkBusesAndDevices(
+      { buses: [{ bus: 1, stopBits: 256 as 2 }], devices: [] },
+      RULES,
+    ),
+    tooWide,
+  );
+});

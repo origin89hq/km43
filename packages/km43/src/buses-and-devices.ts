@@ -878,7 +878,14 @@ function schemaRefusal(
     failure: "integer_out_of_range",
   };
   for (const bus of section.buses) {
-    if (!fits(bus.bus, U8) || !fits(bus.rate, U32)) return tooWide;
+    if (
+      !fits(bus.bus, U8) ||
+      !fits(bus.rate, U32) ||
+      !fits(bus.dataBits, U8) ||
+      !fits(bus.stopBits, U8)
+    ) {
+      return tooWide;
+    }
     if (bus.parity !== undefined && !isParity(bus.parity)) {
       return { reason: "unknown_value", key: "bus entry parity" };
     }

@@ -806,8 +806,7 @@ describe several physical devices, and several repeated components inside one
 device, without turning an instance number into a new metric kind? The current
 `Value` says only `channel`, `kind`, one signed integer, `quality`, and an optional
 sample time. The `channel` is stable by promise and anonymous by schema: the
-`channels` and `buses and devices` config bodies that would say what owns it are
-both deferred in entry 9.
+`channels` config body that would say what owns it is deferred in entry 9.
 
 That is enough for one PV voltage, one PV current, and one PV power. It is not a
 complete equipment model. A Victron MPPT RS reports two or four independent

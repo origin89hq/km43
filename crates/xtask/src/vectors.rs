@@ -3328,7 +3328,7 @@ impl Builder {
                     2 => Cb::A((0..16).map(widest_device).collect()),
                 },
                 None,
-                "the widest body PROTOCOL.md's MAX_CONFIG_DEVICES derivation costs, 901 bytes: eight buses and sixteen devices with every key at its widest value. It decodes, and a controller refuses it invalid (P-265), because every device names a parent and the chain closes on itself; without one parent it is valid and four bytes shorter",
+                "the widest body PROTOCOL.md's MAX_CONFIG_DEVICES derivation costs, 901 bytes: eight buses and sixteen devices with every key at its widest value. It decodes, and a controller refuses it invalid (P-265), because every device names a parent and the chain closes on itself. A valid body is at least four bytes shorter: at least one device names no parent, and every chain stays within max_topology_depth (P-187)",
             ),
         ]
     }
