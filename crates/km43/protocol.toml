@@ -1681,6 +1681,17 @@ number = 24
 name = "dedup write failed"
 status = "reserved"
 
+# A fault the source reported that no condition above means. The source's code
+# is the only thing that says what it was, so a row without keys 11 and 12 is
+# refused on both ends. It graduates to a condition of its own once two vendors
+# report the same meaning (origin89hq/km43#156). Not `unnamed state`, which is
+# P-164's operating state and not a fault.
+[[open_registries.condition]]
+number = 25
+name = "vendor fault"
+status = "reserved"
+needs_vendor_code = true
+
 [[open_registries.condition]]
 range = "`0xF000`–`0xFFFF`"
 name = "vendor range, skip-unknown under P-019"

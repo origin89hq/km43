@@ -2260,7 +2260,46 @@ impl Builder {
                 json!({ "row_cbor": hex(&bytes), "row_len": bytes.len() }),
             );
         }
+        for (name, row) in Self::vendor_fault_rows()? {
+            fields.insert(name.to_owned(), row);
+        }
         Ok(("concerns_0x8F", Value::Object(fields)))
+    }
+
+    /// A charger's own fault that no condition means, as `vendor fault`
+    /// `0x0019` with the code that is the only thing saying which fault, and
+    /// the same row without keys 11 and 12, which a receiver refuses. Written
+    /// out here rather than read from the registry, so a decoder that takes the
+    /// wrong number from its bindings disagrees with these bytes. Published as
+    /// `concern_cbor` and not `row_cbor`: they witness a rule, not a width.
+    fn vendor_fault_rows() -> Result<[(&'static str, Value); 2]> {
+        let fault = cbor(&cmap! {
+            1 => Cb::U(14), 2 => Cb::U(5), 3 => Cb::U(0), 6 => Cb::U(0x0019),
+            7 => Cb::U(3), 8 => Cb::U(1), 9 => Cb::U(90),
+            11 => Cb::U(17), 12 => Cb::U(0x0001), 13 => Cb::U(4_220),
+        })?;
+        let bare = cbor(&cmap! {
+            1 => Cb::U(14), 2 => Cb::U(5), 3 => Cb::U(0), 6 => Cb::U(0x0019),
+            7 => Cb::U(3), 8 => Cb::U(1), 9 => Cb::U(90), 13 => Cb::U(4_220),
+        })?;
+        Ok([
+            (
+                "concern_vendor_fault",
+                json!({
+                    "concern_cbor": hex(&fault),
+                    "concern_len": fault.len(),
+                    "values_readable": "cid 14, the charger as a whole at dev 5 cmp 0, cond 0x0019 vendor fault, sev 3 fault, active, 90 s old, raw 17 in vns 0x0001 victron, seq 4220",
+                }),
+            ),
+            (
+                "concern_vendor_fault_without_code",
+                json!({
+                    "concern_cbor": hex(&bare),
+                    "concern_len": bare.len(),
+                    "refused": "the same row with keys 11 and 12 removed: a vendor fault that names no fault, refused as error 1",
+                }),
+            ),
+        ])
     }
 
     /// The two records a concern writes, `0x0501` and `0x0502`.

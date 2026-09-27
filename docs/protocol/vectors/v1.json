@@ -500,6 +500,16 @@
       "concern_required_keys_only": {
         "row_cbor": "a80119ffff0219ffff0319ffff0619ffff07040805091affffffff0d1bffffffffffffffff",
         "row_len": 37
+      },
+      "concern_vendor_fault": {
+        "concern_cbor": "aa010e020503000618190703080109185a0b110c010d19107c",
+        "concern_len": 25,
+        "values_readable": "cid 14, the charger as a whole at dev 5 cmp 0, cond 0x0019 vendor fault, sev 3 fault, active, 90 s old, raw 17 in vns 0x0001 victron, seq 4220"
+      },
+      "concern_vendor_fault_without_code": {
+        "concern_cbor": "a8010e020503000618190703080109185a0d19107c",
+        "concern_len": 21,
+        "refused": "the same row with keys 11 and 12 removed: a vendor fault that names no fault, refused as error 1"
       }
     },
     "concernraised_0x0501": {

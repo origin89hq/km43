@@ -391,7 +391,12 @@ impl Codegen {
                 },
             );
             let status = e.status.map_or_else(|| "—".to_owned(), |s| s.to_string());
-            let _ = writeln!(t, "| {cell} | {} | {status} |", e.name);
+            let name = if e.vendor_code_required {
+                format!("{}, only with a vendor code (keys 11 and 12)", e.name)
+            } else {
+                e.name.clone()
+            };
+            let _ = writeln!(t, "| {cell} | {name} | {status} |");
         }
         t
     }

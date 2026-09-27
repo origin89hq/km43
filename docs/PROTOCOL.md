@@ -3304,7 +3304,8 @@ Concern
   4: sig          u16      optional; the signal it is about
   5: elem         u8       optional; the element's 1-based position in a
                            series signal, which is not its label (P-206)
-  6: cond         u16      condition registry; vendor range, skip-unknown
+  6: cond         u16      condition registry; vendor range, skip-unknown.
+                           `vendor fault` only with keys 11 and 12
   7: sev          u8       1 info · 2 warning · 3 fault · 4 protection
   8: state        u8       1 active · 2 active_acked · 3 latched_cleared
                            · 4 clearing_blocked · 5 cleared
@@ -3328,6 +3329,17 @@ Keys 11 and 12 travel together or not at all. A raw code with no namespace is a
 number from nobody, and a namespace with no code names a vendor and says nothing
 about them. Two vendors both use `0x0021` for different things, which is the
 whole reason key 12 exists.
+
+`vendor fault` (`0x0019`) is a fault the source reported that no condition in
+the registry means, and it MUST carry keys 11 and 12. The source's code is the
+only thing saying which fault it was, so a row with `vendor fault` and no code
+is malformed: a controller does not write it, and a receiver refuses it as it
+refuses a code with no namespace. Severity is the row's `sev`, set per vendor
+code by the driver, so P-169's reservation counts each code on its own. It is
+never a stand-in for `unnamed state`, which is P-164's operating state, and the
+vendor range is no substitute: a `cond` there is a number the registry never
+allocated. When two or more vendors report the same meaning, that meaning gets a
+condition of its own ([REGISTRY.md](protocol/REGISTRY.md#conditions)).
 
 `cond` is skip-unknown under P-019, so a condition nobody has allocated still
 renders as *protection, pack 2, cell 23, code 0x4A12* — a sentence somebody can
