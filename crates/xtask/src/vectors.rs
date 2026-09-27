@@ -2693,6 +2693,60 @@ impl Builder {
         ])
     }
 
+    /// The origin token a section was created with (L-138), published once in
+    /// the written `NetConfig` and once in the `LinkUp` of a module that
+    /// stored it, so both ends pin key 7 and key 9 against the same bytes.
+    const NET_ORIGIN: [u8; 8] = *b"home-sec";
+
+    /// A written `set` carrying the section's origin, and the comms `LinkUp`
+    /// of the module that stored it: the equal-version, same-origin pair that
+    /// needs no push (L-133).
+    fn net_origin_cases(registry: &crate::registry::Registry) -> Result<[LinkCase; 2]> {
+        let set = registry
+            .link_enums
+            .get("net_config_op")
+            .and_then(|entries| entries.iter().find(|entry| entry.name == "set"))
+            .ok_or_else(|| anyhow::anyhow!("missing set allocation"))?
+            .value;
+        Ok([
+            LinkCase {
+                name: "net_config_set_0x65",
+                kind: Link::NetConfig,
+                session: 0,
+                req_id: 15,
+                body: cmap! {
+                    1 => Cb::U(u64::from(set)),
+                    2 => Cb::U(3),
+                    3 => Cb::T("cabin".into()),
+                    4 => Cb::T("correct horse battery".into()),
+                    5 => Cb::T("CA".into()),
+                    6 => Cb::T("o89".into()),
+                    7 => Cb::B(Self::NET_ORIGIN.to_vec()),
+                },
+                readable: "{1:op=set, 2:version=3, 3:ssid, 4:psk, 5:country, 6:hostname, 7:origin}; the token drawn when the section was created (L-138)"
+                    .into(),
+            },
+            LinkCase {
+                name: "link_up_0x60_written",
+                kind: Link::Up,
+                session: 0,
+                req_id: 16,
+                body: cmap! {
+                    1 => Cb::U(1),
+                    2 => Cb::U(0),
+                    3 => Cb::U(2),
+                    4 => Cb::T(SelfReport::new().fw_comms.into()),
+                    5 => Cb::U(0x5eed_face),
+                    6 => Cb::T("controller-a rev A".into()),
+                    7 => Cb::U(3),
+                    9 => Cb::B(Self::NET_ORIGIN.to_vec()),
+                },
+                readable: "{1:protocol_major=1, 2:protocol_minor=0, 3:role=comms, 4:fw, 5:boot_id, 6:hw, 7:net_version=3, 9:net_origin}; the module that stored net_config_set_0x65"
+                    .into(),
+            },
+        ])
+    }
+
     /// The link bodies, one per published frame.
     fn link_cases(registry: &crate::registry::Registry) -> Result<Vec<LinkCase>> {
         let clear = registry
@@ -2783,6 +2837,7 @@ impl Builder {
             body: cmap! {1 => Cb::U(u64::from(clear)), 2 => Cb::U(0)},
             readable: "{1:op=clear, 2:version=0}; unwritten master, no radio metadata".into(),
         });
+        cases.extend(Self::net_origin_cases(registry)?);
         cases.extend(Self::pairing_window_cases());
         cases.extend(Self::release_cases()?);
         cases.extend(Self::wifi_cases());

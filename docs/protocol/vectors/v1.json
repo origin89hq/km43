@@ -1224,6 +1224,28 @@
       "encoded_with_delimiter": "048418650609a2010202038c4f00",
       "encoded_len": 14
     },
+    "net_config_set_0x65": {
+      "type": 101,
+      "authentication": "none; this link is a cable inside one enclosure and carries no MAC (L-010)",
+      "session_id": 0,
+      "req_id": 15,
+      "body_readable": "{1:op=set, 2:version=3, 3:ssid, 4:psk, 5:country, 6:hostname, 7:origin}; the token drawn when the section was created (L-138)",
+      "envelope_cbor": "841865000fa7010102030365636162696e0475636f727265637420686f72736520626174746572790562434106636f38390748686f6d652d736563",
+      "crc16_ccitt_false": "0x8fe4",
+      "encoded_with_delimiter": "048418653a0fa7010102030365636162696e0475636f727265637420686f72736520626174746572790562434106636f38390748686f6d652d736563e48f00",
+      "encoded_len": 63
+    },
+    "link_up_0x60_written": {
+      "type": 96,
+      "authentication": "none; this link is a cable inside one enclosure and carries no MAC (L-010)",
+      "session_id": 0,
+      "req_id": 16,
+      "body_readable": "{1:protocol_major=1, 2:protocol_minor=0, 3:role=comms, 4:fw, 5:boot_id, 6:hw, 7:net_version=3, 9:net_origin}; the module that stored net_config_set_0x65",
+      "envelope_cbor": "8418600010a8010102000302047818302e322e302d616c7068612e31322b673565366637613862051a5eedface0672636f6e74726f6c6c65722d6120726576204107030948686f6d652d736563",
+      "crc16_ccitt_false": "0x70d2",
+      "encoded_with_delimiter": "048418600610a8010102460302047818302e322e302d616c7068612e31322b673565366637613862051a5eedface0672636f6e74726f6c6c65722d6120726576204107030948686f6d652d736563d27000",
+      "encoded_len": 81
+    },
     "pairing_window_open_0x69": {
       "type": 105,
       "authentication": "none; this link is a cable inside one enclosure and carries no MAC (L-010)",

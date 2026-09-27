@@ -1461,7 +1461,7 @@ pub const REQUIREMENTS: &[Requirement] = &[
         id: "L-133",
         document: "docs/protocol/LINK.md",
         section: "Wi-Fi credentials",
-        statement: "The controller MUST push `NetConfig` after every `LinkUp` whose `net_version` does not equal its own version, and MUST NOT withhold the push because the version reported is higher.",
+        statement: "The controller MUST push `NetConfig` after every `LinkUp` whose `net_version` does not equal its own version, or whose `net_origin` is absent or differs from its own origin token while its master section is written, and MUST NOT withhold the push because the version reported is higher.",
     },
     Requirement {
         id: "L-134",
@@ -1473,7 +1473,7 @@ pub const REQUIREMENTS: &[Requirement] = &[
         id: "L-135",
         document: "docs/protocol/LINK.md",
         section: "Wi-Fi credentials",
-        statement: "On a factory reset of a written network section, the controller MUST send `NetConfig` with `op = clear` at the incremented, nonzero section version, retaining the section's country and hostname, so a passphrase does not survive on a board that is about to be pulled and shipped somewhere.",
+        statement: "On a factory reset of a written network section, the controller MUST send `NetConfig` with `op = clear` at the incremented, nonzero section version, retaining the section's country, hostname and origin token, so a passphrase does not survive on a board that is about to be pulled and shipped somewhere.",
     },
     Requirement {
         id: "L-136",
@@ -1486,6 +1486,12 @@ pub const REQUIREMENTS: &[Requirement] = &[
         document: "docs/protocol/LINK.md",
         section: "Wi-Fi credentials",
         statement: "A comms processor whose NVS write fails MUST answer `nvs_write_failed` and MUST keep running on the credentials it was given in RAM, and the controller MUST push again at the next `LinkUp` and log the failure.",
+    },
+    Requirement {
+        id: "L-138",
+        document: "docs/protocol/LINK.md",
+        section: "Wi-Fi credentials",
+        statement: "Whenever the controller creates the network section from version 0, by its first write or by a write that repairs an unreadable section (P-100, P-108), it MUST draw a new 8-byte origin token from the random bit generator (P-237) and store it in the section.",
     },
     Requirement {
         id: "L-200",

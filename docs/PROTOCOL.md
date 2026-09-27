@@ -3935,7 +3935,11 @@ and a `psk` become an `op = set`, no `ssid` becomes an `op = clear`, and
 section the controller accepted is one the comms processor cannot refuse as
 `rejected_invalid` for its shape. A network with no passphrase is not supported:
 a WPA passphrase is what L-131 carries, and an open network is a different
-section body, not an empty `psk`.
+section body, not an empty `psk`. The section also holds the origin token
+`NetConfig` carries as key 7, drawn when a write creates the section from
+version 0 (L-138). Neither body carries it: a client neither chooses it nor
+needs it, and it is what lets the controller tell its own configuration in a
+comms cache from another one at the same version.
 
 **P-106** — A field marked `secret` MUST NOT be returned in a `Config` body, and
 a client MUST refuse a `Config` body that carries one. The body carries the

@@ -1147,7 +1147,17 @@
 # named after L-035 rather than counted twice. Withholding the answer and not
 # cutting the rail are the controller's; nothing in this tree runs the ladder,
 # so they stay counted. origin89hq/firmware#152 implements both.
-uncovered = 151
+# 151 -> 152: L-138 is new (origin89hq/km43#100), the origin token that tells
+# the controller's own network section from another at an equal version.
+# `tests/net_origin.rs` covers the wire and the comparison: key 7 on every
+# written NetConfig, the token persisted and reported with its version, and
+# the L-133 push on a differing token. Drawing the token when the controller
+# creates the section, and keeping it through every later write, are the
+# controller's configuration store, which this tree does not have, so L-138
+# stays counted. L-132 and L-137 gained codec-and-decision tests the same way
+# and take clauses below, so they stay counted too. origin89hq/firmware#234
+# implements the firmware half.
+uncovered = 152
 
 # P-045 is the shape this file is for. Nothing can drive an implementation into
 # transmitting a key it does not have, so the thing that stands behind it reads
@@ -1461,8 +1471,23 @@ takes every client off the air over a label."""
 
 [[clauses]]
 id = "L-133"
-each = ["unwritten_clear_has_only_op_and_zero_version", "pushes_on_every_version_mismatch", "erases_durably_and_stops_wifi"]
-reason = "The codec proves the unwritten master is representable without radio metadata. Firmware#88 owns sending it after a foreign LinkUp; firmware#89 owns NVS erasure, shutdown and failed-erase recovery."
+each = ["unwritten_clear_has_only_op_and_zero_version", "origin_differs_at_an_equal_version", "pushes_on_every_version_mismatch", "erases_durably_and_stops_wifi"]
+reason = "The codec proves the unwritten master is representable without radio metadata, and NetStamp::needs_push decides the push on version and origin. Firmware#88 owns sending it after a foreign LinkUp; firmware#89 owns NVS erasure, shutdown and failed-erase recovery; firmware#234 owns calling the comparison at every LinkUp."
+
+[[clauses]]
+id = "L-132"
+each = ["reports_only_what_flash_holds", "rides_only_beside_a_written_version", "comms_reads_its_record_back_at_boot"]
+reason = "NetStamp::settle reports the persisted stamp in the ack and the LinkUp, and the codec refuses a token without a written version. Reading the record out of NVS at boot and reporting it, rather than a RAM copy, is the comms firmware's (firmware#234)."
+
+[[clauses]]
+id = "L-137"
+each = ["keeps_reporting_the_persisted_origin", "keeps_the_foreign_cache_visible", "keeps_running_on_the_ram_copy", "controller_logs_the_write_failure"]
+reason = "NetStamp::settle keeps the persisted version and token after a failed write or erase, so the next LinkUp is pushed. Staying on the air on the RAM copy, stopping Wi-Fi after a failed erase, and the controller's log entry are firmware (firmware#89, firmware#234)."
+
+[[clauses]]
+id = "L-138"
+each = ["carries_the_origin", "persisted_with_its_version", "drawn_when_the_section_is_created", "kept_through_every_later_write"]
+reason = "The codec carries key 7 on every written NetConfig and refuses one without it, and NetStamp stores the token with the version it arrived with. Drawing it from P-237 when the controller creates the section from version 0, and keeping it through edits and the factory clear, are the controller's configuration store (firmware#234)."
 
 [[clauses]]
 id = "L-135"
