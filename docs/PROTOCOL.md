@@ -1046,10 +1046,10 @@ a challenge or an ephemeral it already sent comes round a second time. A fresh
 state from the station's CSPRNG is not one the unit held before, so none of its
 draws has been exposed, and recorded `Pair` and `Hello` traffic stays as unusable
 as it was. The write replaces only a state that is already lost, needs a probe on
-the bench rather than a message, and leaves no copy off the controller. Without it, a
-unit whose state is damaged beyond reading goes back through provisioning with a
-new controller key, a new label and a new `device_id` (P-249), and every client
-enrolled on it pairs again.
+the bench rather than a message, and leaves no copy off the controller. Without
+it, a unit whose state is damaged beyond reading is retired: erased and
+provisioned again as a new unit, with a new controller key, a new label and a new
+`device_id` (P-249), and every client enrolled on it pairs again.
 
 Advancing before use also buys forward secrecy against a later capture of the
 controller. A state read out with a probe yields every draw after it and none

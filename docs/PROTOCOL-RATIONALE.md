@@ -316,9 +316,9 @@ of the earlier ones, so sessions recorded before a capture stay sealed.
 
 **Why the station may reseed a lost state.** A unit whose state no longer reads
 back intact refuses every `Pair` and `Hello`, and without a reseed the only way
-back is to erase it and provision it again: a new controller key, a new
-fingerprint, a new label, a new `device_id`, and every enrolled client pairing
-from scratch. The station may instead write a fresh state from its own CSPRNG
+back is to retire it, erase it and provision it again as a new unit: a new
+controller key, a new fingerprint, a new label, a new `device_id`, and every
+enrolled client pairing from scratch. The station may instead write a fresh state from its own CSPRNG
 over SWD at the bench (P-237). That is not the re-initialisation the rule
 forbids. The danger in re-initialising is repetition, a unit set back to a state
 it held before and sending its old challenges and ephemerals again; a fresh
