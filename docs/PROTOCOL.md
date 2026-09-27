@@ -4567,8 +4567,10 @@ change the log would owe a record for. Keeping the change and owing the record
 means the log catches up with the clock, and holding outcome 1 until
 then keeps its meaning exact: *the clock moved and the record names who moved
 it*. A client that sees no answer before its request expires does not know
-which of the two happened, and asks again; P-118 refuses that second write with
-error 7, which is the truth, because the first one is still being finished.
+which of the two happened, and asks again. Inside the quarter hour that write
+meets P-118's error 7 whether or not the record has landed, and after it the
+write is not accepted while the record is still owed: two separate guards, and
+neither answer says the first write did not happen.
 
 The override is spent and P-118's window started because the clock did move. A
 change that stands and left the override armed would let the same press
@@ -4862,7 +4864,10 @@ and the meaning is *what a receiver will accept*.
 response type, carrying an outcome. `Error 0xFF` is for conditions that stop a
 request reaching a handler at all, plus P-060's challenge-unavailable refusal:
 `Discover` has no refusal outcome. P-251's error 20 is one of those: a read whose
-response has no outcome, refused for the slot's role before its handler runs. Where a registry lists both an outcome and an
+response has no outcome, refused for the slot's role before its handler runs.
+The other exception is a durable write that failed inside the handler: P-079,
+P-254 and P-267 answer it error 7 `busy`, because the instruction is *send it
+again* and none of their outcomes carries it. Where a registry lists both an outcome and an
 error code for the same condition, **the outcome is what is sent**.
 
 Two answers to one refusal is one implementer emitting an error while another
