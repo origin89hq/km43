@@ -789,7 +789,7 @@ pub const REQUIREMENTS: &[Requirement] = &[
         id: "P-202",
         document: "docs/PROTOCOL.md",
         section: "Inventory — `0x0D` / `0x8D`",
-        statement: "`DeviceRow` key 3 `addr` MUST be present when the row's `bus` has an addressed `transport` — `rs485`, `can` or `ip` — and MUST be **unique within a `bus`**.",
+        statement: "`DeviceRow` key 3 `addr` MUST be present when the row's `bus` has an addressed `transport` — `rs485`, `can`, `ip` or `onewire` — and MUST be **unique within a `bus`**.",
     },
     Requirement {
         id: "P-203",
