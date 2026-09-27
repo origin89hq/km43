@@ -23,20 +23,23 @@ pub struct Bodies {
 
 impl Bodies {
     /// The field lists in `PROTOCOL.md` and `LINK.md`, read out of the fenced
-    /// blocks that define each message. `LINK.md` is read second, so a name both
-    /// define keeps `PROTOCOL.md`'s; a body only LINK.md lists, such as the
-    /// held-down record L-116 defines beside its rule, is still compared.
+    /// blocks that define each message. A body LINK.md lists beside its rule,
+    /// such as the held-down record, is compared like any other; a name both
+    /// documents define keeps `PROTOCOL.md`'s, which is read first.
     pub fn from_spec(root: &Path) -> Result<Self> {
-        let mut text = String::new();
+        let mut bodies = BTreeMap::new();
         for doc in ["docs/PROTOCOL.md", "docs/protocol/LINK.md"] {
             let path = root.join(doc);
-            text.push_str(
-                &std::fs::read_to_string(&path)
-                    .with_context(|| format!("reading {}", path.display()))?,
-            );
+            let text = std::fs::read_to_string(&path)
+                .with_context(|| format!("reading {}", path.display()))?;
+            Self::read(&mut bodies, &text);
         }
+        Ok(Self { bodies })
+    }
 
-        let mut bodies = BTreeMap::new();
+    /// One document at a time, so a fence one of them leaves open cannot turn
+    /// the other's prose into fields or its blocks into prose.
+    fn read(bodies: &mut BTreeMap<String, Fields>, text: &str) {
         let mut name: Option<String> = None;
         let mut fields = Fields::new();
         let mut fenced = false;
@@ -47,7 +50,7 @@ impl Bodies {
                 // and reading one of those as the end truncates the list — the
                 // first version of this stopped at key 5 of `Hello 0x81` and
                 // reported the other twelve as a disagreement.
-                Self::keep(&mut bodies, name.take(), &mut fields);
+                Self::keep(bodies, name.take(), &mut fields);
                 fenced = !fenced;
                 continue;
             }
@@ -55,7 +58,7 @@ impl Bodies {
                 continue;
             }
             if let Some(found) = heading(line) {
-                Self::keep(&mut bodies, name.take(), &mut fields);
+                Self::keep(bodies, name.take(), &mut fields);
                 name = Some(found);
             } else if let Some(found) = nested(line) {
                 // A type the message above embeds — `LogEntry` inside `LogPage`,
@@ -65,14 +68,13 @@ impl Bodies {
                 // Appended to the message instead, `hello_0x81` read as a
                 // thirty-two-key body with `1` twice, which is a shape no
                 // message has.
-                Self::keep(&mut bodies, name.take(), &mut fields);
+                Self::keep(bodies, name.take(), &mut fields);
                 name = Some(found);
             } else if let (Some(_), Some(pair)) = (name.as_ref(), field(line)) {
                 fields.push(pair);
             }
         }
-        Self::keep(&mut bodies, name, &mut fields);
-        Ok(Self { bodies })
+        Self::keep(bodies, name, &mut fields);
     }
 
     /// The `body_readable` strings the generator publishes.
