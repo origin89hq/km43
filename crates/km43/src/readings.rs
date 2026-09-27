@@ -1293,9 +1293,9 @@ mod tests {
     /// it**, and a caller that cannot tell them apart sends somebody to the
     /// wrong place.
     ///
-    /// A device reporting charge stage 9 against a space this build knows is a
-    /// charger running newer firmware — surfaced, never mapped onto the nearest
-    /// stage. A signal drawn from a space with *no members at all* is a
+    /// A device reporting generator state 9 against a space this build knows
+    /// is a generator controller running newer firmware — surfaced, never
+    /// mapped onto the nearest state. A signal drawn from a space with *no members at all* is a
     /// registry entry somebody left half written: it reads `unnamed_state` at
     /// every poll forever, and the fix is in a config file rather than in a
     /// cabinet. `members()` answers `None` for the second so the two can be
@@ -1315,13 +1315,13 @@ mod tests {
         );
 
         // Allocated, reserved, and empty on purpose — the design has not
-        // settled what a charge stage is. `None` is what says so.
+        // settled what balancing's members are. `None` is what says so.
         assert_eq!(
-            EnumSpace::CHARGE_STAGE.members(),
+            EnumSpace::BALANCING.members(),
             None,
             "a reserved space with no member table names nothing, and says which"
         );
-        assert!(!EnumSpace::CHARGE_STAGE.names(3));
+        assert!(!EnumSpace::BALANCING.names(1));
 
         // A space nobody allocated at all answers the same way, which is the
         // honest answer: this build cannot name anything in it either.

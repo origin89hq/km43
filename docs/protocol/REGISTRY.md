@@ -60,14 +60,14 @@ P-014 in [PROTOCOL.md](../PROTOCOL.md): an unrecognised discriminant is error 1,
 with no vendor range and no `0 = unknown` to fall back to. P-019 is the carve-out
 by *space* and it names these two and no others; P-125 is the carve-out by
 *position*, and it is the one place a discriminant is not in a discriminant
-field — the three metric kinds below whose key 3 is an answer rather than a
+field — the four metric kinds below whose key 3 is an answer rather than a
 measurement.
 
 | Space | An unrecognised value is |
 |---|---|
 | Metric kinds, event kinds | **skipped** — that one `Value` or `Event` is surfaced as unrecognised, the rest of the message stands |
 | Quality | **rejected** — a reading whose trustworthiness cannot be named is not a reading |
-| Generator state, generator selector, boot reason | **skipped for that one channel** — P-125, and it is the second carve-out: an answer nobody can name is not rendered, and the `Snapshot` around it stands |
+| Generator state, generator selector, boot reason, charge stage | **skipped for that one channel** — P-125, and it is the second carve-out: an answer nobody can name is not rendered, and the `Snapshot` around it stands |
 | Command, SetConfig, Pair, Firmware and Time outcomes | **rejected** — a client that cannot tell *accepted* from *inhibited* has learned nothing |
 | Client kinds, time sources, config sections, error codes | **rejected** |
 
@@ -478,15 +478,39 @@ the founding rule of the project and the reason `5` exists rather than a zero.
 
 ---
 
-### `0x07xx` — charger stage durations
+### `0x07xx` — charger stage
 
-How long a charger has spent in each stage. Quantities, not a `point` on one kind.
+Which stage a charger is in, and how long it has spent in each. The durations
+are quantities, not a `point` on one kind; `0x0704` is an answer, drawn from the
+charge stages below.
 
 | Kind | Name | Unit | Scale | Status |
 |---|---|---|---|---|
 | `0x0701` | time in bulk | min | 0 | reserved |
 | `0x0702` | time in absorption | min | 0 | reserved |
 | `0x0703` | time in float | min | 0 | reserved |
+| `0x0704` | charge stage (enum, see below) | — | 0 | live |
+
+## Charge stages — `u8`
+
+The value of metric `0x0704`: which stage a charger says it is in.
+
+| Value | Name | Meaning |
+|---|---|---|
+| 1 | off | Not charging: no source, or the charger is switched off |
+| 2 | bulk | Delivering as much current as it can until the bank reaches the absorption voltage |
+| 3 | absorption | Holding the absorption voltage while the current tapers |
+| 4 | float | Holding the lower float voltage to keep a full bank full |
+| 5 | equalise | A deliberate overcharge to even out a flooded bank's cells. The charger started it; this value never asks for one |
+| 6 | storage | Holding a voltage below float for a bank left idle |
+| 7 | fault | The charger reports it has stopped on a fault. Which fault is a concern, not this value |
+
+A normalized set, so a client names one stage whichever charger reported it.
+EPEver's `0x3201` bits D3–D2, Victron's VE.Direct `CS` and Morningstar's charge
+state each map onto it without loss. A vendor state with no member here, such as
+Victron's *starting up* or *external control*, is not rounded to the nearest
+stage: the controller publishes it `unnamed_state` and raises a concern carrying
+the vendor's code and namespace (P-164).
 
 ## Event kinds — `u16`
 
@@ -1617,9 +1641,9 @@ The public equipment dataset ([offgrid-equipment](https://github.com/origin89hq/
 | `generator-run-state` | `0x0501` generator state (enum, see below) | any | any | live | any |
 | `generator-run-hours` | `0x0502` generator run hours | any | any | lifetime | any |
 | `uptime` | `0x0602` uptime since boot | any | any | since_reset | any |
+| `charge-stage` | `0x0704` charge stage (enum, see below) | any | any | live | any |
 | `ac-apparent-power` | *not carried: no metric kind* | — | — | — | — |
 | `ac-power-factor` | *not carried: no metric kind* | — | — | — | — |
-| `charge-stage` | *not carried: the charge stage enum space has no members yet (#3)* | — | — | — | — |
 | `cycle-count` | *not carried: no metric kind* | — | — | — | — |
 | `humidity` | *not carried: no metric kind* | — | — | — | — |
 | `link-downlink` | *not carried: no metric kind* | — | — | — | — |

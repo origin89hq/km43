@@ -375,9 +375,9 @@ impl Checks {
     /// cause is a registry entry that was half written.
     ///
     /// Reserved spaces are skipped, and that is the whole point of the status:
-    /// `charge stage` and `balancing` are allocated with no members on purpose,
-    /// because the design has not settled what is in them. This check is what makes
-    /// promoting one to `live` require settling it.
+    /// `balancing` is allocated with no members on purpose, because the design has
+    /// not settled what is in it. This check is what makes promoting one to `live`
+    /// require settling it.
     fn every_live_enum_space_names_its_members(&self) -> Result<(), Failure> {
         let fail = |detail: String| Failure {
             check: "every live enum space names its members",
