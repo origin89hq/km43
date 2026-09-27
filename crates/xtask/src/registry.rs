@@ -1924,7 +1924,8 @@ mod vendor_code {
     }
 
     /// The committed registry marks `vendor fault` and nothing else, which is
-    /// what both bindings generate from.
+    /// what both bindings generate from. Its number is the registry's to say;
+    /// the published vector is what checks the bytes.
     #[test]
     fn only_the_vendor_fault_is_marked() {
         let reg = loaded();
@@ -1935,9 +1936,9 @@ mod vendor_code {
             .chain(reg.codes.values())
             .flatten()
             .filter(|r| r.vendor_code_required)
-            .map(|r| (r.name.as_str(), r.number))
+            .map(|r| (r.name.as_str(), r.number.is_some()))
             .collect();
-        assert_eq!(marked, [("vendor fault", Some(0x0019))]);
+        assert_eq!(marked, [("vendor fault", true)]);
     }
 
     /// A vendor namespace or a config section marked `needs_vendor_code` is a
