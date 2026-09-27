@@ -127,12 +127,13 @@ impl BusesAndDevicesKey {
 /// What a bus's transport lets a configuration say about it (P-261, P-202).
 impl Transport {
     /// Whether a device on it needs an `addr`: the multidrop and network
-    /// transports, where two devices share one wire.
+    /// transports, where two devices share one wire, and 1-Wire, where a
+    /// probe's ROM code is the only thing telling it from the next one.
     #[must_use]
     pub const fn addressed(self) -> bool {
         match self {
-            Self::Rs485 | Self::Can | Self::Ip => true,
-            Self::VeDirect | Self::LocalIo | Self::Onewire | Self::Internal => false,
+            Self::Rs485 | Self::Can | Self::Ip | Self::Onewire => true,
+            Self::VeDirect | Self::LocalIo | Self::Internal => false,
         }
     }
 
@@ -2454,6 +2455,50 @@ mod tests {
         assert_eq!(apart.check(&rules()), Ok(()));
         is_invalid(Addr::new(&[]));
         is_invalid(Addr::new(&[0; MAX_ADDR + 1]));
+    }
+
+    /// A DS18B20 written with no ROM code was accepted while `addressed`
+    /// left 1-Wire out of P-202's list, and three probes on one bus became
+    /// three rows nobody could tell apart.
+    #[test]
+    fn p_265_a_onewire_probe_without_its_rom_code_is_refused_invalid() {
+        const ROM: &[u8] = &[0x28, 0xFF, 0x4C, 0x21, 0x93, 0x16, 0x04, 0xA7];
+        const ONEWIRE_BOARD: &[BoardBus] = &[
+            BoardBus {
+                bus: 1,
+                transport: Transport::Rs485,
+            },
+            BoardBus {
+                bus: 5,
+                transport: Transport::Onewire,
+            },
+        ];
+        const PROBES: &[DialectRule<'static>] = &[DialectRule {
+            dialect: Dialect::DS18B20,
+            transports: &[Transport::Onewire],
+            options: &[],
+            min_poll_ms: 1000,
+        }];
+        let rules = SiteRules {
+            buses: ONEWIRE_BOARD,
+            dialects: PROBES,
+            ..rules()
+        };
+        let probe = |addr| DeviceEntry {
+            dev: None,
+            bus: 5,
+            addr,
+            product: Product::DS18B20,
+            dialect: Dialect::DS18B20,
+            role: DeviceRole::TEMPERATURE_SENSOR,
+            parent: None,
+            options: DeviceOptions::NONE,
+        };
+        assert_eq!(
+            is_invalid(write_of(&[probe(None)]).check(&rules)),
+            ConfigError::AddrRequired(5)
+        );
+        assert_eq!(write_of(&[probe(Some(addr(ROM)))]).check(&rules), Ok(()));
     }
 
     #[test]
