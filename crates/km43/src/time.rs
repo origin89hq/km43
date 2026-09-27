@@ -150,7 +150,7 @@ impl fmt::Display for TimeBodyKey {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct TimeOperation {
     /// Key 1, milliseconds since the epoch. Whether it is plausible is the
-    /// controller's decision (P-113, P-114), not the decoder's.
+    /// controller's decision (P-113, P-114, P-266), not the decoder's.
     pub at: u64,
 }
 

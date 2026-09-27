@@ -2038,7 +2038,7 @@ meaning = "The clock moved, and the `time set` record names who moved it (P-111)
 value = 2
 name = "rejected"
 status = "live"
-meaning = "`at` is past the plausibility window's upper edge. The clock did not move (P-113)"
+meaning = "`at` is past the plausibility window's upper edge, or outside the range the controller's clock can hold. The clock did not move (P-113, P-266)"
 
 [[outcomes.time]]
 value = 3

@@ -4406,7 +4406,8 @@ holding no timestamped record at all it opens at the firmware build timestamp
 instead.
 
 **Below the lower edge is P-114's case and is answered outcome 4
-`needs_button`; outcome 2 is for the upper edge.** The two requirements share
+`needs_button`; outcome 2 is for the upper edge, and for a time the clock cannot
+hold (P-266).** The two requirements share
 that edge, so without this sentence a set below it matches both and an
 implementer picks. They are not the same refusal: below the floor there is
 something a person at the panel can do about it (P-116), and ten years ahead
@@ -4472,9 +4473,9 @@ boot is not a step:
 there is nothing to subtract it from, and a difference computed against a clock
 that was never known is a measurement nobody made.
 
-Outcome 2 `rejected` is produced by P-113 and by nothing else, and outcome 4
-`needs_button` by P-114 and by nothing else — before them neither had a producer
-at all, which made them values in the registry no controller could send and no
+Outcome 2 `rejected` is produced by P-113 and P-266 and by nothing else, and
+outcome 4 `needs_button` by P-114 and by nothing else — before them neither had a
+producer at all, which made them values in the registry no controller could send and no
 client would ever see. On either the clock does not move and key 2 carries the
 time the controller kept, omitted under P-093's rule when it has never had one: a
 rejected first set would otherwise have to answer with a zero, and a zero is
@@ -4502,12 +4503,41 @@ may treat as elapsed, not about which message moved the clock, so the forward
 jump P-113 still permits — anywhere inside a ten-year window — starts nothing.
 
 **P-116** — A `Time 0x0A` that the floor would refuse MUST be accepted **while a
-floor override is armed**, and the controller MUST raise a class A
-`concern raised` (`0x0501`) at condition `floor overridden`, alongside the
+floor override is armed**, unless P-266 refuses it, and the controller MUST
+raise a class A `concern raised` (`0x0501`) at condition `floor overridden`, alongside the
 `time set` record P-111 requires. How far back the clock went is that record's
 old value against its new one, for the reason P-115 gives. With no override armed
 it is refused under P-114 exactly as before, as `TimeAck 0x8A` outcome 4
 `needs_button`.
+
+**P-266** — A `Time 0x0A` whose `at` the controller's clock cannot represent MUST
+be refused with `TimeAck` outcome 2 `rejected`, whether or not a floor override is
+armed. The clock MUST NOT move, and an armed override MUST NOT be spent by the
+refusal. The range is the controller's own and binds at both of its edges: the
+Origin89 RTC holds 2000 through 2099, and a controller with another calendar has
+other edges.
+
+**P-114 comes first.** A time below the floor with no override armed is answered
+outcome 4 `needs_button`, even when it is also below the clock's range, so an
+unarmed refusal below the floor does not depend on how far below it is. This rule
+applies once the floor is not in play: the override is armed, `at` is at or above
+the floor, or there is no floor. An armed override lifts the floor to the bottom
+of the clock's range and no further. A time inside P-113's window and past the
+top of the range is refused in either override state, which happens whenever the
+floor is within ten years of the clock's upper edge: a floor in 2095 opens a
+window reaching 2105, and the Origin89 RTC stops at the end of 2099.
+
+A write that fails is not this refusal and MUST NOT be answered outcome 2: the
+RTC not taking a time it can represent, or the new time not being stored.
+Outcome 2 tells a client that sending the same time again will not help, and a
+client told that stops sending it. A failed write might land on the next try; a
+time outside the clock's range never will.
+
+P-113's window is not closed at the clock's edges instead. The window is derived
+from the controller's history by the same rule on every controller that speaks
+KM43; the clock's range is a fact about one controller's hardware. Folding the
+range into the window would also hand it to the override, which lifts the
+window's lower edge with the floor.
 
 **P-117** — The floor override:
 
@@ -4568,8 +4598,9 @@ time.
 The override is of the **floor**, which means P-114 and the lower edge of
 P-113's window, because they are the same value and lifting one without the
 other lifts nothing. The ten-year upper edge still binds and is not overridable
-by anything: the button is evidence about a clock that ran ahead, not a licence
-to write any number at all.
+by anything, and neither is the range of the controller's clock (P-266): the
+button is evidence about a clock that ran ahead, not a licence to write any
+number at all.
 
 This closes a gap P-114 used to concede in place of fixing. A clock set wrong
 *forward*, inside P-113's window and so a date somebody could believe, stayed
