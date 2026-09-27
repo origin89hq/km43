@@ -388,8 +388,8 @@ processor MUST NOT forward a client frame and the controller MUST NOT accept
 one; a client frame arriving before that MUST be answered with code 258. A comms
 processor that starts routing before it knows the controller's protocol version
 is a comms processor that will forward a v2 body to a v1 controller and blame
-the client. Two controllers neither send nor answer a `LinkUp`: one with no
-`device_id`, and one whose L-195 revisions are spent (L-115).
+the client. A controller neither sends nor answers a `LinkUp` while it has no
+`device_id` or its L-195 revisions are spent (L-115).
 
 A statement received is not a link. A peer that can talk but cannot hear sends
 its `LinkUp` for ever and answers nothing, and a side that counted the statement
