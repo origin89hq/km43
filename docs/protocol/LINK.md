@@ -815,14 +815,15 @@ had no `device_id` at boot or because L-195's revisions are spent, L-111 and
 L-112 MUST NOT apply: it MUST NOT cut the rail on their account and MUST NOT
 raise comms unrecoverable (`0x0803`). Either condition holds until the
 controller reboots; a comms processor reboot does not end it. In either condition
-the controller MUST NOT send `LinkUp` or `Heartbeat` and MUST NOT answer the
-comms processor's, whatever L-030, L-033 and L-100 ask, and stays unlinked for
-the rest of the boot. When L-195's revisions run out, the controller MUST drop every
-connection and every session bound to one, as L-110 does, and MUST NOT log comms
-link lost (`0x0801`), whether the link was up or already down; L-110 does not
-apply again in that boot. The download window is unaffected: `EnterDownload`
-does not depend on `LinkUp`, and the reset L-192 asks for is that rule's own,
-not a rung of the ladder.
+the controller MUST NOT send any link-local request but `EnterDownload`, and
+MUST NOT answer any link-local request of the comms processor's, not even with
+an error, whatever L-001, L-030, L-033, L-100, L-133 and L-207 ask. It stays
+unlinked for the rest of the boot. When L-195's revisions run out, the
+controller MUST drop every connection and every session bound to one, as L-110
+does, and MUST NOT log comms link lost (`0x0801`), whether the link was up or
+already down; L-110 does not apply for the rest of the boot. The download
+window is unaffected: `EnterDownload` does not depend on `LinkUp`, and the reset
+L-192 asks for is that rule's own, not a rung of the ladder.
 
 The answer is withheld too because an answer to `LinkUp` is a statement, and a
 controller statement without field 8 is refused (L-035). The only way to send
@@ -841,13 +842,16 @@ A spent controller is silent for a different reason. Linking owes the comms
 processor a window report (L-195), and the controller has no revision left to
 number one, so any link it made would break L-195 on its first message. The
 counter belongs to the controller's boot, which is why a comms processor reboot
-changes nothing and only a controller reboot does. Heartbeats go with `LinkUp`
-because an answered heartbeat is what keeps the comms processor linked (L-120):
-a controller that kept answering them would leave the comms processor routing
-clients to a side that refuses every frame. And no `0x0801`, because that record
-is the ladder's first rung and says the comms processor stopped answering
-(L-110, L-022). Here it did not, and a log reader would go looking for a radio
-fault that is not there.
+changes nothing and only a controller reboot does.
+
+The silence covers every answer, in either condition, because any answer
+restarts the comms processor's timer (L-100, L-120). A controller that answered
+a heartbeat, a `ClientConnected` or a `WifiState` would keep the comms processor
+linked, advertising, and routing clients to a side that refuses every frame. No
+`0x0801` either: both of its sources, an unanswered heartbeat and escalated
+backpressure, are the link failing to carry what the controller wanted carried
+(L-110, L-022). Here the controller stopped the link itself, and L-116's record
+says why.
 
 **L-116** — When the controller starts keeping the link down on purpose
 (L-115), it MUST write one comms held down (`0x0807`) record naming why, and
@@ -1535,10 +1539,10 @@ its monotonic deadline when first sending, never from the original duration afte
 a delay. Each new report, including a resynchronisation of unchanged state, has a
 strictly increasing revision within the controller boot; retries
 retain the same revision and body. Revisions MUST NOT wrap: at exhaustion the
-controller takes the link down and goes silent on it as a controller with no
-`device_id` does (L-115): no `LinkUp`, no heartbeat, no answer to either, no
-ladder and no comms link lost (`0x0801`). Only a controller reboot permits
-another link or another opening. A closed state
+controller takes the link down and keeps it silent for the rest of the boot,
+as a controller with no `device_id` does, without the ladder and without comms
+link lost (`0x0801`) (L-115). Only a controller reboot permits another link or
+another opening. A closed state
 supersedes pending open retries; an unsent expired opening is replaced by the
 closed state.
 
