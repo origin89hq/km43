@@ -34,6 +34,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - run: rustup toolchain install
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
@@ -107,6 +109,8 @@ jobs:
             crates/km43/src/generated.rs packages/km43/src/generated.ts \
             docs/protocol/REGISTRY.md docs/protocol/MAP.md
           git commit -m 'chore: move the dataset vocabulary pin'
+          # The checkout keeps no token, so dependency and gate code cannot read it.
+          gh auth setup-git
           if [ -n "$PR" ]; then
             # On top of what is under review, never over it.
             git push origin bot/vocabulary
