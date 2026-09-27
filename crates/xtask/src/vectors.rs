@@ -3227,7 +3227,7 @@ impl Builder {
     /// file is the witness the crate is checked against, not a second reading
     /// of the crate's own tables.
     fn buses_and_devices_entries() -> Result<Vec<(&'static str, Value)>> {
-        Self::buses_and_devices_sites()?
+        Self::buses_and_devices_sites()
             .into_iter()
             .chain(Self::buses_and_devices_nested())
             .map(|(name, carried, body, readable, meaning)| {
@@ -3249,7 +3249,7 @@ impl Builder {
 
     /// The whole bodies: the site, the write that edits it, nothing configured,
     /// and the widest.
-    fn buses_and_devices_sites() -> Result<Vec<SectionCase>> {
+    fn buses_and_devices_sites() -> Vec<SectionCase> {
         const WRITE: &str = "this is a section body; on the wire it is key 3 of the SetConfig 0x07 operation, which is sealed like every request";
         const READ: &str = "this is a section body; on the wire it is key 3 of Config 0x86, whose body is sealed under the session's controller-to-client key";
         const BOTH: &str = "this is a section body; on the wire it is key 3 of Config 0x86 or of the SetConfig 0x07 operation, the same in both";
@@ -3271,10 +3271,7 @@ impl Builder {
             1 => Cb::U(4), 2 => Cb::U(3), 4 => Cb::U(5), 5 => Cb::U(4), 6 => Cb::U(1),
             8 => cmap! { 3 => Cb::Bool(true) },
         };
-        let Cb::M(mut moved) = meter(0x05) else {
-            bail!("a device entry is a map");
-        };
-        let _ = moved.insert(1, Cb::U(1));
+        let moved = meter(0x05);
         let added = cmap! {
             2 => Cb::U(1), 3 => Cb::B(vec![0x06]), 4 => Cb::U(2), 5 => Cb::U(2), 6 => Cb::U(5),
         };
@@ -3295,7 +3292,7 @@ impl Builder {
                 },
             }
         };
-        Ok(vec![
+        vec![
             (
                 "busesanddevices_0x0003",
                 READ,
@@ -3311,7 +3308,7 @@ impl Builder {
                 WRITE,
                 cmap! {
                     1 => Cb::A(vec![serial(), can()]),
-                    2 => Cb::A(vec![Cb::M(moved), charger(), added]),
+                    2 => Cb::A(vec![moved, charger(), added]),
                 },
                 None,
                 "an edit of busesanddevices_0x0003: dev 1 moved to address 5 keeps its id; dev 2 unchanged; dev 4 left out is removed; the entry with no key 1 adds a PZEM-003 (product 2) at address 6, and the controller gives it dev 5, the next id it has never given (P-262)",
@@ -3333,7 +3330,7 @@ impl Builder {
                 None,
                 "the widest body PROTOCOL.md's MAX_CONFIG_DEVICES derivation costs, 901 bytes: eight buses and sixteen devices with every key at its widest value. It decodes, and a controller refuses it invalid (P-265), because every device names a parent and the chain closes on itself; without one parent it is valid and four bytes shorter",
             ),
-        ])
+        ]
     }
 
     /// The three nested types, one each.

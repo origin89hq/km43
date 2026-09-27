@@ -788,3 +788,13 @@ test("the check refuses a number wider than its field, as the Rust decoder does"
   assert.ok(refusal);
   assertMalformed(refusal);
 });
+
+test("a loop the checked device only hangs off is named where it closes", () => {
+  assert.deepEqual(
+    checkBusesAndDevices(
+      write(pack(1, 1, 2), pack(2, 2, 3), pack(3, 3, 2)),
+      RULES,
+    ),
+    { reason: "parent_loop", dev: 2 },
+  );
+});

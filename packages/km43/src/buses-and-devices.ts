@@ -742,13 +742,9 @@ export function decodeBusesAndDevicesRead(
 }
 
 function encodeOptions(cbor: CborWriter, options: DeviceOptions): void {
-  const pairs = [
-    options.currentDirection,
-    options.pylontechVersion,
-    options.veDirect3v3,
-    options.pollPeriodMs,
-  ].filter((value) => value !== undefined).length;
-  cbor.map(pairs);
+  // One list decides both the pair count and what is written, so a new
+  // option cannot be counted without being encoded.
+  cbor.map(setOptions(options).length);
   if (options.currentDirection !== undefined) {
     cbor.uint(DeviceOption.CurrentDirection);
     cbor.uint(options.currentDirection);
@@ -957,6 +953,9 @@ export function checkBusesAndDevices(
   ): BusesAndDevicesRefusal | undefined => {
     const depth = rules.maxTopologyDepth;
     const start = device.dev;
+    // Every dev the walk has passed, so a loop is named where it closes even
+    // when the device being checked only hangs off it.
+    const seen = new Set<number>();
     let held = 1;
     let next = device.parent;
     for (let step = 0; step < MAX_CONFIG_DEVICES; step += 1) {
@@ -965,9 +964,10 @@ export function checkBusesAndDevices(
           ? { reason: "too_deep", dev: start ?? 0 }
           : undefined;
       }
-      if (next === start) {
+      if (next === start || seen.has(next)) {
         return { reason: "parent_loop", dev: next };
       }
+      seen.add(next);
       const parent = next;
       const above = section.devices.find((other) => other.dev === parent);
       if (above === undefined) {

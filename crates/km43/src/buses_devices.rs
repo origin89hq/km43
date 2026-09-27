@@ -1052,11 +1052,12 @@ impl<'a, D: DevSlot> BusesAndDevices<'a, D> {
     /// depth (P-187, P-265).
     fn check_chain(&self, device: &DeviceEntry<'a, D>, depth: usize) -> Result<(), ConfigError> {
         let start = device.dev.dev();
+        // Every dev the walk has passed, so a loop is named where it closes
+        // even when the device being checked only hangs off it.
+        let mut seen: [Option<DevId>; MAX_CONFIG_DEVICES] = [None; MAX_CONFIG_DEVICES];
         let mut held = 1_usize;
         let mut next = device.parent;
-        // A chain through more links than there are devices has come round,
-        // whether or not it came back to this one.
-        for _ in 0..MAX_CONFIG_DEVICES {
+        for count in 0..MAX_CONFIG_DEVICES {
             let Some(parent) = next else {
                 return if held > depth {
                     Err(ConfigError::TooDeep(start.map_or(0, DevId::get)))
@@ -1064,8 +1065,14 @@ impl<'a, D: DevSlot> BusesAndDevices<'a, D> {
                     Ok(())
                 };
             };
-            if start == Some(parent) {
+            let passed = seen
+                .get(..count)
+                .is_some_and(|passed| passed.contains(&Some(parent)));
+            if start == Some(parent) || passed {
                 return Err(ConfigError::ParentLoop(parent.get()));
+            }
+            if let Some(slot) = seen.get_mut(count) {
+                *slot = Some(parent);
             }
             let above = self
                 .devices()
@@ -1074,6 +1081,8 @@ impl<'a, D: DevSlot> BusesAndDevices<'a, D> {
             held = held.saturating_add(1);
             next = above.parent;
         }
+        // Sixteen distinct parents and still going: a seventeenth would have
+        // to repeat one, so the chain has come round.
         Err(ConfigError::ParentLoop(start.map_or(0, DevId::get)))
     }
 }
@@ -2492,6 +2501,17 @@ mod tests {
         ]);
         assert_eq!(
             is_invalid(round.check(&rules())),
+            ConfigError::ParentLoop(2)
+        );
+        // Dev 1 hangs off a loop it is not part of: the refusal names the dev
+        // where the chain came back, 2, not the device the walk started at.
+        let beside = write_of(&[
+            pack(Some(dev(1)), &[0x01], Some(dev(2))),
+            pack(Some(dev(2)), &[0x02], Some(dev(3))),
+            pack(Some(dev(3)), &[0x03], Some(dev(2))),
+        ]);
+        assert_eq!(
+            is_invalid(beside.check(&rules())),
             ConfigError::ParentLoop(2)
         );
 

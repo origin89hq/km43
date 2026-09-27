@@ -808,8 +808,8 @@ impl fmt::Display for ConfigError {
             Self::OptionNotInDialect { option, dialect } => {
                 write!(
                     f,
-                    "dialect {dialect:#06x} does not define option {}",
-                    *option as u16
+                    "dialect {dialect:#06x} does not define {}",
+                    BusesAndDevicesKey::Option(*option)
                 )
             }
             Self::PollTooShort { dialect, min } => {
