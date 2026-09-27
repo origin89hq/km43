@@ -1535,6 +1535,8 @@ A product this controller has a driver for. Open, and a vendor range is expected
 | `0x0008` | morningstar sunsaver duo | reserved |
 | `0x0009` | emporia vue 3 | reserved |
 | `0x000A` | ecoflow power kit | reserved |
+| `0x000B` | pzem 014 | reserved |
+| `0x000C` | pzem 016 | reserved |
 | `0xF000`–`0xFFFF` | vendor range, skip-unknown under P-019 | — |
 
 ## Driver dialects
@@ -1552,6 +1554,7 @@ A protocol dialect the controller can speak. A dialect is distinct when its fram
 | `0x0007` | morningstar sunsaver duo | reserved |
 | `0x0008` | emporia vue3 esphome i2c | reserved |
 | `0x0009` | ecoflow power kits | reserved |
+| `0x000A` | pzem ac | reserved |
 | `0xF000`–`0xFFFF` | vendor range, skip-unknown under P-019 | — |
 
 ## Enum spaces
