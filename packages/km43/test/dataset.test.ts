@@ -105,7 +105,22 @@ test("rows lead with the most specific, and an absent word is never also carried
       datasetMetrics.every((m) => m.name !== word),
       `${word} is absent and carried`,
     );
-  assert.ok(datasetAbsent["charge-stage"]?.length, "an absent word says why");
+  assert.ok(datasetAbsent["cycle-count"]?.length, "an absent word says why");
+});
+
+test("a live charge stage is the dataset's charge-stage, and no other domain is", () => {
+  assert.equal(
+    datasetName(MetricKind.CHARGE_STAGE, SignalDomain.Live),
+    "charge-stage",
+  );
+  assert.equal(datasetAbsent["charge-stage"], undefined);
+  for (const domain of [
+    SignalDomain.Lifetime,
+    SignalDomain.SinceReset,
+    SignalDomain.Today,
+    SignalDomain.Yesterday,
+  ])
+    assert.equal(datasetName(MetricKind.CHARGE_STAGE, domain), undefined);
 });
 
 test("a tracker's yield is pv-energy over its window, and only counting out", () => {

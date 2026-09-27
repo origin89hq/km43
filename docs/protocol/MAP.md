@@ -141,7 +141,7 @@ flowchart LR
   metrics --> m4["0x04xx · level · 2 allocated"]
   metrics --> m5["0x05xx · generator · 4 allocated"]
   metrics --> m6["0x06xx · controller · 4 allocated"]
-  metrics --> m7["0x07xx · charger stage durations · 3 allocated"]
+  metrics --> m7["0x07xx · charger stage · 4 allocated"]
   events --> e1["0x01xx · 2 allocated · 1 class A"]
   events --> e2["0x02xx · 3 allocated · 3 class A"]
   events --> e3["0x03xx · 2 allocated · 2 class A"]

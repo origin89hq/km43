@@ -80,13 +80,51 @@ fn a_kind_with_no_word_and_a_place_no_row_names_answer_none() {
 fn a_word_the_protocol_cannot_carry_says_why() {
     let (_, why) = DATASET_ABSENT
         .iter()
-        .find(|(word, _)| *word == "charge-stage")
-        .expect("charge-stage is listed as absent");
+        .find(|(word, _)| *word == "cycle-count")
+        .expect("cycle-count is listed as absent");
     assert!(!why.is_empty());
-    assert!(
-        DATASET_METRICS.iter().all(|m| m.name != "charge-stage"),
-        "a word is carried or absent, never both"
+    for (word, _) in DATASET_ABSENT {
+        assert!(
+            DATASET_METRICS.iter().all(|m| m.name != *word),
+            "{word} is carried and absent; a word is one or the other"
+        );
+    }
+}
+
+/// A dialect reading a charger's stage register publishes it under the charge
+/// stage kind, and the dataset calls that `charge-stage`. The word was listed
+/// absent until the space had members; a crosswalk that still said so would
+/// leave every charger's stage without a column.
+#[test]
+fn a_live_charge_stage_is_the_dataset_charge_stage() {
+    assert_eq!(
+        MetricKind::CHARGE_STAGE.dataset_name(SignalDomain::Live, None, None, None),
+        Some("charge-stage")
     );
+    assert!(
+        DATASET_ABSENT
+            .iter()
+            .all(|(word, _)| *word != "charge-stage"),
+        "charge-stage is carried now and must not also be explained away"
+    );
+}
+
+/// The stage is what the charger says now. A stage from yesterday is not a
+/// charge stage anybody can act on, so no other domain is given the word.
+#[test]
+fn a_charge_stage_in_any_other_domain_has_no_word() {
+    for domain in [
+        SignalDomain::Lifetime,
+        SignalDomain::SinceReset,
+        SignalDomain::Today,
+        SignalDomain::Yesterday,
+    ] {
+        assert_eq!(
+            MetricKind::CHARGE_STAGE.dataset_name(domain, None, None, None),
+            None,
+            "{domain:?}"
+        );
+    }
 }
 
 #[test]
