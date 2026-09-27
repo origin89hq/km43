@@ -729,7 +729,7 @@ moment later.
 |---|---|
 | 6 s | Link down. Drop every connection and session, log comms link lost (`0x0801`). Control is unaffected (L-110) |
 | 60 s | Cut the ESP32 power rail for 5 s, restore it, log comms power cycled (`0x0802`) with the count (L-111) |
-| 3 power cycles inside an hour | Stop cycling for 15 minutes with the rail **off**, or **on** on a board that cannot switch it back on after that long; raise comms unrecoverable (`0x0803`) (L-112) |
+| 3 power cycles inside an hour | Stop cycling for 15 minutes with the rail **off**, or **on** on a board that cannot switch it back on after that long; raise comms unrecoverable (`0x0803`). A controller reset ends the rail-off lockout and the hour's cuts stay counted (L-112) |
 | A comms firmware install is in flight | The ladder is suspended until the install finishes or its window lapses (L-113) |
 | The controller keeps the link down on purpose | No rail cuts and no comms unrecoverable (`0x0803`) while it does (L-115) |
 
@@ -752,13 +752,18 @@ name the times it does not.
 
 **L-112** — After 3 power cycles inside an hour the controller MUST stop
 cycling the rail for 15 minutes, MUST raise comms unrecoverable (`0x0803`), and
-MUST leave the rail off for those 15 minutes, unless its board cannot switch the
-rail back on after that long. Such a board MUST leave the rail on and uncycled
-for the 15 minutes instead. The `0x0803` record MUST say which of the two the
-controller did. A comms processor in a boot loop draws power continuously on the
-weakest bank in February and delivers nothing, and hammering a load switch every
-minute is how somebody finds out about its thermal limit in a place nobody can
-reach.
+MUST leave the rail off until those 15 minutes end or the controller resets,
+unless its board cannot switch the rail back on after that long. Such a board
+MUST leave the rail on and uncycled for the 15 minutes instead. The `0x0803`
+record MUST say which of the two the controller did. A comms processor in a boot
+loop draws power continuously on the weakest bank in February and delivers
+nothing, and hammering a load switch every minute is how somebody finds out
+about its thermal limit in a place nobody can reach.
+
+A controller reset ends an active rail-off lockout: the rail comes up in its
+L-114 fail state, on, and the controller MUST NOT resume the lockout after it
+boots. The cuts of the last hour MUST stay counted across the reset, so the next
+cut inside that hour returns straight to the 15-minute rung.
 
 The exception is a property of the board, written in the board's own document,
 never a firmware preference. It exists because one board has it: on controller
@@ -774,6 +779,21 @@ long off-times, as revision B's slew-limited switch is built to
 is in the record, so a log never has to be read against a guess about which
 board it came from. That field lands with the `0x0803` body, which
 [DEFERRED.md](DEFERRED.md) entry 10 still owns.
+
+A reset ends the lockout because the lockout lives in running firmware and the
+rail's fail state does not. The rail is on again before firmware runs a line, so
+keeping it off for the rest of the 15 minutes would need a deadline that
+survives the reset and a second switch event to put the rail back off. Carrying
+the count instead keeps the ladder honest: a controller that resets during the
+lockout still reaches the 15-minute rung on its next cut, not after three more.
+The cost is one switch-on per controller reset that no cut counted. It is
+accepted for two reasons. A controller that is resetting is a fault somebody
+needs to diagnose, and a powered radio keeps a window open to do it remotely.
+And the board that takes the rail-off branch is the one whose switch tolerates
+that switch-on: revision B's slew-limited switch is built for it
+(origin89hq/hardware#48). Revision A's rail-on branch never enters the rail-off
+lockout, so none of this changes it, and switching its rail on after minutes off
+stays forbidden.
 
 **L-113** — While a comms firmware install is in flight the controller MUST
 suspend the ladder, and MUST resume it only when the install finishes or its
@@ -806,7 +826,9 @@ down on purpose, and the ladder applies to it in full.
 **L-114** — The rail's declared fail state MUST be on, so that a controller
 reset is not also a comms reset. Every time the rail goes off, it is because
 running firmware decided so and logged it (L-111, L-112), never as a side effect
-of the controller restarting.
+of the controller restarting. The one time the fail state switches the rail on
+against a decision firmware made is a reset during L-112's rail-off lockout, and
+L-112 says that reset ends the lockout rather than letting it resume.
 
 The cost of the other choice is counted in rail cycles. With a fail state of
 off, the rail is off whenever the STM32 is not driving it on, and that includes
@@ -1646,7 +1668,7 @@ them evicts:
 | Access points in a scan result | `MAX_SCAN_APS`, 16 | The strongest are listed, the rest counted in `unlisted` (L-202) |
 | Wi-Fi state reports outstanding | 1 | A newer state replaces the one waiting to be sent (L-206) |
 | Authorised comms release | 1 | A new `authorise` replaces the previous one; both are logged (L-174) |
-| ESP32 power cycles | 3 per hour | No cycling for 15 minutes, rail off, or on where the board cannot switch it back on after that long; comms unrecoverable (`0x0803`) raised (L-112). Not counted while L-113 or L-115 suspends the ladder |
+| ESP32 power cycles | 3 per hour | No cycling for 15 minutes, rail off, or on where the board cannot switch it back on after that long; comms unrecoverable (`0x0803`) raised. A controller reset ends the rail-off lockout and the hour's cuts stay counted (L-112). Not counted while L-113 or L-115 suspends the ladder |
 
 ---
 

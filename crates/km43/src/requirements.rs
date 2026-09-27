@@ -1437,7 +1437,7 @@ pub const REQUIREMENTS: &[Requirement] = &[
         id: "L-112",
         document: "docs/protocol/LINK.md",
         section: "When the controller stops hearing the comms processor",
-        statement: "After 3 power cycles inside an hour the controller MUST stop cycling the rail for 15 minutes, MUST raise comms unrecoverable (`0x0803`), and MUST leave the rail off for those 15 minutes, unless its board cannot switch the rail back on after that long.",
+        statement: "After 3 power cycles inside an hour the controller MUST stop cycling the rail for 15 minutes, MUST raise comms unrecoverable (`0x0803`), and MUST leave the rail off until those 15 minutes end or the controller resets, unless its board cannot switch the rail back on after that long.",
     },
     Requirement {
         id: "L-113",
