@@ -33,23 +33,34 @@ impl CounterRun {
         Self { last: None }
     }
 
-    /// The validity to publish `total` at, remembered when it carries a value.
+    /// The validity to publish `total` at. Changes nothing.
     ///
-    /// Below the last total is `reset`, with the number. A negative total is
-    /// `out_of_range` with none, and is not remembered: a counter counts one way
-    /// up from zero, so a negative one is a decode fault, and keeping it would
-    /// make the next honest reading look like a run that never restarted.
+    /// Below the last published total is `reset`, with the number. A negative
+    /// total is `out_of_range` with none: a counter counts up from zero, so a
+    /// negative one is a decode fault.
     #[must_use]
-    pub fn observe(&mut self, total: i32) -> Validity {
+    pub const fn judge(&self, total: i32) -> Validity {
         if total < 0 {
             return Validity::OutOfRange;
         }
-        let validity = match self.last {
+        match self.last {
             Some(last) if total < last => Validity::Reset,
             Some(_) | None => Validity::Ok,
-        };
-        self.last = Some(total);
-        validity
+        }
+    }
+
+    /// Record `total` as published, once the sample carrying it is on the
+    /// wire and not before.
+    ///
+    /// Apart from [`Self::judge`] because a full page leaves a sample for the
+    /// next one: recorded at judgement, the reset that missed the page would be
+    /// the last total, and the same zero on the next page would go out as `ok`.
+    /// A negative total is never published with a value, so it is ignored
+    /// rather than kept as a floor the next honest reading reads as a rise from.
+    pub fn published(&mut self, total: i32) {
+        if total >= 0 {
+            self.last = Some(total);
+        }
     }
 
     /// The last total published, or `None` before the first.
@@ -67,10 +78,15 @@ mod tests {
     use crate::ident::Id;
     use crate::readings::{Sample, SignalQuality};
 
-    /// Feed a run a sequence of totals and collect what each was published at.
+    /// Feed a run a sequence of totals, each published, and collect what each
+    /// was published at.
     fn judged<const N: usize>(totals: [i32; N]) -> [Validity; N] {
         let mut run = CounterRun::new();
-        totals.map(|total| run.observe(total))
+        totals.map(|total| {
+            let validity = run.judge(total);
+            run.published(total);
+            validity
+        })
     }
 
     /// The day's yield went back to zero at midnight. Refused, the morning's
@@ -134,9 +150,32 @@ mod tests {
     #[test]
     fn a_negative_total_is_out_of_range_and_does_not_become_the_floor() {
         let mut run = CounterRun::new();
-        assert_eq!(run.observe(1_000), Validity::Ok);
-        assert_eq!(run.observe(-5), Validity::OutOfRange);
+        run.published(1_000);
+        assert_eq!(run.judge(-5), Validity::OutOfRange);
+        run.published(-5);
         assert_eq!(run.last(), Some(1_000));
-        assert_eq!(run.observe(900), Validity::Reset);
+        assert_eq!(run.judge(900), Validity::Reset);
+    }
+
+    /// The reset did not fit on this page, so it goes out on the next one. It
+    /// has to go out as a reset there too: judged and recorded at once, the
+    /// zero that never left would be the last total, the same zero a page later
+    /// would be `ok`, and a client would see 200 fall to 0 with nothing marked.
+    #[test]
+    fn a_reset_left_off_a_full_page_is_still_a_reset_on_the_next() {
+        let mut run = CounterRun::new();
+        run.published(200);
+        assert_eq!(
+            run.judge(0),
+            Validity::Reset,
+            "judged, and the page was full"
+        );
+        assert_eq!(
+            run.judge(0),
+            Validity::Reset,
+            "judged again for the next page"
+        );
+        run.published(0);
+        assert_eq!(run.judge(10), Validity::Ok);
     }
 }
