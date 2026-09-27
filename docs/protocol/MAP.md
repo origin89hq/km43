@@ -149,7 +149,7 @@ flowchart LR
   events --> e5["0x05xx · 2 allocated · 2 class A"]
   events --> e6["0x06xx · 6 allocated · 6 class A"]
   events --> e7["0x07xx · 2 allocated · 2 class A"]
-  events --> e8["0x08xx · 6 allocated · 6 class A"]
+  events --> e8["0x08xx · 7 allocated · 7 class A"]
   events --> e9["0x09xx · 2 allocated · 2 class A"]
 ```
 

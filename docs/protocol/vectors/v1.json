@@ -638,6 +638,22 @@
       "values_readable": "1140 bytes classified as non-frames during one comms boot attempt",
       "body_readable": "{1:count}"
     },
+    "commshelddown_0x0807": {
+      "kind": 2055,
+      "class": "A",
+      "body_cbor": "a10100",
+      "body_len": 3,
+      "values_readable": "reason no_device_id: no device_id at boot (L-116)",
+      "body_readable": "{1:reason}"
+    },
+    "comms_held_down_revisions_0x0807": {
+      "kind": 2055,
+      "class": "A",
+      "body_cbor": "a10101",
+      "body_len": 3,
+      "values_readable": "reason revisions_spent: L-195's pairing-window revisions ran out (L-116)",
+      "body_readable": null
+    },
     "pair_0x0B": {
       "type": 11,
       "authentication": "key 2 is handshakes.pairing.message_1, sealed under derived_keys.pair_psk; nothing outside it is authenticated",

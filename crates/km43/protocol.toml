@@ -2673,6 +2673,12 @@ class = "A"
 status = "live"
 
 [[events]]
+kind = 2055
+name = "comms held down"
+class = "A"
+status = "live"
+
+[[events]]
 kind = 2305
 name = "topology changed"
 class = "A"
@@ -3015,6 +3021,16 @@ meaning = "A signed `Time` write from an enrolled client"
 value = 2
 name = "ntp-via-comms"
 meaning = "A `TimeOffer` the controller accepted from the comms processor"
+
+[[enums.held_down_reason]]
+value = 0
+name = "no_device_id"
+meaning = "The controller had no `device_id` at boot"
+
+[[enums.held_down_reason]]
+value = 1
+name = "revisions_spent"
+meaning = "L-195's pairing-window revisions ran out"
 
 
 [[enums.client_kind]]

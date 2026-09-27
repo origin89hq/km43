@@ -1157,7 +1157,14 @@
 # stays counted. L-132 and L-137 gained codec-and-decision tests the same way
 # and take clauses below, so they stay counted too. origin89hq/firmware#234
 # implements the firmware half.
-uncovered = 152
+# 152 -> 153: L-116 is new (origin89hq/km43#146), the comms held down
+# (`0x0807`) record that names why L-115 is holding the link down. The body is
+# covered in controller_record.rs: each reason, a missing and a repeated
+# `reason`, and an unallocated one refused. Writing it once on entry and never
+# again in that boot is the controller's, and nothing in this tree runs the
+# held-down state, so L-116 stays counted. origin89hq/firmware#231 implements
+# the emission.
+uncovered = 153
 
 # P-045 is the shape this file is for. Nothing can drive an implementation into
 # transmitting a key it does not have, so the thing that stands behind it reads
@@ -1488,6 +1495,11 @@ reason = "NetStamp::settle keeps the persisted version and token after a failed 
 id = "L-138"
 each = ["carries_the_origin", "persisted_with_its_version", "drawn_when_the_section_is_created", "kept_through_every_later_write"]
 reason = "The codec carries key 7 on every written NetConfig and refuses one without it, and NetStamp stores the token with the version it arrived with. Drawing it from P-237 when the controller creates the section from version 0, and keeping it through edits and the factory clear, are the controller's configuration store (firmware#234)."
+
+[[clauses]]
+id = "L-116"
+each = ["each_reason", "missing_reason", "repeated_reason", "unallocated_reason", "written_once_on_entry"]
+reason = "ControllerRecord carries both reasons and refuses a body with `reason` missing, repeated or unallocated. Writing one record when the controller starts holding the link down, and none for later LinkUp, heartbeats or timers in that boot, is the controller's (firmware#231)."
 
 [[clauses]]
 id = "L-135"

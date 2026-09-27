@@ -1,11 +1,13 @@
 //! Durable clock, comms recovery and log-integrity records. The kind selects
 //! the body schema; the event envelope remains readable for unknown kinds.
 //!
-//! cites: P-215
+//! cites: P-215, L-116
 
 use core::{fmt, num::NonZeroU32};
 
-use crate::{CborError, CborReader, CborWriter, ErrorCode, EventKind, Refusal, TimeSource};
+use crate::{
+    CborError, CborReader, CborWriter, ErrorCode, EventKind, HeldDownReason, Refusal, TimeSource,
+};
 
 /// Two full-width timestamps and a source occupy at most 23 bytes. An encoder
 /// refuses a smaller destination when the selected body does not fit.
@@ -52,6 +54,11 @@ pub enum ControllerRecord {
         /// Bytes before the first valid `LinkUp` or abandonment of the attempt.
         count: u32,
     },
+    /// The one record a boot leaves when the controller declines to link (L-116).
+    CommsHeldDown {
+        /// Which of L-115's two conditions holds for the rest of the boot.
+        reason: HeldDownReason,
+    },
 }
 
 impl ControllerRecord {
@@ -66,6 +73,7 @@ impl ControllerRecord {
             Self::CommsUnrecoverable { .. } => EventKind::COMMS_UNRECOVERABLE,
             Self::SessionsShed { .. } => EventKind::SESSIONS_SHED_FOR_BACKPRESSURE,
             Self::CommsBootNoise { .. } => EventKind::COMMS_BOOT_NOISE,
+            Self::CommsHeldDown { .. } => EventKind::COMMS_HELD_DOWN,
         }
     }
 
@@ -102,6 +110,11 @@ impl ControllerRecord {
                 body.key(1)?;
                 body.u64(u64::from(count))?;
             }
+            Self::CommsHeldDown { reason } => {
+                body.map(1)?;
+                body.key(1)?;
+                body.u64(reason as u64)?;
+            }
         }
         Ok(body.finish()?)
     }
@@ -111,7 +124,8 @@ impl ControllerRecord {
     pub fn decode(kind: EventKind, payload: &[u8]) -> Result<Self, ControllerRecordError> {
         let mut body = CborReader::new(payload);
         let pairs = body.map()?;
-        let (mut old, mut new, mut source, mut count, mut rail_on) = (None, None, None, None, None);
+        let (mut old, mut new, mut source, mut count, mut rail_on, mut reason) =
+            (None, None, None, None, None, None);
         for _ in 0..pairs {
             match (kind, body.key()?) {
                 (EventKind::TIME_SET, 1) => once(&mut old, 1, body.u64()?)?,
@@ -123,6 +137,12 @@ impl ControllerRecord {
                     once(&mut source, 3, value)?;
                 }
                 (EventKind::COMMS_UNRECOVERABLE, 1) => once(&mut rail_on, 1, body.bool()?)?,
+                (EventKind::COMMS_HELD_DOWN, 1) => {
+                    let number = body.u8()?;
+                    let value = HeldDownReason::try_from(number)
+                        .map_err(|()| ControllerRecordError::UnknownReason(number))?;
+                    once(&mut reason, 1, value)?;
+                }
                 (
                     EventKind::RECORD_FAILED_CRC
                     | EventKind::COMMS_POWER_CYCLED
@@ -156,6 +176,9 @@ impl ControllerRecord {
             EventKind::COMMS_BOOT_NOISE => Ok(Self::CommsBootNoise {
                 count: count.ok_or(ControllerRecordError::MissingKey(1))?,
             }),
+            EventKind::COMMS_HELD_DOWN => Ok(Self::CommsHeldDown {
+                reason: reason.ok_or(ControllerRecordError::MissingKey(1))?,
+            }),
             _ => Err(ControllerRecordError::UnknownKind(kind)),
         }
     }
@@ -186,6 +209,8 @@ pub enum ControllerRecordError {
     DuplicateKey(u8),
     /// The time-source space does not allocate this value.
     UnknownSource(u8),
+    /// The held-down reason space does not allocate this value.
+    UnknownReason(u8),
     /// An action record claimed that no action occurred.
     ZeroCount,
     /// The underlying CBOR or destination was invalid.
@@ -208,6 +233,7 @@ impl ControllerRecordError {
             | Self::MissingKey(_)
             | Self::DuplicateKey(_)
             | Self::UnknownSource(_)
+            | Self::UnknownReason(_)
             | Self::ZeroCount
             | Self::Cbor(_) => Refusal::Client(ErrorCode::MalformedFrame),
         }
@@ -221,6 +247,7 @@ impl fmt::Display for ControllerRecordError {
             Self::MissingKey(key) => write!(out, "controller record missing key {key}"),
             Self::DuplicateKey(key) => write!(out, "controller record repeats key {key}"),
             Self::UnknownSource(value) => write!(out, "unallocated time source {value}"),
+            Self::UnknownReason(value) => write!(out, "unallocated held-down reason {value}"),
             Self::ZeroCount => out.write_str("controller action record has a zero count"),
             Self::Cbor(why) => write!(out, "{why}"),
         }
@@ -234,7 +261,7 @@ mod tests {
     use super::*;
     use crate::render::Rendering;
 
-    fn records() -> [ControllerRecord; 12] {
+    fn records() -> [ControllerRecord; 14] {
         [
             ControllerRecord::TimeSet {
                 old: None,
@@ -270,6 +297,12 @@ mod tests {
             },
             ControllerRecord::CommsBootNoise { count: 0 },
             ControllerRecord::CommsBootNoise { count: u32::MAX },
+            ControllerRecord::CommsHeldDown {
+                reason: HeldDownReason::NoDeviceId,
+            },
+            ControllerRecord::CommsHeldDown {
+                reason: HeldDownReason::RevisionsSpent,
+            },
         ]
     }
 
@@ -424,6 +457,76 @@ mod tests {
         assert!(ControllerRecord::decode(EventKind::COMMS_LINK_LOST, &[0x80]).is_err());
     }
 
+    /// Reason 0 is an allocated value, not an absent one: a decoder that read
+    /// `{1: 0}` as missing would lose the commoner of the two causes.
+    #[test]
+    fn l_116_each_reason_survives_the_wire() {
+        let kind = EventKind::COMMS_HELD_DOWN;
+        for (bytes, reason) in [
+            ([0xa1, 1, 0], HeldDownReason::NoDeviceId),
+            ([0xa1, 1, 1], HeldDownReason::RevisionsSpent),
+        ] {
+            let record = ControllerRecord::CommsHeldDown { reason };
+            assert_eq!(ControllerRecord::decode(kind, &bytes), Ok(record));
+            let mut dst = [0; CONTROLLER_RECORD_MAX_BYTES];
+            let len = record.encode(&mut dst).expect("fits");
+            assert_eq!(dst.get(..len), Some(&bytes[..]));
+            assert_eq!(record.kind(), kind);
+        }
+    }
+
+    /// An empty body must not read as either cause. Defaulting it would turn a
+    /// record that says nothing into "no `device_id`", which sends somebody to
+    /// reprovision a unit whose pairing window was the problem.
+    #[test]
+    fn l_116_a_missing_reason_is_refused() {
+        let kind = EventKind::COMMS_HELD_DOWN;
+        assert_eq!(
+            ControllerRecord::decode(kind, &[0xa0]),
+            Err(ControllerRecordError::MissingKey(1))
+        );
+        assert_eq!(
+            ControllerRecord::decode(kind, &[0xa1, 2, 0]),
+            Err(ControllerRecordError::MissingKey(1))
+        );
+    }
+
+    /// Two reasons in one record is two answers to one question, and taking
+    /// either one hides the other.
+    #[test]
+    fn l_116_a_repeated_reason_is_refused() {
+        let kind = EventKind::COMMS_HELD_DOWN;
+        for bytes in [[0xa2, 1, 0, 1, 1], [0xa2, 1, 1, 1, 1]] {
+            assert_eq!(
+                ControllerRecord::decode(kind, &bytes),
+                Err(ControllerRecordError::DuplicateKey(1))
+            );
+        }
+    }
+
+    /// A reason from a newer registry is refused rather than rendered as one of
+    /// the two a reader knows, as P-215 refuses an unallocated time source.
+    #[test]
+    fn l_116_an_unallocated_reason_is_refused() {
+        let kind = EventKind::COMMS_HELD_DOWN;
+        for (bytes, value) in [(&[0xa1, 1, 2][..], 2), (&[0xa1, 1, 0x18, 0xff], 255)] {
+            assert_eq!(
+                ControllerRecord::decode(kind, bytes),
+                Err(ControllerRecordError::UnknownReason(value))
+            );
+        }
+        for bytes in [
+            &[0xa1, 1, 0x19, 1, 0][..],
+            &[0xa1, 1, 0x20],
+            &[0xa1, 1, 0xf4],
+        ] {
+            assert!(matches!(
+                ControllerRecord::decode(kind, bytes),
+                Err(ControllerRecordError::Cbor(_))
+            ));
+        }
+    }
+
     #[test]
     fn refusals_render_and_map_to_malformed_body() {
         let errors = [
@@ -431,6 +534,7 @@ mod tests {
             ControllerRecordError::DuplicateKey(1),
             ControllerRecordError::UnknownKind(EventKind::BOOT),
             ControllerRecordError::UnknownSource(0),
+            ControllerRecordError::UnknownReason(2),
             ControllerRecordError::ZeroCount,
             ControllerRecordError::Cbor(CborError::WrongType),
         ];

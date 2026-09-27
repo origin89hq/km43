@@ -832,6 +832,28 @@ supply. The same holds after L-195's revisions run out. A controller that had a
 `device_id` at boot and has not reached L-195's limit is not keeping the link
 down on purpose, and the ladder applies to it in full.
 
+**L-116** — When the controller starts keeping the link down on purpose
+(L-115), it MUST write one comms held down (`0x0807`) record naming why, and
+MUST NOT write another in that boot, whatever `LinkUp`, heartbeat or timer
+follows. A receiver MUST refuse a body with `reason` missing or repeated, or
+carrying a reason the registry does not allocate, as P-215 refuses an
+unallocated time source. Unknown keys are skipped under P-013.
+
+```text
+CommsHeldDown  0x0807
+  1: reason       u8      held_down_reason, see REGISTRY
+                           0 no_device_id: no device_id at boot
+                           1 revisions_spent: L-195's revisions are spent
+```
+
+This record is the only trace the state leaves. L-115 stops the ladder's comms
+power cycled (`0x0802`) and comms unrecoverable (`0x0803`), so without it a log
+read afterwards shows a unit that booted and then said nothing about its radio,
+and cannot tell missing provisioning from a spent pairing window. Once on entry,
+because the comms processor retries `LinkUp` every 2 seconds for as long as the
+controller declines (L-120), and a class A record per refusal would fill a log
+that never drops one.
+
 **L-114** — The rail's declared fail state MUST be on, so that a controller
 reset is not also a comms reset. Every time the rail goes off, it is because
 running firmware decided so and logged it (L-111, L-112), never as a side effect

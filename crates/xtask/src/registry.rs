@@ -1121,6 +1121,16 @@ impl Registry {
         Ok(vocabulary.metrics)
     }
 
+    /// The kind allocated to the event called `name`, for a generator that
+    /// would otherwise write the number a second time.
+    pub fn event_kind(&self, name: &str) -> Result<u16> {
+        self.events
+            .iter()
+            .find(|event| event.name == name)
+            .map(|event| event.kind)
+            .ok_or_else(|| anyhow::anyhow!("no event kind is called {name}"))
+    }
+
     /// Allocated numbers that no rule anywhere produces.
     ///
     /// A number nothing emits is not live, it is withdrawn — and the difference
@@ -2167,6 +2177,37 @@ mod websocket_tests {
             let mut ws = allocated();
             ws.txt_device_id = bad.to_owned();
             assert!(ws.validate().is_err(), "{bad:?}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod event_kinds {
+    use super::Registry;
+
+    fn loaded() -> Registry {
+        let root = crate::check::repo_root().expect("a repo to read the registry from");
+        Registry::load(&root).expect("the registry parses")
+    }
+
+    /// Every allocated event is found under its own name, so a generator that
+    /// asks by name publishes the number the bindings carry.
+    #[test]
+    fn every_event_is_found_by_its_name() {
+        let registry = loaded();
+        assert!(!registry.events.is_empty());
+        for event in &registry.events {
+            assert_eq!(registry.event_kind(&event.name).ok(), Some(event.kind));
+        }
+    }
+
+    /// A misspelt or renamed event must stop the generator rather than publish
+    /// a kind somebody guessed.
+    #[test]
+    fn a_name_nothing_allocates_is_refused() {
+        let registry = loaded();
+        for name in ["", "comms held-down", "Comms held down", "comms held down "] {
+            assert!(registry.event_kind(name).is_err(), "{name:?}");
         }
     }
 }
