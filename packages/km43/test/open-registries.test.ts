@@ -51,3 +51,20 @@ test("the PZEM-014 and PZEM-016 are two products, and pzem ac is not pzem dc", (
   assert.notEqual(Product.PZEM_014, Product.PZEM_016);
   assert.notEqual(Dialect.PZEM_AC, Dialect.PZEM_DC);
 });
+
+// A DS18B20 probe is a device of its own, so it has a product; VE.Direct text
+// and Pylontech CAN are framings whose devices wait for their own product rows.
+// Text mode is not the HEX mode on the same port, and a probe does not speak
+// the `no protocol` the controller's own analogue inputs sit under.
+test("the three new dialects are their own numbers, and only the DS18B20 has a product", () => {
+  const dialect = new Map(rows("dialect"));
+  const product = new Map(rows("product"));
+  assert.equal(Dialect.VE_DIRECT_TEXT, dialect.get("VE_DIRECT_TEXT"));
+  assert.equal(Dialect.PYLONTECH_CAN, dialect.get("PYLONTECH_CAN"));
+  assert.equal(Dialect.DS18B20, dialect.get("DS18B20"));
+  assert.equal(Product.DS18B20, product.get("DS18B20"));
+  assert.notEqual(Dialect.VE_DIRECT_TEXT, Dialect.VICTRON_MPPT_RS_HEX);
+  assert.notEqual(Dialect.DS18B20, Dialect.NO_PROTOCOL);
+  assert.equal(product.has("VE_DIRECT_TEXT"), false);
+  assert.equal(product.has("PYLONTECH_CAN"), false);
+});

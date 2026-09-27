@@ -1245,7 +1245,7 @@ An absent optional key contributes nothing, because it is not in the bytes. A `l
 
 *A charger's absorption, float, equalize and maximum-regulation voltages are otherwise four rows all called* DC voltage *on one component, and the installer picks the wrong one to compare against. Nothing anywhere said the tuple was unique, which also means nothing said a client could key a cache on it.*
 
-**P-189** — `DeviceRow.addr` MUST be present when the bus `transport` is an addressed one (`rs485`, `can`, `ip`), and MUST be unique within a `bus`. A receiver MUST refuse an inventory page that breaks either.
+**P-189** — `DeviceRow.addr` MUST be present when the bus `transport` is an addressed one (`rs485`, `can`, `ip`, `onewire`), and MUST be unique within a `bus`. A receiver MUST refuse an inventory page that breaks either.
 
 *Two devices on one RS-485 pair with no `addr` are indistinguishable to a client — it can see two chargers and cannot say which one is at which end of the wire, which is the first thing somebody walking up to the cabinet needs. Two devices with the* same *`addr` describe a bus that cannot work at all. The controller already refuses the second case at registration —* `Misconfigured::TwoDevicesAtOneAddress` *— so this is not a gap in the implementation but in what a **receiver** may rely on. This was recorded as a note against this document for one full revision, under a paragraph saying in as many words that the fix is a numbered requirement and not a note, because a note is read two ways.*
 

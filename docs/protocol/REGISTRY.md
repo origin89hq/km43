@@ -1259,7 +1259,7 @@ produces it is written into a document `every_live_number_is_reachable` sweeps.
 
 ## Bus transports
 
-What a port physically is. `rs485`, `can` and `ip` are the addressed ones, which is what makes `DeviceRow.addr` required on them and meaningless on the rest.
+What a port physically is. `rs485`, `can`, `ip` and `onewire` are the addressed ones, which is what makes `DeviceRow.addr` required on them and meaningless on the rest.
 
 | Value | Name | Meaning | Status |
 |---|---|---|---|
@@ -1595,6 +1595,7 @@ A product this controller has a driver for. Open, and a vendor range is expected
 | `0x000A` | ecoflow power kit | reserved |
 | `0x000B` | pzem 014 | reserved |
 | `0x000C` | pzem 016 | reserved |
+| `0x000D` | ds18b20 | reserved |
 | `0xF000`–`0xFFFF` | vendor range, skip-unknown under P-019 | — |
 
 ## Driver dialects
@@ -1613,6 +1614,9 @@ A protocol dialect the controller can speak. A dialect is distinct when its fram
 | `0x0008` | emporia vue3 esphome i2c | reserved |
 | `0x0009` | ecoflow power kits | reserved |
 | `0x000A` | pzem ac | reserved |
+| `0x000B` | ve direct text | reserved |
+| `0x000C` | pylontech can | reserved |
+| `0x000D` | ds18b20 | reserved |
 | `0xF000`–`0xFFFF` | vendor range, skip-unknown under P-019 | — |
 
 ## Enum spaces

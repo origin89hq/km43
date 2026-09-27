@@ -1441,6 +1441,29 @@ number = 10
 name = "pzem ac"
 status = "reserved"
 
+# Victron, "VE.Direct Protocol": the text mode a device sends unasked, as
+# label-tab-value lines closed by a checksum. Not `victron mppt rs hex`, the
+# HEX mode's request-and-response frames on the same port.
+[[open_registries.dialect]]
+number = 11
+name = "ve direct text"
+status = "reserved"
+
+# The CAN frames a Pylontech-class BMS broadcasts to an inverter. The number
+# names the framing and says nothing about a protocol version, a pack model or
+# which way positive current flows; those stay with the driver's own evidence.
+[[open_registries.dialect]]
+number = 12
+name = "pylontech can"
+status = "reserved"
+
+# Maxim DS18B20 on 1-Wire: ROM commands, then a scratchpad read. One probe per
+# DeviceRow, addressed by its 64-bit ROM code (P-202).
+[[open_registries.dialect]]
+number = 13
+name = "ds18b20"
+status = "reserved"
+
 [[open_registries.dialect]]
 range = "`0xF000`–`0xFFFF`"
 name = "vendor range, skip-unknown under P-019"
@@ -1505,6 +1528,14 @@ status = "reserved"
 [[open_registries.product]]
 number = 12
 name = "pzem 016"
+status = "reserved"
+
+# A DS18B20 probe is its own product because it is its own part: replaced,
+# moved and hot-plugged without the controller, so its history follows the
+# probe and not the pin.
+[[open_registries.product]]
+number = 13
+name = "ds18b20"
 status = "reserved"
 
 [[open_registries.product]]
