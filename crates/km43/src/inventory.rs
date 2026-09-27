@@ -1780,10 +1780,10 @@ pub enum InventoryError {
     },
     /// An `addr` longer than [`MAX_ADDR`](crate::MAX_ADDR), which no bus defines.
     AddrTooLong(usize),
-    /// More rows of this kind in one walk than a receiver holds. Refused
-    /// rather than evicted, because a device dropped to make room is one
-    /// whose duplicate nothing would then catch.
-    TopologyFull(RowKind),
+    /// More devices in one walk than the receiver was sized for, which it
+    /// carries. Refused rather than evicted, because a device dropped to make
+    /// room is one whose duplicate nothing would then catch.
+    TooManyDevices(usize),
     /// The CBOR underneath was refused.
     Cbor(CborError),
 }
@@ -1831,7 +1831,7 @@ impl InventoryError {
             | Self::AddrMissing { .. }
             | Self::AddrTwice { .. }
             | Self::AddrTooLong(_)
-            | Self::TopologyFull(_)
+            | Self::TooManyDevices(_)
             | Self::Cbor(_) => Refusal::Client(ErrorCode::MalformedFrame),
         }
     }
@@ -1917,8 +1917,11 @@ impl fmt::Display for InventoryError {
                 write!(w, "devs {dev} and {other} share one addr on bus {bus}")
             }
             Self::AddrTooLong(n) => write!(w, "an addr of {n} bytes is past MAX_ADDR"),
-            Self::TopologyFull(kind) => {
-                write!(w, "more {kind} rows than a receiver holds")
+            Self::TooManyDevices(n) => {
+                write!(
+                    w,
+                    "a walk naming more devices than the {n} a receiver holds"
+                )
             }
             Self::Cbor(why) => write!(w, "{why}"),
         }
@@ -2017,7 +2020,7 @@ mod tests {
                 other: 3,
             },
             InventoryError::AddrTooLong(9),
-            InventoryError::TopologyFull(RowKind::Device),
+            InventoryError::TooManyDevices(25),
             InventoryError::Cbor(CborError::WrongType),
         ];
         Rendering::<128>::each_says_something_of_its_own(&EVERY);

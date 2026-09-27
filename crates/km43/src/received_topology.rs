@@ -2,10 +2,10 @@
 //! the same one twice on a bus, judged across every page of one walk.
 //!
 //! The transport lives on a `BusRow` and the address on a `DeviceRow`, and a
-//! client fetches the two tables in whatever order it likes, so no single row
-//! can be judged alone. Each page is applied to a copy of what is held, the
-//! whole copy is checked, and the copy replaces what is held only if it
-//! passes: a page that breaks P-202 is refused and leaves nothing behind.
+//! client fetches the two tables in whatever order it likes, so no single page
+//! can be judged alone. Each page is applied to a copy of what is held and the
+//! copy is checked after every row; it replaces what is held only if it
+//! passes, so a page that breaks P-202 is refused and leaves nothing behind.
 //!
 //! A device whose `BusRow` never arrives is outside P-202 and is held
 //! unjudged. Its `addr` still counts against the others on that bus number.
@@ -17,14 +17,16 @@ use crate::inventory::{
     DEVICE_ROW_DEV_KEY, InventoryError, InventoryHeader, InventoryOutcome, Row, RowKind, RowSlots,
     Value,
 };
-use crate::limits::{MAX_ADDR, MAX_BUSES, MAX_DEVICES};
+use crate::limits::{MAX_ADDR, MAX_DEVICES};
 
-/// Buses one walk can describe: `bus 0`, the controller's own local I/O, and
-/// 1 to [`MAX_BUSES`]. A walk naming more is refused, not trimmed.
-pub const HELD_BUSES: usize = MAX_BUSES + 1;
+/// Every number a `bus` can carry. Held by number rather than up to a cap,
+/// because `max_buses` is the peer's to report (P-005) and a `u8` is the most
+/// it can say.
+const BUS_NUMBERS: usize = 1 << u8::BITS;
 
-/// Devices one walk can describe: [`MAX_DEVICES`] and the controller's own row
-/// at `dev 0`. A walk naming more is refused, not trimmed.
+/// The device capacity a controller built from this crate needs: its
+/// [`MAX_DEVICES`] and its own row at `dev 0`. A client talking to a controller
+/// that reports a larger `max_devices` sizes [`ReceivedTopology`] from that.
 pub const HELD_DEVICES: usize = MAX_DEVICES + 1;
 
 /// One `addr`, copied out of the page it arrived in so the next page can be
@@ -50,12 +52,6 @@ impl HeldAddr {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct HeldBus {
-    bus: u8,
-    transport: Transport,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct HeldDevice {
     dev: u16,
     bus: u8,
@@ -65,31 +61,35 @@ struct HeldDevice {
 /// What a client has received of one walk's buses and devices, enough to
 /// judge P-202 over all of it.
 ///
+/// `DEVICES` is how many device rows it holds. Size it from the `max_devices`
+/// the controller reported in `Hello` plus one for `dev 0`: a walk naming
+/// more is refused with [`InventoryError::TooManyDevices`], never trimmed.
+///
 /// Held per `rev`: a page at another revision starts the walk again, because
 /// a row from before the move says nothing about the topology after it. The
 /// same `bus` or `dev` arriving twice replaces its own entry, so a page
 /// fetched again after a lost response is not two devices at one address.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ReceivedTopology {
+pub struct ReceivedTopology<const DEVICES: usize = HELD_DEVICES> {
     rev: Option<u32>,
-    buses: [Option<HeldBus>; HELD_BUSES],
-    devices: [Option<HeldDevice>; HELD_DEVICES],
+    buses: [Option<Transport>; BUS_NUMBERS],
+    devices: [Option<HeldDevice>; DEVICES],
 }
 
-impl Default for ReceivedTopology {
+impl<const DEVICES: usize> Default for ReceivedTopology<DEVICES> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl ReceivedTopology {
+impl<const DEVICES: usize> ReceivedTopology<DEVICES> {
     /// Nothing received yet.
     #[must_use]
     pub const fn new() -> Self {
         Self {
             rev: None,
-            buses: [None; HELD_BUSES],
-            devices: [None; HELD_DEVICES],
+            buses: [None; BUS_NUMBERS],
+            devices: [None; DEVICES],
         }
     }
 
@@ -124,9 +124,12 @@ impl ReceivedTopology {
         for _ in 0..reader.array()? {
             let row = slots.decode(kind, reader.raw()?)?;
             next.hold(&row)?;
+            // After every row and not once per page: a `dev` listed twice in
+            // one page replaces its own entry, and the row it replaced has to
+            // have been judged before it went.
+            next.p_202_holds()?;
         }
         reader.finish()?;
-        next.p_202_holds()?;
         *self = next;
         Ok(header)
     }
@@ -148,9 +151,15 @@ impl ReceivedTopology {
             space: Closed::Transport,
             value: number,
         })?;
-        let held = HeldBus { bus, transport };
-        put(&mut self.buses, held, |other| other.bus == bus)
-            .ok_or(InventoryError::TopologyFull(RowKind::Bus))
+        let slot = self
+            .buses
+            .get_mut(usize::from(bus))
+            .ok_or(InventoryError::WrongType {
+                kind: RowKind::Bus,
+                key: BUS_ROW_BUS_KEY,
+            })?;
+        *slot = Some(transport);
+        Ok(())
     }
 
     fn hold_device(&mut self, row: &Row<'_>) -> Result<(), InventoryError> {
@@ -179,14 +188,23 @@ impl ReceivedTopology {
                 });
             }
         };
-        let held = HeldDevice { dev, bus, addr };
-        put(&mut self.devices, held, |other| other.dev == dev)
-            .ok_or(InventoryError::TopologyFull(RowKind::Device))
+        let same = self
+            .devices
+            .iter()
+            .position(|held| held.is_some_and(|held| held.dev == dev));
+        let at = same
+            .or_else(|| self.devices.iter().position(Option::is_none))
+            .ok_or(InventoryError::TooManyDevices(DEVICES))?;
+        let slot = self
+            .devices
+            .get_mut(at)
+            .ok_or(InventoryError::TooManyDevices(DEVICES))?;
+        *slot = Some(HeldDevice { dev, bus, addr });
+        Ok(())
     }
 
-    /// Both halves of P-202 over everything held. Run whole after every page
-    /// rather than per row, because a `BusRow` arriving late can condemn a
-    /// device that was accepted pages ago.
+    /// Both halves of P-202 over everything held, because a `BusRow` arriving
+    /// late can condemn a device that was accepted pages ago.
     fn p_202_holds(&self) -> Result<(), InventoryError> {
         for (at, device) in self.devices.iter().enumerate() {
             let Some(device) = device else {
@@ -217,11 +235,7 @@ impl ReceivedTopology {
     }
 
     fn transport(&self, bus: u8) -> Option<Transport> {
-        self.buses
-            .iter()
-            .flatten()
-            .find(|held| held.bus == bus)
-            .map(|held| held.transport)
+        self.buses.get(usize::from(bus)).copied().flatten()
     }
 }
 
@@ -242,17 +256,6 @@ fn u8_at(row: &Row<'_>, key: u8) -> Result<u8, InventoryError> {
             key,
         }),
     }
-}
-
-/// Replace the entry `same` picks out, or take the first free slot. `None`
-/// when every slot is taken by something else.
-fn put<T: Copy>(slots: &mut [Option<T>], value: T, same: impl Fn(&T) -> bool) -> Option<()> {
-    let at = slots
-        .iter()
-        .position(|slot| slot.as_ref().is_some_and(&same))
-        .or_else(|| slots.iter().position(Option::is_none))?;
-    *slots.get_mut(at)? = Some(value);
-    Some(())
 }
 
 #[cfg(test)]
@@ -338,7 +341,7 @@ mod tests {
     }
 
     fn holding(pages: &[Body]) -> ReceivedTopology {
-        let mut topology = ReceivedTopology::new();
+        let mut topology: ReceivedTopology = ReceivedTopology::new();
         for page in pages {
             topology.page(page.wire()).expect("a page P-202 accepts");
         }
@@ -401,7 +404,7 @@ mod tests {
     /// refuse a correct controller for the order a client asked in.
     #[test]
     fn p_202_a_device_whose_bus_never_arrives_is_not_judged() {
-        let mut topology = ReceivedTopology::new();
+        let mut topology: ReceivedTopology = ReceivedTopology::new();
         let page = Body::devices([device(7, 9, None)]);
         assert_eq!(
             topology.page(page.wire()).map(|header| header.rows),
@@ -467,7 +470,7 @@ mod tests {
     /// arrived, so the duplicate is caught on the page that shows it.
     #[test]
     fn p_202_one_address_on_one_bus_is_refused_before_the_bus_row_arrives() {
-        let mut topology = ReceivedTopology::new();
+        let mut topology: ReceivedTopology = ReceivedTopology::new();
         assert_eq!(
             topology.page(
                 Body::devices([device(7, 4, Some(&[0x05])), device(8, 4, Some(&[0x05]))]).wire()
@@ -521,20 +524,54 @@ mod tests {
         let past = u16::try_from(HELD_DEVICES).expect("a dev");
         assert_eq!(
             topology.page(Body::devices([device(past, 3, None)]).wire()),
-            Err(InventoryError::TopologyFull(RowKind::Device))
+            Err(InventoryError::TooManyDevices(HELD_DEVICES))
         );
         assert_eq!(topology, before);
-        topology
-            .page(Body::devices([device(0, 3, None)]).wire())
-            .expect("a held device again takes no new slot");
+        assert_eq!(
+            topology
+                .page(Body::devices([device(0, 3, None)]).wire())
+                .map(|header| header.rows),
+            Ok(1),
+            "a held device again takes no new slot"
+        );
 
-        let mut buses = [bus(0, Transport::LocalIo); HELD_BUSES + 1];
+        let mut small = ReceivedTopology::<2>::new();
+        let three = Body::devices([device(1, 3, None), device(2, 3, None), device(3, 3, None)]);
+        assert_eq!(
+            small.page(three.wire()),
+            Err(InventoryError::TooManyDevices(2))
+        );
+        assert_eq!(small, ReceivedTopology::<2>::new());
+    }
+
+    /// `max_buses` is the controller's to report, so a bus numbered past this
+    /// crate's own eight is judged like any other rather than refused.
+    #[test]
+    fn p_202_required_exactly_where_on_a_bus_past_this_controllers_own_eight() {
+        let mut buses = [bus(0, Transport::LocalIo); 48];
         for (number, row) in (0u8..).zip(buses.iter_mut()) {
             *row = bus(number, Transport::Rs485);
         }
+        let mut topology = holding(&[Body::buses(buses), Body::buses([bus(200, Transport::Can)])]);
         assert_eq!(
-            topology.page(Body::buses(buses).wire()),
-            Err(InventoryError::TopologyFull(RowKind::Bus))
+            topology.page(Body::devices([device(7, 200, None)]).wire()),
+            Err(InventoryError::AddrMissing { dev: 7, bus: 200 })
+        );
+        assert_eq!(
+            topology.page(Body::devices([device(7, 47, None)]).wire()),
+            Err(InventoryError::AddrMissing { dev: 7, bus: 47 })
+        );
+    }
+
+    /// A `dev` listed twice in one page replaces its own entry. The first
+    /// row broke P-202 and is judged before the second can hide it.
+    #[test]
+    fn p_202_required_exactly_where_judged_for_a_dev_listed_twice_in_one_page() {
+        let mut topology = holding(&[Body::buses([bus(1, Transport::Rs485)])]);
+        let before = topology;
+        assert_eq!(
+            topology.page(Body::devices([device(7, 1, None), device(7, 1, Some(&[0x01]))]).wire()),
+            Err(InventoryError::AddrMissing { dev: 7, bus: 1 })
         );
         assert_eq!(topology, before);
     }
@@ -598,7 +635,7 @@ mod tests {
 
     #[test]
     fn an_addr_past_max_addr_is_refused_rather_than_cut_to_fit() {
-        let mut topology = ReceivedTopology::new();
+        let mut topology: ReceivedTopology = ReceivedTopology::new();
         assert_eq!(
             topology.page(Body::devices([device(7, 1, Some(&[0xAA; MAX_ADDR + 1]))]).wire()),
             Err(InventoryError::AddrTooLong(MAX_ADDR + 1))
