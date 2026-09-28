@@ -4559,7 +4559,10 @@ window's lower edge with the floor.
    override is spent, and P-118's window runs from the RTC write. The
    controller MUST retry the record, MUST NOT send `TimeAck` outcome 1
    `accepted` until it lands, and MUST NOT accept any other clock change while
-   it is owed.
+   it is owed. A signed `Time 0x0A` that arrives while the record is owed MUST
+   be refused with error 7 `busy`, before the operation executes, whatever
+   P-118's window says. A `TimeOffer` gets L-154's answer in
+   [LINK.md](protocol/LINK.md).
 
 Error 7 is the answer P-079 and P-254 give a durable write that failed, for the
 same reason: *the controller did not do this, send it again*, and the next try
@@ -4574,9 +4577,13 @@ means the log catches up with the clock, and holding outcome 1 until
 then keeps its meaning exact: *the clock moved and the record names who moved
 it*. A client that sees no answer before its request expires cannot tell a
 write that failed from a record still owed, and asks again. Inside the quarter hour that write
-meets P-118's error 7 whether or not the record has landed, and after it the
-write is not accepted while the record is still owed: two separate guards, and
-neither answer says the first write did not happen.
+meets P-118's error 7 whether or not the record has landed, and after it rule 2
+answers it error 7 while the record is still owed: two separate guards with one
+answer, so it does not matter which one refuses, and neither says the first
+write did not happen. The refusal is sent straight away rather than held until
+the record lands. A held request expires at the client, which sends it again
+and learns nothing, and a controller that answers late while another one
+answers at once is two implementations of one rule.
 
 The override is spent and P-118's window started because the clock did move. A
 change that stands and left the override armed would let the same press

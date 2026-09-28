@@ -1137,7 +1137,7 @@ pub const REQUIREMENTS: &[Requirement] = &[
         id: "P-267",
         document: "docs/PROTOCOL.md",
         section: "Time",
-        statement: "A signed `Time 0x0A` whose write fails: 1. When the RTC did not take the time, MUST be answered error 7 `busy`, and nothing is spent: the clock MUST NOT move, an armed floor override MUST NOT be spent, and P-118's window MUST NOT start. 2. When the RTC took the time and the `time set` record P-111 requires did not append, stands, and the record is owed: the clock stays moved, an armed override is spent, and P-118's window runs from the RTC write. The controller MUST retry the record, MUST NOT send `TimeAck` outcome 1 `accepted` until it lands, and MUST NOT accept any other clock change while it is owed.",
+        statement: "A signed `Time 0x0A` whose write fails: 1. When the RTC did not take the time, MUST be answered error 7 `busy`, and nothing is spent: the clock MUST NOT move, an armed floor override MUST NOT be spent, and P-118's window MUST NOT start. 2. When the RTC took the time and the `time set` record P-111 requires did not append, stands, and the record is owed: the clock stays moved, an armed override is spent, and P-118's window runs from the RTC write. The controller MUST retry the record, MUST NOT send `TimeAck` outcome 1 `accepted` until it lands, and MUST NOT accept any other clock change while it is owed. A signed `Time 0x0A` that arrives while the record is owed MUST be refused with error 7 `busy`, before the operation executes, whatever P-118's window says. A `TimeOffer` gets L-154's answer in [LINK.md](protocol/LINK.md).",
     },
     Requirement {
         id: "P-117",
@@ -1617,7 +1617,7 @@ pub const REQUIREMENTS: &[Requirement] = &[
         id: "L-150",
         document: "docs/protocol/LINK.md",
         section: "Time offers",
-        statement: "Once the clock is known the controller MUST refuse an offer that would move it by more than 5 seconds, in either direction, with `refused_step_too_large`, unless L-153 refuses it first.",
+        statement: "Once the clock is known the controller MUST refuse an offer that would move it by more than 5 seconds, in either direction, with `refused_step_too_large`, unless L-153 or L-154 refuses it first.",
     },
     Requirement {
         id: "L-151",
@@ -1636,6 +1636,12 @@ pub const REQUIREMENTS: &[Requirement] = &[
         document: "docs/protocol/LINK.md",
         section: "Time offers",
         statement: "The controller MUST refuse an offer whose `unix_ms` is outside the range its clock can hold with `refused_implausible`, and the clock MUST NOT move.",
+    },
+    Requirement {
+        id: "L-154",
+        document: "docs/protocol/LINK.md",
+        section: "Time offers",
+        statement: "While a `time set` record is owed under P-267 rule 2 in [PROTOCOL.md](../PROTOCOL.md), the controller MUST refuse an offer with `refused_rate_limited` when it arrives, and the clock MUST NOT move.",
     },
     Requirement {
         id: "L-160",
