@@ -1324,7 +1324,7 @@ keeps asking what time it is. It is key 2 of the boot body, defined under
 
 **L-150** — Once the clock is known the controller MUST refuse an offer that
 would move it by more than 5 seconds, in either direction, with
-`refused_step_too_large`, unless L-153 refuses it first. The correction has
+`refused_step_too_large`, unless L-153 or L-154 refuses it first. The correction has
 to arrive as a signed client `Time 0x0A` instead.
 
 Five seconds is drift; an hour is a different Tuesday. The first-set window above
@@ -1400,6 +1400,31 @@ is what a time the clock cannot hold is. It is the offer's side of P-266 in
 same range with `TimeAck` outcome 2, and no outcome of its own is allocated. A
 write that fails is not this refusal and MUST NOT be answered outcome 2: the RTC
 not taking a time it can represent might take it on the next offer.
+
+**L-154** — While a `time set` record is owed under P-267 rule 2 in
+[PROTOCOL.md](../PROTOCOL.md), the controller MUST refuse an offer with
+`refused_rate_limited` when it arrives, and the clock MUST NOT move. L-151
+and L-153 come first, and this rule comes before L-150. This refusal MUST NOT
+be counted under L-151 and MUST NOT start or extend its window.
+
+P-267 says no other clock change is accepted while the record is owed. This rule
+names the answer. An offer held until the record lands expires at the comms
+processor, which retries it three times under L-015 and gives it up as failed,
+the same silence L-153 removed for a time the clock cannot hold. Outcome 5 says
+*not now, offer again later*, which is true: the next offer after the record
+lands meets the ordinary rules. A comms processor already has to handle it for
+L-151, so no new outcome is allocated.
+
+The order follows the reasons for the existing ones. An offer inside L-151's
+window is `refused_rate_limited` either way. `refused_implausible` stays the
+answer for a time the clock can never hold, whether or not a record is owed.
+This rule comes before L-150 because `refused_step_too_large` points at a signed
+client `Time 0x0A`, and P-267 refuses that too while the record is owed.
+
+The refusal is not L-151's because it is not a rate limit. L-151's count and the
+owed record together tell a log reader which refusal an offer met; counting both
+under L-151 would lose that. Starting L-151's window here would also refuse the
+first offer after the record lands for a rate nobody exceeded.
 
 **L-160** — The controller MUST record any accepted clock change of more than
 5 seconds, whatever moved it, in the `time set` event (`0x0604`), carrying the
@@ -1746,7 +1771,7 @@ them evicts:
 | Connection rows | 8 | `ClientConnected` answers `refused_table_full`; the comms processor closes the transport with a reason (L-061) |
 | Challenges held, one per connection row | 8 (`MAX_CHALLENGES`) | Error 18 `challenge unavailable` (P-060); nothing is evicted |
 | Sessions bound onto those rows | 8 (`MAX_SESSIONS`) | Error 8. Unreachable while every transport terminates here, because a row exists before the `Hello` that would bind it |
-| Accepted time offers | 1 per 15 minutes | `refused_rate_limited`, counted (L-151) |
+| Accepted time offers | 1 per 15 minutes, none while a `time set` record is owed | `refused_rate_limited`, counted (L-151); while owed, not counted (L-154) |
 | Sessions shed for backpressure | 3 per hour | The first one is recorded; the third means the link carries no traffic whatever the heartbeats say, and the ladder runs from its first rung (L-022, L-023) |
 | Outstanding link-local requests, per side | 4 | The sender does not issue a fifth; a peer that does gets code 262 (L-014) |
 | Cached Wi-Fi network | 1 | A `set` replaces — a value, not a table (L-136) |

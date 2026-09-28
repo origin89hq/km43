@@ -1190,7 +1190,13 @@
 # not. Writing the clock, spending the override and holding outcome 1 for the
 # record are the controller's, and nothing in this tree does any of them, so
 # P-267 stays counted, owed by origin89hq/firmware#248.
-uncovered = 155
+# 155 -> 156: L-154 is new (origin89hq/km43#187), `refused_rate_limited` for
+# a `TimeOffer` while P-267's record is owed, after L-151 and L-153 and before
+# L-150, and not counted under L-151. P-267 rule 2 now also names error 7 for
+# a `Time 0x0A` in that state, which moves no count. Knowing a record is owed
+# and deciding an offer against it are the controller's, and nothing in this
+# tree does either, so L-154 stays counted, owed by origin89hq/firmware#248.
+uncovered = 156
 
 # P-045 is the shape this file is for. Nothing can drive an implementation into
 # transmitting a key it does not have, so the thing that stands behind it reads
