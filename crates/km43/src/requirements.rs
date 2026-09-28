@@ -1617,7 +1617,7 @@ pub const REQUIREMENTS: &[Requirement] = &[
         id: "L-150",
         document: "docs/protocol/LINK.md",
         section: "Time offers",
-        statement: "Once the clock is known the controller MUST refuse an offer that would move it by more than 5 seconds, in either direction, with `refused_step_too_large`, unless L-153 or L-154 refuses it first.",
+        statement: "Once the clock is known the controller MUST refuse an offer that would move it by more than 5 seconds, in either direction, with `refused_step_too_large`, unless L-151, L-153 or L-154 refuses it first.",
     },
     Requirement {
         id: "L-151",
