@@ -1324,8 +1324,8 @@ keeps asking what time it is. It is key 2 of the boot body, defined under
 
 **L-150** — Once the clock is known the controller MUST refuse an offer that
 would move it by more than 5 seconds, in either direction, with
-`refused_step_too_large`, unless L-153 or L-154 refuses it first. The correction has
-to arrive as a signed client `Time 0x0A` instead.
+`refused_step_too_large`, unless L-151, L-153 or L-154 refuses it first. The
+correction has to arrive as a signed client `Time 0x0A` instead.
 
 Five seconds is drift; an hour is a different Tuesday. The first-set window above
 is ten years wide, so it reaches every day of the week and every time of day —
