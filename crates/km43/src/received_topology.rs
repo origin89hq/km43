@@ -177,6 +177,7 @@ impl<const DEVICES: usize> ReceivedTopology<DEVICES> {
                 Value::U8(_)
                 | Value::U16(_)
                 | Value::U32(_)
+                | Value::I8(_)
                 | Value::I32(_)
                 | Value::Text(_)
                 | Value::U16List(_)
@@ -245,6 +246,7 @@ fn u8_at(row: &Row<'_>, key: u8) -> Result<u8, InventoryError> {
         Some(
             Value::U16(_)
             | Value::U32(_)
+            | Value::I8(_)
             | Value::I32(_)
             | Value::Text(_)
             | Value::Bytes(_)

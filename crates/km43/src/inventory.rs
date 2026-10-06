@@ -41,9 +41,9 @@ use crate::limits::{
 
 /// What one key of a descriptor row carries.
 ///
-/// Six shapes cover all five row kinds, which is the point: a seventh would be a
-/// row kind asking for its own encoder, and the whole design of this module is
-/// that there is not one.
+/// Eight shapes cover all five row kinds, which is the point: a row kind is a
+/// table over these and never an encoder of its own. A new shape is one arm in
+/// each of the three matches below, and the compiler finds all of them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FieldType {
     /// A small unsigned discriminant or index.
@@ -52,6 +52,8 @@ enum FieldType {
     U16,
     /// A revision.
     U32,
+    /// A power of ten, such as a vendor kind's `scale` (P-204).
+    I8,
     /// A value, bounded to `i32` by P-185.
     I32,
     /// UTF-8, bounded by the caller's own cap.
@@ -93,7 +95,7 @@ const fn opt(key: u8, ty: FieldType) -> Field {
     }
 }
 
-use FieldType::{Bytes, I32, Text, U8, U16, U16List, U32};
+use FieldType::{Bytes, I8, I32, Text, U8, U16, U16List, U32};
 
 /// `BusRow`: a physical port.
 const BUS_FIELDS: &[Field] = &[
@@ -149,7 +151,7 @@ const SIGNAL_FIELDS: &[Field] = &[
     opt(12, U16),  // ebase
     opt(13, U16),  // esp — required iff vtype is 3 or 4
     opt(14, U8),   // unit — required iff kind is in the vendor range (P-160)
-    opt(15, U8),   // scale
+    opt(15, I8),   // scale
     opt(16, U16),  // vns
     opt(17, U8),   // hist
     opt(18, Text), // label
@@ -172,7 +174,7 @@ const PARAM_FIELDS: &[Field] = &[
     opt(12, I32),  // hi
     opt(13, U16),  // via
     opt(14, U8),   // unit
-    opt(15, U8),   // scale
+    opt(15, I8),   // scale
     opt(16, U16),  // vns
     opt(17, Text), // label
 ];
@@ -192,6 +194,9 @@ pub enum Value<'a> {
     U16(u16),
     /// For a key its table types `U32`, such as a bus's `rate`.
     U32(u32),
+    /// For a key its table types `I8`: a vendor kind's `scale`, which is
+    /// negative whenever the unit is finer than the one `unit` names.
+    I8(i8),
     /// For a key its table types `I32`, such as a parameter's `lo` and `hi`.
     I32(i32),
     /// UTF-8 text, borrowed from the caller.
@@ -717,6 +722,7 @@ impl<'a> Row<'a> {
             Value::U8(v) => Some(u16::from(*v)),
             Value::U16(v) => Some(*v),
             Value::U32(_)
+            | Value::I8(_)
             | Value::I32(_)
             | Value::Text(_)
             | Value::Bytes(_)
@@ -788,6 +794,7 @@ impl<'a> Row<'a> {
                 Value::U8(v) => cbor.u64(u64::from(*v))?,
                 Value::U16(v) => cbor.u64(u64::from(*v))?,
                 Value::U32(v) => cbor.u64(u64::from(*v))?,
+                Value::I8(v) => cbor.i32(i32::from(*v))?,
                 Value::I32(v) => cbor.i32(*v)?,
                 Value::Text(v) => cbor.text(v)?,
                 Value::Bytes(v) => cbor.bytes(v)?,
@@ -832,6 +839,7 @@ impl Value<'_> {
             (Self::U8(_), FieldType::U8)
                 | (Self::U16(_), FieldType::U16)
                 | (Self::U32(_), FieldType::U32)
+                | (Self::I8(_), FieldType::I8)
                 | (Self::I32(_), FieldType::I32)
                 | (Self::Text(_), FieldType::Text)
                 | (Self::Bytes(_), FieldType::Bytes)
@@ -1002,6 +1010,11 @@ impl FieldType {
             Self::U8 => Value::U8(body.u8()?),
             Self::U16 => Value::U16(body.u16()?),
             Self::U32 => Value::U32(body.u32()?),
+            // Read as wide as any value and narrowed here, so 128 and -129 are
+            // refused as out of range rather than wrapped into a scale.
+            Self::I8 => {
+                Value::I8(i8::try_from(body.i32()?).map_err(|_| CborError::IntegerOutOfRange)?)
+            }
             Self::I32 => Value::I32(body.i32()?),
             Self::Text => Value::Text(body.text()?),
             Self::Bytes => Value::Bytes(body.bytes()?),
@@ -2054,6 +2067,7 @@ mod tests {
                 FieldType::U8 => Value::U8(u8::MAX),
                 FieldType::U16 => Value::U16(u16::MAX),
                 FieldType::U32 => Value::U32(u32::MAX),
+                FieldType::I8 => Value::I8(i8::MIN),
                 FieldType::I32 => Value::I32(i32::MIN),
                 FieldType::Text => Value::Text(if matches!(kind, RowKind::Device) {
                     IDENT
@@ -3526,5 +3540,138 @@ mod reading {
                 assert_eq!(why.refusal(), Refusal::Client(ErrorCode::MalformedFrame));
             }
         }
+    }
+
+    /// A vendor's own DC voltage in millivolts: `unit` V, `scale` as given,
+    /// Victron's namespace. The common case P-204 exists for.
+    fn vendor_volts(scale: Value<'static>) -> [Value<'static>; 18] {
+        [
+            Value::U16(1),      // sig
+            Value::U16(5),      // dev
+            Value::U16(0),      // cmp
+            Value::U16(0xF001), // kind, in the vendor range
+            Value::U8(1),       // shape: scalar
+            Value::U8(1),       // vtype: gauge
+            Value::U8(1),       // domain: live
+            Value::Absent,
+            Value::Absent,
+            Value::Absent,
+            Value::Absent,
+            Value::Absent,
+            Value::Absent,
+            Value::U8(crate::generated::Unit::Volt as u8),
+            scale,
+            Value::U16(1), // vns
+            Value::Absent,
+            Value::Absent,
+        ]
+    }
+
+    /// The row's bytes, as a page would carry them.
+    fn encoded(row: &Row<'_>, dst: &mut [u8; MAX_ROW_BYTES]) -> usize {
+        let mut cbor = CborWriter::new(dst);
+        row.encode(&mut cbor).expect("a legal row encodes");
+        cbor.finish().expect("a whole row")
+    }
+
+    /// **A millivolt reading is `unit` V and `scale` -3, and `scale` was a `u8`**
+    /// (P-204). The field list said `i8`; the table said `u8`, so the one row
+    /// every vendor quantity finer than its unit needs could not be built.
+    #[test]
+    fn p_204_a_vendor_row_in_millivolts_is_built_with_a_negative_scale_and_reads_back() {
+        let values = vendor_volts(Value::I8(-3));
+        let row = Row::new(RowKind::Signal, &values).expect("a millivolt row is legal");
+        let mut bytes = [0u8; MAX_ROW_BYTES];
+        let len = encoded(&row, &mut bytes);
+        let mut slots = RowSlots::new();
+        let back = slots
+            .decode(RowKind::Signal, bytes.get(..len).expect("what was written"))
+            .expect("and reads back");
+        for key in [4, 14, 15, 16] {
+            assert_eq!(back.get(key), row.get(key), "key {key}");
+        }
+        assert_eq!(back.get(15), Some(Value::I8(-3)));
+    }
+
+    /// Both ends of `i8`, the one either side of zero that needs a sign, and
+    /// zero itself, through the encoder and back. A narrowing that wrapped or
+    /// an encoder that wrote the magnitude unsigned shows up at one of these.
+    #[test]
+    fn p_204_a_scale_reads_back_unchanged_at_both_ends_of_its_range() {
+        for kind in [RowKind::Signal, RowKind::Param] {
+            for scale in [i8::MIN, -1, 0, i8::MAX] {
+                let mut values = tests::widest(kind);
+                // `scale` is key 15, which is slot 14 on both rows.
+                *values.get_mut(14).expect("slot") = Value::I8(scale);
+                let n = kind.fields().len();
+                let row = Row::new(kind, values.get(..n).expect("fits")).expect("legal");
+                let mut bytes = [0u8; MAX_ROW_BYTES];
+                let len = encoded(&row, &mut bytes);
+                let mut slots = RowSlots::new();
+                let back = slots
+                    .decode(kind, bytes.get(..len).expect("what was written"))
+                    .expect("reads back");
+                assert_eq!(
+                    back.get(15),
+                    Some(Value::I8(scale)),
+                    "{kind:?} scale {scale}"
+                );
+            }
+        }
+    }
+
+    /// RFC 8949 Appendix A writes -100 as `38 63`. Agreement with the world,
+    /// not just with this crate's own reader.
+    #[test]
+    fn p_204_a_negative_scale_is_a_cbor_negative_integer_as_rfc_8949_writes_one() {
+        let values = vendor_volts(Value::I8(-100));
+        let row = Row::new(RowKind::Signal, &values).expect("legal");
+        let mut bytes = [0u8; MAX_ROW_BYTES];
+        let len = encoded(&row, &mut bytes);
+        let written = bytes.get(..len).expect("what was written");
+        assert!(
+            written.windows(3).any(|w| w == [0x0F, 0x38, 0x63]),
+            "key 15 should carry 38 63: {written:02x?}"
+        );
+    }
+
+    /// **128 and -129 are one past `i8` and refused, not wrapped** (P-204).
+    /// A decoder that narrowed with `as` would read 128 as -128: a reading a
+    /// hundred decades out, rendered as though it meant something.
+    #[test]
+    fn p_204_a_scale_one_past_either_end_of_i8_is_refused_on_decode() {
+        // 127 is `18 7f` and 128 is `18 80`; -128 is `38 7f` and -129 is `38 80`.
+        for (edge, major) in [(i8::MAX, 0x18), (i8::MIN, 0x38)] {
+            let values = vendor_volts(Value::I8(edge));
+            let row = Row::new(RowKind::Signal, &values).expect("legal");
+            let mut bytes = [0u8; MAX_ROW_BYTES];
+            let len = encoded(&row, &mut bytes);
+            let written = bytes.get_mut(..len).expect("what was written");
+            let at = written
+                .windows(3)
+                .position(|w| w == [0x0F, major, 0x7F])
+                .expect("key 15 at the edge");
+            *written.get_mut(at + 2).expect("the argument byte") = 0x80;
+            assert_eq!(
+                RowSlots::new()
+                    .decode(RowKind::Signal, written)
+                    .expect_err("one past i8 is refused"),
+                InventoryError::Cbor(CborError::IntegerOutOfRange),
+                "one past {edge}"
+            );
+        }
+    }
+
+    /// The old type is the wrong type now. A caller still building `scale` as
+    /// a `u8` is refused at the row, where the line that built it is.
+    #[test]
+    fn p_204_a_scale_built_as_a_u8_is_refused_at_the_row() {
+        assert_eq!(
+            Row::new(RowKind::Signal, &vendor_volts(Value::U8(3))).unwrap_err(),
+            InventoryError::WrongType {
+                kind: RowKind::Signal,
+                key: 15,
+            }
+        );
     }
 }

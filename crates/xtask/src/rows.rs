@@ -13,9 +13,13 @@
 //!
 //! This one reads the key numbers out of the published bytes and compares them
 //! to the document, which is the only comparison that can go red when a key is
-//! renumbered in one place and not the other.
+//! renumbered in one place and not the other. It then reads each value against
+//! the type the document gives its key, because the numbers agreeing said
+//! nothing about the values: `scale` was `i8` in the document and `u8` in the
+//! crate, and the widest row published a 255 no `i8` decoder can accept.
 
 use anyhow::{Context, Result, bail};
+use ciborium::value::Value as CborValue;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -24,6 +28,7 @@ use std::path::Path;
 struct Key {
     number: u64,
     name: String,
+    wire: Wire,
     /// Marked `optional` in the document, so a row carrying required keys only
     /// is expected to leave it out.
     optional: bool,
@@ -54,7 +59,7 @@ impl Spec {
             }
             if let Some(found) = nested(line) {
                 current = Some(found);
-            } else if let (Some(name), Some(key)) = (current.as_ref(), key(line)) {
+            } else if let (Some(name), Some(key)) = (current.as_ref(), key(line)?) {
                 types.entry(name.clone()).or_default().push(key);
             } else if !line.starts_with(char::is_whitespace) {
                 // A blank line, or a heading that carries an opcode and is
@@ -119,13 +124,90 @@ impl Fill {
     }
 }
 
-/// One published vector of a nested body, and the keys its bytes actually hold.
+/// What the type column of a key line says its value is.
+///
+/// Closed, and a key line naming anything else is refused when the document is
+/// read: a type this check does not know is a key whose value it would stop
+/// reading, which is how `scale` went unread.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Wire {
+    U8,
+    U16,
+    U32,
+    U64,
+    I8,
+    /// `int`, which P-185 bounds to `i32` wherever it appears.
+    Int,
+    Bool,
+    Text,
+    /// `bstr`, any length.
+    Bytes,
+    /// `bstr4` to `bstr32`, exactly that many bytes.
+    BytesOf(usize),
+    /// `[ ... ]` or `array`. What the elements are is in the description, so
+    /// this reads the container and not its contents.
+    Array,
+    /// `map`, or another nested type named in the column, which is one.
+    Map,
+}
+
+impl Wire {
+    fn parse(word: &str) -> Option<Self> {
+        Some(match word {
+            "u8" => Self::U8,
+            "u16" => Self::U16,
+            "u32" => Self::U32,
+            "u64" => Self::U64,
+            "i8" => Self::I8,
+            "int" => Self::Int,
+            "bool" => Self::Bool,
+            "text" => Self::Text,
+            "bstr" => Self::Bytes,
+            "bstr4" => Self::BytesOf(4),
+            "bstr8" => Self::BytesOf(8),
+            "bstr16" => Self::BytesOf(16),
+            "bstr32" => Self::BytesOf(32),
+            "[" | "array" => Self::Array,
+            "map" => Self::Map,
+            _ if nested(word).is_some() => Self::Map,
+            _ => return None,
+        })
+    }
+
+    /// Whether `value` is something a decoder reading this type would accept.
+    ///
+    /// An integer is checked against its range and not only its major type:
+    /// 255 under an `i8` key is an unsigned integer, and still a value the
+    /// receiver has to refuse.
+    fn admits(self, value: &CborValue) -> bool {
+        let range = |lo: i128, hi: i128| match value {
+            CborValue::Integer(n) => (lo..=hi).contains(&i128::from(*n)),
+            _ => false,
+        };
+        match self {
+            Self::U8 => range(0, u8::MAX.into()),
+            Self::U16 => range(0, u16::MAX.into()),
+            Self::U32 => range(0, u32::MAX.into()),
+            Self::U64 => range(0, u64::MAX.into()),
+            Self::I8 => range(i8::MIN.into(), i8::MAX.into()),
+            Self::Int => range(i32::MIN.into(), i32::MAX.into()),
+            Self::Bool => matches!(value, CborValue::Bool(_)),
+            Self::Text => matches!(value, CborValue::Text(_)),
+            Self::Bytes => matches!(value, CborValue::Bytes(_)),
+            Self::BytesOf(len) => matches!(value, CborValue::Bytes(b) if b.len() == len),
+            Self::Array => matches!(value, CborValue::Array(_)),
+            Self::Map => matches!(value, CborValue::Map(_)),
+        }
+    }
+}
+
+/// One published vector of a nested body, and the pairs its bytes actually hold.
 struct Row {
     /// `inventory_0x8D.signal_widest`, so a failure names the entry to open.
     at: String,
     short: String,
     fill: Fill,
-    keys: Vec<u64>,
+    pairs: Vec<(u64, CborValue)>,
 }
 
 /// The nested bodies `vectors/v1.json` publishes, read as key numbers out of
@@ -154,7 +236,7 @@ impl Published {
                     format!("{at} is a published row whose name says neither type nor fill")
                 })?;
                 out.push(Row {
-                    keys: map_keys(cbor).with_context(|| format!("reading {at}"))?,
+                    pairs: map_pairs(cbor).with_context(|| format!("reading {at}"))?,
                     at,
                     short,
                     fill,
@@ -181,14 +263,28 @@ impl Published {
             };
             let wanted = row.fill.wanted(keys);
             let numbers: Vec<u64> = wanted.iter().map(|key| key.number).collect();
-            if row.keys != numbers {
+            let carried: Vec<u64> = row.pairs.iter().map(|(number, _)| *number).collect();
+            if carried != numbers {
                 out.push(format!(
                     "{}: the bytes carry keys {} and PROTOCOL.md gives {name} {} {}",
                     row.at,
-                    render(&row.keys),
+                    render(&carried),
                     row.fill.describe(),
                     name_keys(&wanted),
                 ));
+                continue;
+            }
+            for (key, (_, value)) in wanted.iter().zip(&row.pairs) {
+                if !key.wire.admits(value) {
+                    let carried = match value {
+                        CborValue::Integer(n) => i128::from(*n).to_string(),
+                        other => format!("{other:?}"),
+                    };
+                    out.push(format!(
+                        "{}: key {}:{} carries {carried} and PROTOCOL.md types it {:?}",
+                        row.at, key.number, key.name, key.wire,
+                    ));
+                }
             }
         }
         out
@@ -213,22 +309,34 @@ fn nested(line: &str) -> Option<String> {
 }
 
 /// `  8: point        u16      optional; measurement point registry` becomes
-/// key 8, named `point`, optional.
-fn key(line: &str) -> Option<Key> {
+/// key 8, named `point`, a `u16`, optional. A line that is not a key is `None`;
+/// one that is a key with a type this check cannot read is an error.
+fn key(line: &str) -> Result<Option<Key>> {
     if !line.starts_with(char::is_whitespace) {
-        return None;
+        return Ok(None);
     }
-    let (number, rest) = line.trim().split_once(':')?;
-    let number = number.trim().parse().ok()?;
-    let name = rest.split_whitespace().next()?;
+    let Some((number, rest)) = line.trim().split_once(':') else {
+        return Ok(None);
+    };
+    let Ok(number) = number.trim().parse() else {
+        return Ok(None);
+    };
+    let mut words = rest.split_whitespace();
+    let Some(name) = words.next() else {
+        return Ok(None);
+    };
     if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-        return None;
+        return Ok(None);
     }
-    Some(Key {
+    let ty = words.next().unwrap_or_default();
+    let wire = Wire::parse(ty)
+        .with_context(|| format!("key {number}:{name} has a type `{ty}` nothing reads"))?;
+    Ok(Some(Key {
         number,
         name: name.to_owned(),
+        wire,
         optional: rest.contains("optional"),
-    })
+    }))
 }
 
 /// `signal_widest` is a `SignalRow` with every key; `signal_required_keys_only`
@@ -256,7 +364,7 @@ fn fill(entry: &str) -> Result<(String, Fill)> {
 /// Somebody else's decoder on purpose. `vectors.rs` is the encoder that wrote
 /// these bytes, so reading them back with it would compare xtask to itself and
 /// agree however wrong both were.
-fn map_keys(hex: &str) -> Result<Vec<u64>> {
+fn map_pairs(hex: &str) -> Result<Vec<(u64, CborValue)>> {
     let bytes = hex
         .as_bytes()
         .chunks(2)
@@ -266,17 +374,19 @@ fn map_keys(hex: &str) -> Result<Vec<u64>> {
         })
         .collect::<Result<Vec<u8>>>()?;
 
-    let value: ciborium::value::Value = ciborium::from_reader(bytes.as_slice())?;
-    let ciborium::value::Value::Map(pairs) = value else {
+    let value: CborValue = ciborium::from_reader(bytes.as_slice())?;
+    let CborValue::Map(pairs) = value else {
         bail!("a row must be a CBOR map and this one is not");
     };
     pairs
-        .iter()
-        .map(|(key, _)| {
-            let ciborium::value::Value::Integer(number) = key else {
+        .into_iter()
+        .map(|(key, value)| {
+            let CborValue::Integer(number) = key else {
                 bail!("a row's keys must be integers and one is not");
             };
-            u64::try_from(i128::from(*number)).context("a row key is negative or enormous")
+            let number =
+                u64::try_from(i128::from(number)).context("a row key is negative or enormous")?;
+            Ok((number, value))
         })
         .collect()
 }
@@ -300,7 +410,15 @@ fn name_keys(keys: &[&Key]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{Fill, Key, fill, key, map_keys, nested};
+    use super::{CborValue, Fill, Key, Wire, fill, key, map_pairs, nested};
+
+    /// The keys alone, which is what most of these are about.
+    fn map_keys(hex: &str) -> anyhow::Result<Vec<u64>> {
+        Ok(map_pairs(hex)?
+            .into_iter()
+            .map(|(number, _)| number)
+            .collect())
+    }
 
     /// The line that starts a row body, and the three that look like one.
     #[test]
@@ -331,12 +449,15 @@ mod tests {
     #[test]
     fn a_key_carries_its_number_its_name_and_whether_it_is_optional() {
         let required = key("  5: shape        u8       the container: 1 scalar · 2 series")
+            .expect("a known type")
             .expect("a required key");
         assert_eq!(required.number, 5);
         assert_eq!(required.name, "shape");
+        assert_eq!(required.wire, Wire::U8);
         assert!(!required.optional);
 
         let optional = key("  8: point        u16      optional; measurement point registry")
+            .expect("a known type")
             .expect("an optional key");
         assert_eq!(optional.number, 8);
         assert!(optional.optional);
@@ -346,8 +467,76 @@ mod tests {
     /// parser that took one would invent a key nothing published.
     #[test]
     fn a_wrapped_description_is_not_a_key() {
-        assert!(key("                           vendor range, skip-unknown").is_none());
-        assert!(key("BusRow").is_none());
+        assert!(
+            key("                           vendor range, skip-unknown")
+                .expect("not a key, so nothing to refuse")
+                .is_none()
+        );
+        assert!(key("BusRow").expect("not a key").is_none());
+    }
+
+    /// **A key whose type this check cannot read is refused, not skipped.**
+    /// Skipping it is a value nothing compares, which is the hole `scale` sat in.
+    #[test]
+    fn a_key_with_a_type_nothing_reads_is_refused() {
+        assert!(key(" 15: scale        f32      optional").is_err());
+    }
+
+    /// P-204: `scale` is `i8`. The 255 the widest rows published under a `u8`
+    /// is an unsigned integer and still out of range, and a check that read
+    /// only the major type would have let it through.
+    #[test]
+    fn an_i8_key_admits_its_two_ends_and_nothing_past_them() {
+        let int = |n: i64| CborValue::Integer(n.into());
+        let scale = key(" 15: scale        i8       optional; same condition as key 14 (P-204)")
+            .expect("a known type")
+            .expect("a key");
+        assert_eq!(scale.wire, Wire::I8);
+        assert!(scale.wire.admits(&int(-128)));
+        assert!(scale.wire.admits(&int(127)));
+        assert!(!scale.wire.admits(&int(128)));
+        assert!(!scale.wire.admits(&int(255)));
+        assert!(!scale.wire.admits(&int(-129)));
+        assert!(!scale.wire.admits(&CborValue::Text("-3".into())));
+    }
+
+    /// A fixed-width byte string is that width, and a digest a byte short is
+    /// not one.
+    #[test]
+    fn a_fixed_width_byte_string_of_another_width_is_refused() {
+        let digest = key("  9: topo_digest  bstr8    optional")
+            .expect("known")
+            .expect("a key");
+        assert_eq!(digest.wire, Wire::BytesOf(8));
+        assert!(digest.wire.admits(&CborValue::Bytes(vec![0; 8])));
+        assert!(!digest.wire.admits(&CborValue::Bytes(vec![0; 7])));
+        assert!(!digest.wire.admits(&CborValue::Bytes(vec![0; 9])));
+        assert!(Wire::Bytes.admits(&CborValue::Bytes(vec![0; 9])));
+    }
+
+    /// An unsigned key refuses a negative, and `int` stops at `i32` (P-185).
+    #[test]
+    fn an_integer_outside_its_declared_width_is_refused() {
+        let int = |n: i64| CborValue::Integer(n.into());
+        assert!(Wire::U8.admits(&int(255)));
+        assert!(!Wire::U8.admits(&int(-1)));
+        assert!(!Wire::U16.admits(&int(65_536)));
+        assert!(Wire::Int.admits(&int(i64::from(i32::MIN))));
+        assert!(!Wire::Int.admits(&int(i64::from(i32::MAX) + 1)));
+    }
+
+    /// `a2 01 38 7f 02 18 ff` is `{1: -128, 2: 255}`, and the values come back
+    /// with their keys for the type check to read.
+    #[test]
+    fn a_rows_values_are_read_beside_their_keys() {
+        let pairs = map_pairs("a201387f0218ff").expect("a two-key map");
+        assert_eq!(
+            pairs,
+            vec![
+                (1, CborValue::Integer((-128).into())),
+                (2, CborValue::Integer(255.into())),
+            ]
+        );
     }
 
     #[test]
@@ -374,16 +563,19 @@ mod tests {
             Key {
                 number: 1,
                 name: "sig".into(),
+                wire: Wire::U16,
                 optional: false,
             },
             Key {
                 number: 2,
                 name: "v".into(),
+                wire: Wire::Int,
                 optional: true,
             },
             Key {
                 number: 3,
                 name: "q".into(),
+                wire: Wire::U8,
                 optional: false,
             },
         ];

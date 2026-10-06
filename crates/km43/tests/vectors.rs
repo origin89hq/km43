@@ -1279,6 +1279,8 @@ fn the_published_inventory_rows_are_the_ones_this_encoder_writes() {
         Value::U32(u32::MAX),
         Value::I32(i32::MIN),
     );
+    // `scale` is `i8` (P-204), and its widest is the end that needs a sign.
+    let scale = Value::I8(i8::MIN);
 
     published_row_matches(
         "bus_widest",
@@ -1344,7 +1346,7 @@ fn the_published_inventory_rows_are_the_ones_this_encoder_writes() {
             Value::U16(u16::MAX - 15),
             u16m,
             u8m,
-            u8m,
+            scale,
             u16m,
             member(Closed::Bucket),
             Value::Text(label),
@@ -1368,7 +1370,7 @@ fn the_published_inventory_rows_are_the_ones_this_encoder_writes() {
             i32m,
             u16m,
             u8m,
-            u8m,
+            scale,
             u16m,
             Value::Text(label),
         ],

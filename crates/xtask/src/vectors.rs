@@ -1916,7 +1916,9 @@ impl Builder {
                     // is error 1 rather than a value to skip.
                     7 => Cb::U(9), 8 => Cb::U(u16max), 9 => Cb::U(3),
                     10 => Cb::U(16), 11 => Cb::U(u16max), 12 => Cb::U(u16max.saturating_sub(15)),
-                    13 => Cb::U(u16max), 14 => Cb::U(u8max), 15 => Cb::U(u8max),
+                    // `scale` is `i8` (P-204), so its widest is `i8::MIN`: two
+                    // bytes, as 127 would be, and the end that needs a sign.
+                    13 => Cb::U(u16max), 14 => Cb::U(u8max), 15 => Cb::I(i64::from(i8::MIN)),
                     16 => Cb::U(u16max), 17 => Cb::U(3),
                     18 => Cb::T(Self::widest_label()),
                 },
@@ -1931,7 +1933,7 @@ impl Builder {
                     6 => Cb::U(4), 7 => Cb::U(9), 8 => Cb::U(u16max),
                     9 => Cb::U(3), 10 => Cb::U(u16max),
                     11 => Cb::I(i64::from(i32::MIN)), 12 => Cb::I(i64::from(i32::MIN)),
-                    13 => Cb::U(u16max), 14 => Cb::U(u8max), 15 => Cb::U(u8max),
+                    13 => Cb::U(u16max), 14 => Cb::U(u8max), 15 => Cb::I(i64::from(i8::MIN)),
                     16 => Cb::U(u16max), 17 => Cb::T(Self::widest_label()),
                 },
             ),
