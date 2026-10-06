@@ -1,5 +1,32 @@
 # @origin89/km43
 
+## 0.9.0
+
+### Minor Changes
+
+- 3129f91: Config section `0x0003` buses and devices can be read and written.
+  
+  - `@origin89/km43/buses-and-devices` encodes the section and decodes it in both shapes: `decodeBusesAndDevicesWrite` for a `SetConfig` body, where a device with no `dev` is one to add, and `decodeBusesAndDevicesRead` for a `Config` answer, which must list every `dev` in ascending order.
+  - `checkBusesAndDevices` runs the checks the controller makes against the board's buses, its dialect table and the caps from `Hello`, so a client can find an outcome 3 refusal before it writes. `sectionAnswer` says whether a refusal is error 1 or outcome 3.
+  - New registry values: `DeviceOption`, `Parity`, `PylontechVersion`, and the limits `MAX_CONFIG_BUSES` (8), `MAX_CONFIG_DEVICES` (16), `MAX_ADDR`, `MAX_DEPTH` and `MAX_STRING`. `ConfigSection.BusesAndDevices` is no longer reserved.
+  
+  A device option key the device's dialect does not define is refused, not skipped. A client built against an earlier version that sends only the keys it knows is unaffected.
+- a48cc52: A charger's stage can be reported and named.
+  
+  - `ChargeStage` names the seven members of enum space `0x0006`: `Off` (1), `Bulk` (2), `Absorption` (3), `Float` (4), `Equalise` (5), `Storage` (6) and `Fault` (7).
+  - `MetricKind.CHARGE_STAGE` (`0x0704`) is the metric whose value is one of them, and `datasetName` maps it in the live domain to the dataset's `charge-stage`, which `datasetAbsent` no longer lists.
+  
+  A vendor stage with no member, such as Victron's *starting up*, is published `unnamed_state` with its raw code in a concern (P-164). A client built against the previous version still interoperates: it surfaces the new metric and its values as unrecognised (P-125).
+- ef2e434: Adds two DC counter kinds, `MetricKind.DC_ENERGY` in Wh and `MetricKind.DC_CHARGE` in tenths of an Ah, and `Validity.Reset` for a counter that went below its previous total. A reading at `Reset` carries its value; start a new run of the series at it rather than drawing a line down to it. `datasetName` takes an optional fifth argument, the `Direction` the counter counts, and `pv-energy-today`, `pv-energy-total` and `consumed-amp-hours` now resolve: the first two for a PV array's or tracker's energy counting out, the last for a battery's charge counting out since the shunt last synchronised. A DC counter looked up without a direction has no word.
+- 6539c3e: Adds `Dialect.VE_DIRECT_TEXT` (`0x000B`), `Dialect.PYLONTECH_CAN` (`0x000C`) and `Dialect.DS18B20` (`0x000D`), and `Product.DS18B20` (`0x000D`). All four are reserved: the numbers are fixed, and none of them says which Victron or Pylontech device is on the bus, which protocol version a pack speaks or which way its current is signed. A DS18B20 probe is its own device on a `onewire` bus, addressed by its 8-byte ROM code, and `onewire` is now an addressed transport under P-202. No existing number moved.
+- 6310e7d: Adds `Dialect.PZEM_AC` (`0x000A`) for Peacefair's PZEM-014/016 AC meter, and `Product.PZEM_014` (`0x000B`) and `Product.PZEM_016` (`0x000C`) for the two models that speak it. All three are reserved: the numbers are fixed, the register semantics are not specified by KM43. No existing number moved.
+- 76da8b8: Adds `Condition.VENDOR_FAULT` (`0x0019`), a fault the source reported that no other condition means, and `conditionNeedsVendorCode(cond)`. A `Concern` carrying `VENDOR_FAULT` is valid only with its vendor code and namespace (keys 11 and 12); treat one without them as malformed. The function returns `false` for every other condition, including ones this build does not know.
+
+### Patch Changes
+
+- 9af5951: Doc comments only. A member the registry names without a meaning, such as `Firmware.Accepted`, now shows that name as code. `Suite.X25519ChachapolySha256` and `LinkErrorCode.BeforeLinkUp` quote the identifiers they mention, and `Quality.Estimated` spells out *state of charge*. No value, name or type changed.
+- b88f4c4: `checkBusesAndDevices` now refuses a device on a `onewire` bus that carries no `addr`, as P-202 requires, with reason `addr_required` and outcome 3. It had treated 1-Wire as unaddressed, so a DS18B20 written without its ROM code passed the check and a write carrying one was refused as `addr_not_addressed`. A write whose 1-Wire devices carry their ROM codes is now accepted.
+
 ## 0.8.0
 
 ### Minor Changes
