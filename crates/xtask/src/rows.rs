@@ -140,9 +140,12 @@ enum Wire {
     Int,
     Bool,
     Text,
-    /// `bstr`, and the fixed widths `bstr4` to `bstr32`.
+    /// `bstr`, any length.
     Bytes,
-    /// `[ ... ]` or `array`, of whatever the description says.
+    /// `bstr4` to `bstr32`, exactly that many bytes.
+    BytesOf(usize),
+    /// `[ ... ]` or `array`. What the elements are is in the description, so
+    /// this reads the container and not its contents.
     Array,
     /// `map`, or another nested type named in the column, which is one.
     Map,
@@ -159,7 +162,11 @@ impl Wire {
             "int" => Self::Int,
             "bool" => Self::Bool,
             "text" => Self::Text,
-            "bstr" | "bstr4" | "bstr8" | "bstr16" | "bstr32" => Self::Bytes,
+            "bstr" => Self::Bytes,
+            "bstr4" => Self::BytesOf(4),
+            "bstr8" => Self::BytesOf(8),
+            "bstr16" => Self::BytesOf(16),
+            "bstr32" => Self::BytesOf(32),
             "[" | "array" => Self::Array,
             "map" => Self::Map,
             _ if nested(word).is_some() => Self::Map,
@@ -187,6 +194,7 @@ impl Wire {
             Self::Bool => matches!(value, CborValue::Bool(_)),
             Self::Text => matches!(value, CborValue::Text(_)),
             Self::Bytes => matches!(value, CborValue::Bytes(_)),
+            Self::BytesOf(len) => matches!(value, CborValue::Bytes(b) if b.len() == len),
             Self::Array => matches!(value, CborValue::Array(_)),
             Self::Map => matches!(value, CborValue::Map(_)),
         }
@@ -490,6 +498,20 @@ mod tests {
         assert!(!scale.wire.admits(&int(255)));
         assert!(!scale.wire.admits(&int(-129)));
         assert!(!scale.wire.admits(&CborValue::Text("-3".into())));
+    }
+
+    /// A fixed-width byte string is that width, and a digest a byte short is
+    /// not one.
+    #[test]
+    fn a_fixed_width_byte_string_of_another_width_is_refused() {
+        let digest = key("  9: topo_digest  bstr8    optional")
+            .expect("known")
+            .expect("a key");
+        assert_eq!(digest.wire, Wire::BytesOf(8));
+        assert!(digest.wire.admits(&CborValue::Bytes(vec![0; 8])));
+        assert!(!digest.wire.admits(&CborValue::Bytes(vec![0; 7])));
+        assert!(!digest.wire.admits(&CborValue::Bytes(vec![0; 9])));
+        assert!(Wire::Bytes.admits(&CborValue::Bytes(vec![0; 9])));
     }
 
     /// An unsigned key refuses a negative, and `int` stops at `i32` (P-185).
