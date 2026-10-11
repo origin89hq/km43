@@ -17,7 +17,7 @@
     "release:publish": "changeset publish"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.14",
+    "@biomejs/biome": "2.5.15",
     "@changesets/cli": "3.0.3",
     "typedoc": "0.28.20",
     "typescript": "6.0.3"
